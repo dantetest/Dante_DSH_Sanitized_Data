@@ -1,0 +1,27 @@
+# 数据隐站 · 依赖
+
+# 基本
+Pillow>=10.0
+lxml>=4.9
+
+# 文档
+PyMuPDF>=1.23          # PDF 解析 + 真·涂黑（apply_redactions）
+python-docx>=1.1       # DOCX
+openpyxl>=3.1          # XLSX
+
+# OCR（离线中文）
+rapidocr>=3.10              # 首选：自带 PP-OCRv6 small，实测比 v4 快约 3 倍
+rapidocr-onnxruntime>=1.3   # 兜底：PP-OCRv4，老环境用
+onnxruntime>=1.16
+opencv-python-headless>=4.8
+
+# 加密（映射库）
+cryptography>=41.0
+
+# 说明
+# - 不需要任何 Web 框架：HTTP 层用标准库 http.server
+# - 不需要联网下载模型：rapidocr 的 wheel 里已带 PP-OCRv6 的 det/rec/cls 三个 onnx
+# - 现场实测（6 核 CPU，A4 扫描页，42 页测试集，纯 OCR 解析）：
+#     PP-OCRv4：约 6.1 秒/页，合计约 245 秒
+#     PP-OCRv6：约 2.1 秒/页，合计约 87 秒
+# - GDAL 可选：装了就能读 TIF 的完整地理标签，没装也能剥离

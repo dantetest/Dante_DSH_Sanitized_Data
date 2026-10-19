@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+data/
+out/*
+!out/.gitkeep
+samples/_gen/
+*.tmp
+*.log
+.DS_Store
+Thumbs.db

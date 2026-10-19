@@ -1,0 +1,166 @@
+# 通用 · 个人信息
+# 所有行业包都 include 本包；这里只放"任何文件类型都可能出现"的 PII。
+pack: common
+name: 通用 · 个人信息
+version: 1
+
+rules:
+  # ── 凭据类：绝不允许原文进入上下文，直接涂黑 ──
+  - id: cn.private_key
+    entity: SECRET
+    label: 私钥
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 135
+    detect:
+      - type: regex
+        pattern: '-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----'
+    replace: {strategy: black}
+
+  - id: cn.secret
+    entity: SECRET
+    label: 密钥/令牌
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 130
+    detect:
+      - type: regex
+        pattern: '(?:sk-[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_\-]{30,})'
+    replace: {strategy: black}
+
+  # ── 证件与号码 ──
+  - id: cn.idcard
+    entity: ID_CARD
+    label: 身份证号
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 120
+    detect:
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![0-9A-Za-z])'
+        validate: cn_id_checksum
+    replace: {strategy: surrogate}
+
+  - id: cn.bankcard
+    entity: BANK
+    label: 银行卡号
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 110
+    detect:
+      - type: regex
+        pattern: '(?<!\d)\d(?:[ -]?\d){15,18}(?!\d)'
+        validate: luhn
+    replace: {strategy: surrogate}
+
+  - id: cn.phone
+    entity: PHONE
+    label: 手机号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 100
+    detect:
+      - type: regex
+        pattern: '(?<!\d)1[3-9]\d{9}(?!\d)'
+    replace: {strategy: surrogate}
+
+  - id: cn.landline
+    entity: PHONE
+    label: 固定电话
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 95
+    detect:
+      - type: regex
+        pattern: '(?<!\d)0\d{2,3}[ -]?\d{7,8}(?!\d)'
+    replace: {strategy: surrogate}
+
+  - id: cn.email
+    entity: EMAIL
+    label: 电子邮箱
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 92
+    detect:
+      - type: regex
+        pattern: '(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'
+    replace: {strategy: surrogate}
+
+  - id: cn.plate
+    entity: PLATE
+    label: 车牌号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 90
+    detect:
+      - type: regex
+        pattern: '(?<![A-Za-z0-9])(?:[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领][A-HJ-NP-Z][A-HJ-NP-Z0-9]{6}|[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领][A-HJ-NP-Z][A-HJ-NP-Z0-9]{5}[挂学警港澳]?)(?![A-Za-z0-9])'
+    replace: {strategy: surrogate}
+
+  - id: cn.uscc
+    entity: USCC
+    label: 统一社会信用代码
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 85
+    detect:
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])(?=[0-9A-HJ-NPQRTUWXY]{18}(?![0-9A-Za-z]))(?=[0-9A-HJ-NPQRTUWXY]{0,17}[A-HJ-NPQRTUWXY])[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}(?![0-9A-Za-z])'
+    replace: {strategy: surrogate}
+
+  # ── 金额 ──
+  - id: cn.amount
+    entity: AMOUNT
+    label: 金额
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 70
+    detect:
+      - type: regex
+        pattern: '(?<![\d.])(?:(?:人民币|RMB|¥|￥)\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?(?:\s*(?:万元|亿元|元))?|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?\s*(?:万元|亿元|元)|\d+(?:\.\d{1,2})?\s*(?:万元|亿元|元))'
+    replace: {strategy: surrogate}
+
+  - id: cn.amount_cn
+    entity: AMOUNT
+    label: 大写金额
+    level: L2
+    scope: [pdf, docx, xlsx, text]
+    priority: 65
+    detect:
+      - type: regex
+        pattern: '(?<![壹贰叁肆伍陆柒捌玖拾佰仟万亿零元圆整])(?:人民币)?[壹贰叁肆伍陆柒捌玖拾佰仟万亿零]{2,}[元圆](?:整|角|分)?'
+    replace: {strategy: surrogate}
+
+  # ── 自由文本里的实体（启发式 NER） ──
+  - id: cn.person
+    entity: PERSON
+    label: 人名
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 55
+    detect:
+      - type: ner
+        types: [person]
+    replace: {strategy: surrogate}
+
+  - id: cn.address
+    entity: ADDRESS
+    label: 地址
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 50
+    detect:
+      - type: ner
+        types: [address]
+    replace: {strategy: surrogate}
+
+  - id: cn.org
+    entity: ORG
+    label: 机构名称
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 40
+    detect:
+      - type: ner
+        types: [org]
+    replace: {strategy: surrogate}

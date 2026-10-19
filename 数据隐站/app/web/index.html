@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据隐站 · 本机文件脱敏</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="seal" aria-hidden="true"><span>隐</span><span>站</span></div>
+    <div class="brand">数据隐站<small>DATA SANCTUARY</small></div>
+    <div class="docno" id="docNo">No. —</div>
+    <div class="spacer"></div>
+    <div class="netbadge off" id="netBadge"><span class="dot"></span><span id="netText">正在确认本机状态…</span></div>
+  </header>
+
+  <nav class="steps" aria-label="流程">
+    <div class="step" data-step="1"><span class="n">1</span>投放</div>
+    <div class="step" data-step="2"><span class="n">2</span>识别</div>
+    <div class="step" data-step="3"><span class="n">3</span>对照</div>
+    <div class="step" data-step="4"><span class="n">4</span>交付</div>
+  </nav>
+
+  <main>
+    <!-- ① 投放台 -->
+    <section id="screen-drop" class="screen" aria-label="投放文件">
+      <div class="drop-wrap">
+        <div class="drop-title">把文件放进来</div>
+        <div class="drop-sub">拖进来就行 · 剩下的交给它</div>
+        <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="拖拽文件到此，或点击选择文件">
+          <div class="paperstack" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="drop-cta">拖拽文件到此，或点击选择</div>
+          <div class="drop-formats">PDF · Word · Excel · 图片 · TIF 正射 · 三维模型</div>
+          <input type="file" id="fileInput" hidden>
+        </div>
+        <div class="drop-actions"><button class="btn ghost" id="btnChoose">选择文件</button></div>
+        <div class="drop-note">本机处理 · <b>不联网</b> · 不留存 · 不上传</div>
+      </div>
+    </section>
+
+    <!-- ② 识别中 -->
+    <section id="screen-scan" class="screen" aria-label="正在识别">
+      <div class="scan-card">
+        <div class="scan-head">SCANNING · 正在翻阅</div>
+        <div class="scan-lines" id="scanLines" aria-live="polite"></div>
+        <div class="scan-bar"><i id="scanProgress"></i></div>
+        <div class="scan-foot"><span id="scanStage">正在接收文件…</span><span class="spacer"></span><span id="scanCount">—</span></div>
+        <button class="btn ghost scan-cancel" id="btnCancelScan">换一个文件</button>
+      </div>
+    </section>
+
+    <!-- ③ 对照台 -->
+    <section id="screen-console" class="screen" aria-label="原件与可外发版对照">
+      <div class="console-head">
+        <div class="doc-name" id="docName">—</div>
+        <div class="counts">
+          <span>共 <b id="cntAll">0</b> 处</span>
+          <span>已处理 <b id="cntDone">0</b></span>
+          <span class="warn">待确认 <b id="cntPend">0</b></span>
+        </div>
+        <div class="pager">
+          <button id="btnPrevPage" title="上一页" aria-label="上一页">‹</button>
+          <span id="pageLabel">1 / 1</span>
+          <button id="btnNextPage" title="下一页" aria-label="下一页">›</button>
+        </div>
+        <div class="spacer"></div>
+        <label class="strict" title="宽松 / 标准 / 最严"><span>严格度</span>
+          <select id="strictSel" aria-label="严格度">
+            <option value="loose">宽松</option>
+            <option value="standard" selected>标准</option>
+            <option value="strict">最严</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="console-body" id="consoleBody">
+        <div class="pane" id="paneOrig">
+          <div class="pane-head"><span class="tag">原 件</span><span class="pane-hint">只在本机显示</span></div>
+          <div class="stage" id="stageOrig"><div class="frame" id="frameOrig"></div></div>
+        </div>
+        <div class="divider" id="divider" role="separator" aria-label="拖动调整两栏宽度"></div>
+        <div class="pane" id="paneOut">
+          <div class="pane-head">
+            <span class="tag red">可外发版</span>
+            <div class="modes" role="group" aria-label="成品形态">
+              <button data-mode="sur" class="on" aria-pressed="true">换名</button>
+              <button data-mode="black" aria-pressed="false">涂黑</button>
+            </div>
+            <span class="spacer"></span>
+            <span class="pane-hint">按住黑条可透视</span>
+          </div>
+          <div class="stage" id="stageOut"><div class="frame" id="frameOut"></div></div>
+        </div>
+        <aside class="rail" aria-label="隐去清单">
+          <div class="rail-head"><span>隐去清单</span><span id="railCount">0</span></div>
+          <div class="rail-list" id="railList"></div>
+        </aside>
+      </div>
+
+      <div class="console-foot">
+        <button class="btn" id="btnAcceptAll" disabled>全部接受</button>
+        <button class="btn ghost" id="btnReview" disabled>逐条确认 <span id="reviewCount">0</span></button>
+        <button class="btn" id="btnSelect" aria-pressed="false">⌗ 框选补漏</button>
+        <div class="spacer"></div>
+        <div class="foot-hint">按住黑条 300 毫秒可透视原值 · 松手复原</div>
+        <button class="btn primary" id="btnExport">交 付 →</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span class="netdot" id="footDot"></span>
+    <span id="footNet">本机处理</span>
+    <span class="spacer"></span>
+    <span class="foot-meta" id="footMeta">数据隐站 · 本机服务</span>
+  </footer>
+</div>
+
+<!-- ⑤ 交付弹窗 -->
+<div class="modal" id="modalExport" role="dialog" aria-modal="true" aria-label="交付">
+  <div class="modal-card">
+    <h3>交付</h3>
+    <div class="sub">同一份文件，两个去处。选错会出事，所以分成两张卡。</div>
+    <div class="modes2">
+      <div class="card" id="cardAi" data-export="ai" role="button" tabindex="0">
+        <div class="ct">给 AI 读</div>
+        <div class="cd">换名版 · <b>可还原</b><br>喂给豆包 / Kimi / WorkBuddy<br>映射表加密留在本机</div>
+        <div class="do">点击导出 →</div>
+      </div>
+      <div class="card" id="cardHuman" data-export="human" role="button" tabindex="0">
+        <div class="ct">给人看</div>
+        <div class="cd">涂黑版 · <b>不可还原</b><br>发给对家 / 法院 / 保司<br>成品带编号与指纹</div>
+        <div class="do">点击导出 →</div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" id="btnCloseModal">先不导出</button></div>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite"><span id="toastMsg"></span><span class="toast-actions" id="toastActions"></span></div>
+
+<script src="app.js" defer></script>
+</body>
+</html>

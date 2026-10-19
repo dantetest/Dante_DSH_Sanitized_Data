@@ -1,0 +1,71 @@
+# 医疗 · 病历与诊疗
+# 医疗场景最敏感的是"能把人对应到病"的组合：病历号 + 诊断 + 医院。
+pack: medical-cn
+name: 医疗 · 病历与诊疗
+version: 1
+include: [common]
+
+rules:
+  # 病历号/住院号/门诊号：L3，换名版也要换成等长假号
+  - id: cn.medical_record_no
+    entity: MEDICAL_RECORD
+    label: 病历号/住院号
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 115
+    detect:
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])(?:病历号|病案号|住院号|门诊号|就诊号|医保号|床位号|床号|检查号|检验号|报告号)\s*[:：]?\s*[A-Za-z0-9][A-Za-z0-9\-]{5,23}'
+    replace: {strategy: surrogate}
+
+  # 医院 / 卫生院 / 妇幼保健院 / 诊所名称
+  - id: cn.hospital
+    entity: ORG
+    label: 医院名称
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 86
+    detect:
+      - type: regex
+        pattern: '(?<![A-Za-z0-9])[\u4e00-\u9fa5]{2,20}(?:人民医院|中医院|医院|卫生院|妇幼保健院|疾病预防控制中心|疾控中心|社区卫生服务中心|诊所)'
+        strip_prefix: [患者, 病人, 入住, 就诊于, 就诊, 复诊, 初诊, 前往, 送往, 送至,
+                       转入, 转至, 来自, 工作于, 就职于, 位于, 地处, 在, 于, 到,
+                       该, 本, 其, 系, 为, 是, 由, 向, 的, 以及, 及, 与]
+    replace: {strategy: surrogate}
+
+  # 科室：保留末尾"科/室"，前面的专科名遮蔽（"心血管内科" -> "***内科"）
+  - id: cn.department
+    entity: DEPT
+    label: 科室
+    level: L2
+    scope: [pdf, docx, xlsx, text]
+    priority: 60
+    detect:
+      - type: dict
+        words: [内科, 外科, 儿科, 妇产科, 骨科, 眼科, 耳鼻咽喉科, 口腔科, 皮肤科,
+                神经内科, 神经外科, 心血管内科, 心内科, 呼吸内科, 消化内科, 肾内科,
+                内分泌科, 血液科, 肿瘤科, 风湿免疫科, 感染科, 急诊科, 重症医学科,
+                康复医学科, 中医科, 针灸科, 推拿科, 麻醉科, 放射科, 超声科, 检验科,
+                病理科, 药剂科, 护理部, 门诊部, 住院部, 手术室, 心外科, 胸外科,
+                泌尿外科, 肝胆外科, 胃肠外科, 血管外科, 乳腺外科, 甲状腺外科,
+                烧伤科, 整形外科, 精神科, 心理科, 传染科, 结核科, 肝病科, 肾病科,
+                影像科, 核医学科, 介入科, 体检中心, 血液透析室, ICU, CCU]
+    replace: {strategy: mask, keep: [tail2]}
+
+  # 敏感诊断：艾滋病、精神疾病、肿瘤等，默认涂黑（这类病种泄露后果最重）
+  - id: cn.sensitive_diagnosis
+    entity: DIAGNOSIS
+    label: 敏感诊断
+    level: L2
+    scope: [pdf, docx, xlsx, text]
+    priority: 70
+    detect:
+      - type: dict
+        words: [艾滋病, 艾滋, 梅毒, 淋病, 乙肝, 丙肝, 乙型肝炎, 丙型肝炎, 结核,
+                肺结核, 精神分裂症, 精神分裂, 抑郁症, 躁郁症, 双相情感障碍, 焦虑症,
+                强迫症, 阿尔茨海默病, 阿尔茨海默, 痴呆, 癫痫, 肺癌, 肝癌, 胃癌,
+                乳腺癌, 宫颈癌, 结直肠癌, 前列腺癌, 白血病, 淋巴瘤, 黑色素瘤,
+                尿毒症, 肾衰竭, 肝硬化, 红斑狼疮, 克罗恩病, 强直性脊柱炎,
+                不孕不育, 性病, 尖锐湿疣, 生殖器疱疹, 阳痿, 早泄, 精神疾病,
+                精神病, 自杀倾向, 药物依赖, 吸毒]
+    replace: {strategy: black}

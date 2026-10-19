@@ -1,0 +1,22 @@
+# ── 运行时数据：含加密密钥、审计库、上传副本，绝不入库 ──
+数据隐站/data/
+# ── 导出成品与调试中间件 ──
+数据隐站/out/
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+# ── 系统/编辑器 ──
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/
+# ── 与产品无关的本机脚本（含抓取/令牌探测类工具，不入库）──
+_telegram_setup/
+# ── 临时 ──
+*.log
+*.tmp
+~$*

@@ -1,0 +1,88 @@
+# 法律 · 民事诉讼
+# 律所/法务场景：案号、执业证号、当事人与代理人、律所与法院名称。
+pack: legal-cn
+name: 法律 · 民事诉讼
+version: 1
+include: [common]
+
+rules:
+  # 案号：（2023）京0105民初12345号
+  - id: cn.case_no
+    entity: CASE_NO
+    label: 案号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 85
+    detect:
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])(?:（|\(|〔)\s*(?:19|20)\d{2}\s*(?:）|\)|〕)\s*[\u4e00-\u9fa5]{1,4}\d{1,4}(?:民初|民终|刑初|刑终|行初|行终|执|民申|民再|刑申|破申|财保|民特|民辖终|执异|执复)\d+(?:号)?'
+    replace: {strategy: surrogate}
+
+  # 律所内部案件编号 / 合同编号：［2004］沪建纬（蓉）民代字第393号
+  # 手写年份和序号常被 OCR 认成 2ox / 3q3，所以数字位里允许混入字母
+  - id: cn.case_ref
+    entity: CASE_NO
+    label: 案号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 86
+    detect:
+      - type: regex
+        pattern: '(?:[\[［〔（(]\s*[0-9A-Za-z]{2,6}\s*[\]］〕）)]\s*)?[\u4e00-\u9fa5]{2,14}(?:[（(][\u4e00-\u9fa5]{0,6}[）)])?[\u4e00-\u9fa5]{0,6}字\s*第\s*[0-9A-Za-z]{1,8}\s*号'
+    replace: {strategy: surrogate}
+
+  # 律师执业证号：17 位数字 + 1 位校验（X/数字）。单看数字无法区分，要求附近有"执业证"字样。
+  - id: cn.lawyer_license
+    entity: LICENSE
+    label: 律师执业证号
+    level: L2
+    scope: [pdf, docx, xlsx, text]
+    priority: 80
+    detect:
+      - type: regex
+        pattern: '(?<!\d)\d{17}[\dXx](?!\d)'
+        near: [律师执业证, 执业证号, 执业证, 律师证]
+    replace: {strategy: surrogate}
+
+  # 律师事务所
+  - id: cn.law_firm
+    entity: ORG
+    label: 律师事务所
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 78
+    detect:
+      - type: regex
+        pattern: '(?<![A-Za-z0-9])[\u4e00-\u9fa5]{2,20}(?:律师事务所|法律服务所)'
+        strip_prefix: [患者, 病人, 入住, 就诊于, 就诊, 前往, 送往, 送至, 转入, 转至, 来自,
+                       位于, 地处, 委托代理人, 委托, 代理, 聘请, 由, 向, 在, 于, 到,
+                       该, 本, 其, 系, 为, 是, 的, 以及, 及, 与]
+    replace: {strategy: surrogate}
+
+  # 法院 / 检察院
+  - id: cn.court_name
+    entity: ORG
+    label: 法院/检察院
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 76
+    detect:
+      - type: regex
+        pattern: '(?<![A-Za-z0-9])[\u4e00-\u9fa5]{2,20}(?:人民法院|人民检察院|法院|检察院)'
+        strip_prefix: [来自, 前往, 送至, 诉至, 起诉至, 向, 在, 于, 到, 由, 该, 本, 其,
+                       系, 为, 是, 的, 以及, 及, 与]
+    replace: {strategy: surrogate}
+
+  # 当事人 / 委托代理人：只报带"委托/当事/代理/申请/被告/原告…"上下文的姓名。
+  - id: cn.legal_party
+    entity: PERSON
+    label: 当事人/代理人
+    level: L2
+    scope: [pdf, docx, xlsx, text]
+    priority: 75
+    detect:
+      - type: ner
+        types: [person]
+        required_hints: [委托, 当事, 代理, 申请, 被告, 原告, 证人, 受害, 嫌疑,
+                         法定代表人, 甲方, 乙方, 第三人, 上诉人, 申请人]
+    replace: {strategy: surrogate}

@@ -1,0 +1,70 @@
+# 测绘 · 地理信息
+# 正射影像/成果报告里，"能把坐标对回真实地点"的信息必须拿掉：
+# 经纬度、图幅号、坐标系名、控制点号。
+pack: geo-cn
+name: 测绘 · 地理信息
+version: 1
+include: [common]
+
+rules:
+  # 度分秒坐标对：39°54′27″N, 116°23′17″E
+  - id: cn.geo_coord
+    entity: GEO_COORD
+    label: 经纬度坐标
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 95
+    detect:
+      - type: regex
+        pattern: '(?<!\d)\d{2,3}[°度]\s*\d{1,2}[′''分]\s*\d{1,2}(?:\.\d+)?["″秒]?\s*[NSEW北南东西]?(?:\s*[,，、;；]\s*\d{2,3}[°度]\s*\d{1,2}[′''分]\s*\d{1,2}(?:\.\d+)?["″秒]?\s*[NSEW北南东西]?)?(?!\d)'
+    replace: {strategy: surrogate}
+
+  # 十进制坐标对：31.230416, 121.473701
+  - id: cn.geo_decimal
+    entity: GEO_COORD
+    label: 十进制经纬度
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 94
+    detect:
+      - type: regex
+        pattern: '(?<![\d.])(?:[0-8]?\d|1[0-7]\d)\.\d{4,10}\s*[,，]\s*(?:[0-9]?\d|1[0-7]\d)\.\d{4,10}(?![\d.])'
+    replace: {strategy: surrogate}
+
+  # 图幅号：H50G003004（1 字母 + 2 数字 + 1 字母 + 6 数字）
+  - id: cn.map_sheet
+    entity: SHEET_NO
+    label: 图幅号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 70
+    detect:
+      - type: regex
+        pattern: '(?<![A-Z0-9])[A-Z]\d{2}[A-Z]\d{6}(?![A-Z0-9])'
+    replace: {strategy: surrogate}
+
+  # 控制点号 / 水准点号
+  - id: cn.control_point
+    entity: CONTROL_POINT
+    label: 控制点号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 65
+    detect:
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])(?:控制点号|控制点|点号|GPS点|GNSS点|水准点|导线点)\s*[:：]?\s*[A-Za-z]{0,4}-?\d{2,6}(?:-[A-Za-z0-9]{1,6})?'
+    replace: {strategy: surrogate}
+
+  # 坐标系名：对外交付必须去掉（涂黑而不是换成另一个坐标系，避免误导）
+  - id: cn.crs
+    entity: CRS
+    label: 坐标系名称
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 60
+    detect:
+      - type: dict
+        words: [CGCS2000, WGS84, WGS-84, 西安80, 北京54, 2000国家大地坐标系,
+                1980西安坐标系, 1954北京坐标系, UTM, EPSG:4326, EPSG:4490,
+                国家大地坐标系, 地方独立坐标系]
+    replace: {strategy: black}
