@@ -2,9 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<script>document.documentElement.className += ' js';</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>数据隐站 · Sanitized_Data</title>
-<meta name="description" content="数据不出门，AI 放心用。合同、病历、报表、扫描件先在本机脱敏，再交给大模型。">
+<meta name="description" content="敏感不出门，AI 照常问。合同、病历、报表、扫描件先在本机脱敏，再交给大模型。">
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
@@ -30,7 +31,10 @@
   <section class="hero">
     <div>
       <div class="eyebrow">LOCAL-FIRST · 本机脱敏</div>
-      <h1 class="slogan">数据不出门<br>AI 放心用</h1>
+      <h1 class="slogan" id="slogan" aria-label="敏感不出门，AI 照常问">
+        <span class="ln"><span class="ch">敏</span><span class="ch">感</span><span class="ch">不</span><span class="ch">出</span><span class="ch">门</span><span class="ch">，</span></span>
+        <span class="ln"><span class="ch">A</span><span class="ch">I</span><span class="gap"> </span><span class="ch">照</span><span class="ch">常</span><span class="ch">问</span></span>
+      </h1>
       <p class="lead">
         合同、病历、报表、正射影像 —— 先在本机脱敏，再交给大模型。
         AI 只看到换过名字、涂黑过的那一份。
@@ -147,5 +151,37 @@
   </div>
 </footer>
 
+<script>
+/* 主标语打字机效果：逐字蹦出 + 光标跟随；尊重 prefers-reduced-motion */
+(function () {
+  var h = document.getElementById('slogan');
+  if (!h) return;
+  var chars = [].slice.call(h.querySelectorAll('.ch'));
+  if (!chars.length) return;
+  var reduce = window.matchMedia &&
+               window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) { chars.forEach(function (c) { c.classList.add('rv'); }); return; }
+
+  var caret = document.createElement('span');
+  caret.className = 'cursor';
+  caret.setAttribute('aria-hidden', 'true');
+
+  var i = 0;
+  function step() {
+    if (i >= chars.length) {
+      setTimeout(function () {
+        caret.style.animation = 'none';
+        caret.style.opacity = '0';
+      }, 1800);
+      return;
+    }
+    var c = chars[i++];
+    c.classList.add('rv');
+    c.parentNode.insertBefore(caret, c.nextSibling);
+    setTimeout(step, 86 + Math.random() * 46);
+  }
+  setTimeout(step, 380);
+})();
+</script>
 </body>
 </html>

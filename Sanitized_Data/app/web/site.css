@@ -170,3 +170,22 @@ h1.slogan{
 }
 h1.slogan br + *{}
 @media (max-width:900px){ h1.slogan{letter-spacing:.1em} }
+/* ── 主标语：打字机逐字蹦出 ── */
+.slogan .ln{display:block}
+.slogan .ch{display:inline-block; will-change:opacity,transform}
+.slogan .gap{display:inline-block; width:.28em}
+.js .slogan .ch{opacity:0; transform:translateY(.22em) scale(.94)}
+.js .slogan .ch.rv{
+  opacity:1; transform:none;
+  transition:opacity .12s linear, transform .26s cubic-bezier(.2,1.5,.45,1);
+}
+.slogan .cursor{
+  display:inline-block; width:.085em; height:.9em; margin-left:.06em;
+  background:var(--seal); vertical-align:-.06em; border-radius:1px;
+  animation:caret 1s steps(1) infinite;
+}
+@keyframes caret{0%,49%{opacity:1}50%,100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .js .slogan .ch{opacity:1;transform:none;transition:none}
+  .slogan .cursor{display:none}
+}
