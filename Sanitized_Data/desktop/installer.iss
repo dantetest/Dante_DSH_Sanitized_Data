@@ -33,7 +33,11 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
-UninstallDisplayIcon={app}\{#MyAppExeName}
+; 安装包自身的图标（资源管理器里的 setup.exe / 安装向导），相对本 .iss 所在目录；
+; 唯一图源 desktop/assets/app.svg，派生 app.ico 见 docs/research/06-图标适配检查与替换记录.md
+SetupIconFile=assets\app.ico
+; 「应用和功能」列表里的卸载图标：用 [Files] 复制到 {app}\app.ico 的同一份文件
+UninstallDisplayIcon={app}\app.ico
 UninstallDisplayName={#MyAppName}
 
 [Languages]
@@ -47,6 +51,7 @@ Source: "..\dist\{#MyAppNameEn}\*"; DestDir: "{app}"; Flags: ignoreversion recur
 ; 运行时安装包：先不落地，环境检查后按需解压到临时目录
 Source: "redist\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
 Source: "redist\VC_redist.x64.exe"; Flags: dontcopy
+; 项目图标：复制到 {app}\app.ico，供 UninstallDisplayIcon 使用
 Source: "assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
