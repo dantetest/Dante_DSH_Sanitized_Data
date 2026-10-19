@@ -10,6 +10,11 @@ name: build-desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      with_x64:
+        description: '同时构建 Intel (x64) 包（macOS-13 排队较久）'
+        type: boolean
+        default: false
   push:
     branches: [main]
     tags: ['v*']
@@ -18,6 +23,8 @@ jobs:
   macos:
     name: macOS (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    # arm64 每次必建；x64 只在手动勾选或打标签时建（macos-13 的 Intel runner 排队太久）
+    if: matrix.arch == 'arm64' || inputs.with_x64 || startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
