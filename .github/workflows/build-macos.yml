@@ -2,37 +2,26 @@ name: build-desktop
 
 # 用途：在 GitHub 的 macOS 机器上打出「免签名测试包」，不需要苹果开发者账号。
 #
-# 前置：这个仓库要镜像到 GitHub（Gitea 的 Actions 也能跑，但 macOS runner 得自己准备一台 Mac）。
-#
-# 产物：Sanitized_Data-arm64.dmg / Sanitized_Data-x64.dmg（未签名、未公证）
+# 产物：Sanitized_Data-arm64.dmg（Apple Silicon）/ Sanitized_Data-x64.dmg（Intel）
 # 测试者打开方式：右键 → 打开；或终端执行
 #   xattr -dr com.apple.quarantine /Applications/Sanitized_Data.app
+#
+# 触发：
+#   - push 到 main：只出 arm64（快，日常够用）
+#   - 手动 Run workflow：可选是否同时出 Intel 包
+#   - 打 v* 标签：两个架构都出，并挂到 Release
 
 on:
   workflow_dispatch:
-    inputs:
-      with_x64:
-        description: '同时构建 Intel (x64) 包（macOS-13 排队较久）'
-        type: boolean
-        default: false
   push:
     branches: [main]
     tags: ['v*']
 
 jobs:
-  macos:
-    name: macOS (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    # arm64 每次必建；x64 只在手动勾选或打标签时建（macos-13 的 Intel runner 排队太久）
-    if: matrix.arch == 'arm64' || inputs.with_x64 || startsWith(github.ref, 'refs/tags/v')
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-14      # Apple Silicon
-            arch: arm64
-          - runner: macos-13      # Intel
-            arch: x64
+  # ── Apple Silicon：每次必建 ──
+  macos-arm64:
+    name: macOS (arm64)
+    runs-on: macos-14
     defaults:
       run:
         working-directory: Sanitized_Data
@@ -61,44 +50,87 @@ jobs:
         run: |
           hdiutil create -volname "Sanitized_Data" \
             -srcfolder "dist/Sanitized_Data.app" \
-            -ov -format UDZO \
-            "Sanitized_Data-${{ matrix.arch }}.dmg"
+            -ov -format UDZO "Sanitized_Data-arm64.dmg"
           ls -lh *.dmg
 
-      - name: 冒烟测试（起得来 + 插件加载齐全）
+      - name: 冒烟测试（能起 + 插件齐全）
         run: |
           mkdir -p /tmp/smoke
-          hdiutil attach "Sanitized_Data-${{ matrix.arch }}.dmg" -mountpoint /tmp/smoke -nobrowse
+          hdiutil attach "Sanitized_Data-arm64.dmg" -mountpoint /tmp/smoke -nobrowse
           cp -R "/tmp/smoke/Sanitized_Data.app" /tmp/app.app || cp -R /tmp/smoke/*.app /tmp/app.app
           hdiutil detach /tmp/smoke -quiet || true
           /tmp/app.app/Contents/MacOS/Sanitized_Data &
           APP_PID=$!
           sleep 20
-          HEALTH=$(curl -fsS http://127.0.0.1:8760/api/health)
-          echo "$HEALTH"
-          # 关键：光能启动不算过，解析器必须有；否则就是插件没打进包
-          python3 - <<'PY'
-          import json, sys, urllib.request
-          h = json.loads(urllib.request.urlopen("http://127.0.0.1:8760/api/health", timeout=10).read())
-          parsers = h["engine"]["parsers"]
-          detectors = h["engine"]["detectors"]
-          print("parsers   =", parsers)
-          print("detectors =", detectors)
-          assert len(parsers) >= 5, "解析器没加载：%s" % parsers
-          assert len(detectors) >= 3, "检测器没加载：%s" % detectors
-          assert h["engine"]["ocr"] is True, "OCR 不可用"
-          print("  ✓ 健康检查通过")
-          PY
+          python3 ../.github/scripts/smoke_check.py
           kill $APP_PID || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.arch }}
-          path: Sanitized_Data/Sanitized_Data-${{ matrix.arch }}.dmg
+          name: macos-arm64
+          path: Sanitized_Data/Sanitized_Data-arm64.dmg
           if-no-files-found: error
 
       - name: 挂到 Release（打 tag 时）
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: Sanitized_Data/Sanitized_Data-${{ matrix.arch }}.dmg
+          files: Sanitized_Data/Sanitized_Data-arm64.dmg
+
+  # ── Intel：只在打标签时自动建；手动触发时也会建 ──
+  macos-x64:
+    name: macOS (x64)
+    runs-on: macos-13
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    defaults:
+      run:
+        working-directory: Sanitized_Data
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/server/requirements.txt
+          python -m pip install pyinstaller pywebview
+
+      - name: PyInstaller 打包
+        run: python -m PyInstaller --clean --noconfirm desktop/app.spec
+
+      - name: ad-hoc 签名
+        run: |
+          codesign --force --deep --sign - "dist/Sanitized_Data.app"
+
+      - name: 打包 DMG
+        run: |
+          hdiutil create -volname "Sanitized_Data" \
+            -srcfolder "dist/Sanitized_Data.app" \
+            -ov -format UDZO "Sanitized_Data-x64.dmg"
+
+      - name: 冒烟测试（能起 + 插件齐全）
+        run: |
+          mkdir -p /tmp/smoke
+          hdiutil attach "Sanitized_Data-x64.dmg" -mountpoint /tmp/smoke -nobrowse
+          cp -R "/tmp/smoke/Sanitized_Data.app" /tmp/app.app || cp -R /tmp/smoke/*.app /tmp/app.app
+          hdiutil detach /tmp/smoke -quiet || true
+          /tmp/app.app/Contents/MacOS/Sanitized_Data &
+          APP_PID=$!
+          sleep 20
+          python3 ../.github/scripts/smoke_check.py
+          kill $APP_PID || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64
+          path: Sanitized_Data/Sanitized_Data-x64.dmg
+          if-no-files-found: error
+
+      - name: 挂到 Release（打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Sanitized_Data/Sanitized_Data-x64.dmg
