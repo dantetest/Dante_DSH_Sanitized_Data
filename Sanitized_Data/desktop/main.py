@@ -143,7 +143,35 @@ def _run_window(url: str) -> str:
         return "browser"
 
 
+def _diagnose() -> int:
+    """--diagnose：把启动环境写成文件，便于排查打包问题（无控制台时尤其有用）。"""
+    from yinzhan import registry
+    lines = []
+    lines.append(f"frozen      = {getattr(sys, 'frozen', False)}")
+    lines.append(f"_MEIPASS    = {getattr(sys, '_MEIPASS', '-')}")
+    lines.append(f"executable  = {sys.executable}")
+    lines.append(f"data_dir    = {config.DATA_DIR}")
+    lines.append(f"output_dir  = {config.OUTPUT_DIR}")
+    lines.append(f"web_dir     = {config.WEB_DIR}  exists={config.WEB_DIR.is_dir()}")
+    lines.append(f"root        = {registry.__file__}")
+    try:
+        errs = registry.load_plugins()
+        lines.append(f"plugin_errors = {len(errs)}")
+        for e in errs:
+            lines.append("  ! " + e.replace("\n", " | ")[:300])
+        lines.append(f"parsers     = {sorted({p.format_id for p in registry.all_parsers().values()})}")
+        lines.append(f"detectors   = {sorted(registry.all_detectors().keys())}")
+    except Exception:
+        lines.append("load_plugins 崩溃:\n" + traceback.format_exc())
+    out = config.DATA_DIR / "diagnose.txt"
+    out.write_text("\n".join(lines), "utf-8")
+    print(out)
+    return 0
+
+
 def main() -> int:
+    if "--diagnose" in sys.argv:
+        return _diagnose()
     if not _single_instance():
         _activate_existing()
         return 0

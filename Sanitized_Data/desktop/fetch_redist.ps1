@@ -1,4 +1,4 @@
-# 下载安装包要捆绑的运行时（构建机联网时执行一次）
+﻿# 下载安装包要捆绑的运行时（构建机联网时执行一次）
 #   powershell -ExecutionPolicy Bypass -File desktop\fetch_redist.ps1
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path $PSScriptRoot 'redist'

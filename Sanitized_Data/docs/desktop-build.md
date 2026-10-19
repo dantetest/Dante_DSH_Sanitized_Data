@@ -189,3 +189,52 @@ git push github main
 | P3 macOS 免签名测试包 | 🟡 workflow 就绪，待镜像到 GitHub 后触发 |
 | P4 正式签名公证 | ⏸ 需要 Apple 开发者账号 |
 | P5 托盘 / 开机自启 | ⏸ 未开始 |
+
+---
+
+## 四、第一次真实构建记录（2026-10-19）
+
+### Windows
+
+| 项 | 结果 |
+|---|---|
+| 构建机 | Windows 10/11 x64，Python 3.12 |
+| PyInstaller | 6.22.3 |
+| Inno Setup | **7.1.0**（语法与 6 基本兼容，脚本已适配两版） |
+| 首次产物体积 | ❌ **1058 MB**（失控） |
+| 修正后体积 | ✅ **314.7 MB** 解压目录 / **144.7 MB** 绿色包 / **134.1 MB** 安装包 |
+
+**踩到的三个坑（都已修）**
+
+1. **体积失控到 1 GB**
+   `collect_all("rapidocr")` 顺着可选依赖把环境里的 `torch`（253 MB）、`jaxlib`（221 MB）、`llvmlite`（102 MB）全扫了进来。
+   修复：`excludes` 里显式排除这些以及 scipy/sklearn/pandas/tensorflow 等。
+
+2. **打包后 0 个解析器**
+   `spec` 里 `collect_submodules("yinzhan")` 在 spec 求值阶段执行，那时 `app/server` 还不在 `sys.path` 上 → 收集结果为空 → 插件模块没进包。
+   修复：spec 顶部先 `sys.path.insert(0, str(APP / "server"))`；同时 `registry.py` 加了静态插件清单兜底（`pkgutil` 在冻结环境里扫不到目录）。
+
+3. **AppData 不可写导致启动即崩**
+   受限机器上 `%LOCALAPPDATA%` 可能拒绝写入。`paths.py` 现在会做**可写性探测**并自动降级：
+   用户目录 → 程序目录 → 临时目录。`config.py` 建目录失败也不再直接抛异常。
+
+**验证结果**（绿色版解压后直接跑）
+
+```
+✓ 启动成功，OCR 就绪，解析器 docx/image/mesh/pdf/text/tiff/xlsx
+✓ 住院病历.docx    9 实体   0.4s   复检残留 0
+✓ 对账单.xlsx     13 实体   0.2s   复检残留 0
+✓ 名片.png         6 实体   2.5s   复检残留 0
+✓ 技术咨询合同.pdf  12 实体  12.0s   复检残留 0
+✓ 云基函.pdf       13 实体   8.0s   复检残留 0
+```
+
+安装包在无交互桌面会话里无法完成 GUI 安装流程，**需在真实桌面上双击验证**；
+安装包本体编译通过（Inno 7，67 秒，134.1 MB）。
+
+### macOS
+
+arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解析器」的问题，
+冒烟测试只检查了 `/api/health` 返回 200，没有检查解析器数量。
+**已修正**：workflow 的冒烟测试现在会断言 `parsers >= 5`、`detectors >= 3`、`ocr == True`，
+下次构建会自动拦下这类问题。

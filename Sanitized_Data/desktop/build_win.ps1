@@ -1,4 +1,4 @@
-# 数据隐站 · Windows 打包脚本
+﻿# 数据隐站 · Windows 打包脚本
 #   powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 #
 # 产物：
@@ -53,6 +53,8 @@ if (Test-Path $exe) {
 
 Write-Host "`n[6/6] 打安装包（需要 Inno Setup 6）" -ForegroundColor Cyan
 $iscc = @(
+    "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+    "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
@@ -67,5 +69,12 @@ if ($iscc) {
     "  ! 没找到 Inno Setup 6，跳过安装包。绿色版在 dist\Sanitized_Data\"
     "    下载：https://jrsoftware.org/isdl.php"
 }
+
+Write-Host "`n[7/7] 打绿色版压缩包" -ForegroundColor Cyan
+$zip = Join-Path $Root 'out\desktop\Sanitized_Data-1.0.0-win64-portable.zip'
+New-Item -ItemType Directory -Force -Path (Split-Path $zip) | Out-Null
+Remove-Item $zip -Force -ErrorAction SilentlyContinue
+Compress-Archive -Path (Join-Path $Root 'dist\Sanitized_Data') -DestinationPath $zip -CompressionLevel Optimal
+"  ✓ $zip  $([math]::Round((Get-Item $zip).Length/1MB,1)) MB"
 
 Write-Host "`n完成。" -ForegroundColor Green

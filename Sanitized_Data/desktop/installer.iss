@@ -25,7 +25,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 ; 不需要管理员：装到用户目录
 PrivilegesRequired=lowest
-OutputDir=dist_installer
+OutputDir=..\dist_installer
 OutputBaseFilename={#MyAppNameEn}_Setup_{#MyAppVersion}_x64
 Compression=lzma2/max
 SolidCompression=yes
@@ -43,16 +43,16 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："; Flags: unchecked
 
 [Files]
-Source: "dist\{#MyAppNameEn}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\{#MyAppNameEn}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; 运行时安装包：先不落地，环境检查后按需解压到临时目录
 Source: "redist\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
 Source: "redist\VC_redist.x64.exe"; Flags: dontcopy
 Source: "assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"; Flags: skipifsourcedoesntexist
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "立即启动{#MyAppName}"; Flags: nowait postinstall skipifsilent
@@ -67,7 +67,7 @@ const
   VC_RUNTIME_KEY = 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
 
 var
-  EnvPage: TOutputMsgMemoWizardPage;
+  EnvShown: Boolean;
   HasWebView2: Boolean;
   HasVCRedist: Boolean;
   OsName: String;
@@ -114,7 +114,7 @@ end;
 function BuildEnvReport(): String;
 var
   s: String;
-  freeMB: Cardinal;
+  freeMB, totalMB: Cardinal;
 begin
   s := '';
   s := s + '系统：' + OsName + #13#10;
@@ -137,7 +137,7 @@ begin
        '  本程序自带 Python 运行环境，不需要你另外安装任何东西。' + #13#10 +
        '  全部数据只保存在这台电脑上，不会联网上传。';
 
-  if GetSpaceOnDisk(ExtractFileDrive(ExpandConstant('{localappdata}')), True, Nil, Nil, freeMB) then
+  if GetSpaceOnDisk(ExtractFileDrive(ExpandConstant('{localappdata}')), True, freeMB, totalMB) then
     s := s + #13#10 + #13#10 + '  可用磁盘空间：' + IntToStr(freeMB) + ' MB';
 
   Result := s;
@@ -148,15 +148,18 @@ begin
   HasWebView2 := GetWebView2Version() <> '';
   HasVCRedist := GetVCRedistInstalled();
   OsName := DetectOSName();
+  EnvShown := False;
+end;
 
-  EnvPage := CreateOutputMsgMemoPage(
-    wpWelcome,
-    '环境检查',
-    '安装前先看看这台电脑的情况',
-    '下面的检查结果会自动处理，你不需要做任何操作：',
-    '');
-  EnvPage.RichMemo.Text := BuildEnvReport();
-  EnvPage.RichMemo.ReadOnly := True;
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  { 进到欢迎页时先给一份环境检查结果：缺什么、由谁补，写清楚 }
+  if (CurPageID = wpWelcome) and (not EnvShown) then
+  begin
+    EnvShown := True;
+    if not WizardSilent then      { 静默安装 /SILENT 时不堵弹窗 }
+      MsgBox('环境检查结果：' + #13#10#13#10 + BuildEnvReport(), mbInformation, MB_OK);
+  end;
 end;
 
 { ───────── 自动补齐环境 ───────── }

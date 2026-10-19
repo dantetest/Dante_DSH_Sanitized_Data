@@ -42,23 +42,59 @@ def is_desktop() -> bool:
     return FROZEN or os.environ.get("YINZHAN_DESKTOP") == "1"
 
 
-def data_root() -> Path:
-    """可写数据根目录。
+def _writable(path: Path) -> bool:
+    """能不能真的在里头建目录和写文件。有些受限机器会拒 AppData 写入。"""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / "._write_test"
+        probe.write_text("x", "utf-8")
+        probe.unlink()
+        return True
+    except Exception:
+        return False
 
-    优先级：YINZHAN_DATA_DIR > 桌面版用户目录 > 源码运行时的产品目录/data
+
+_DATA_CACHE: Path | None = None
+
+
+def data_root() -> Path:
+    """可写数据根目录，自动挑第一个真的能写的位置。
+
+    优先级：YINZHAN_DATA_DIR > 用户目录 > 程序目录 > 临时目录
+    （后两者是兜底：企业受限机器上 AppData 可能不可写）
     """
+    global _DATA_CACHE
+    if _DATA_CACHE is not None:
+        return _DATA_CACHE
+
     env = os.environ.get("YINZHAN_DATA_DIR")
     if env:
-        return Path(env).expanduser().resolve()
+        _DATA_CACHE = Path(env).expanduser().resolve()
+        return _DATA_CACHE
+
     if is_desktop():
-        return _user_data_base() / APP_NAME_EN
-    return Path(__file__).resolve().parents[3] / "data"     # Sanitized_Data/data
+        candidates = [
+            _user_data_base() / APP_NAME_EN,
+            resource_root().parent / "data",
+            Path(os.environ.get("TEMP") or os.environ.get("TMP") or ".") / APP_NAME_EN,
+        ]
+    else:
+        candidates = [Path(__file__).resolve().parents[3] / "data"]
+
+    for c in candidates:
+        if _writable(c):
+            _DATA_CACHE = c
+            return c
+    _DATA_CACHE = candidates[-1]
+    return _DATA_CACHE
 
 
 def output_root() -> Path:
     env = os.environ.get("YINZHAN_OUTPUT_DIR")
     if env:
         return Path(env).expanduser().resolve()
-    if is_desktop():
-        return _user_data_base() / APP_NAME_EN / "out"
-    return Path(__file__).resolve().parents[3] / "out"      # Sanitized_Data/out
+    # 跟随数据目录：数据放哪，成品就放哪
+    root = data_root() / "out"
+    if _writable(root):
+        return root
+    return Path(os.environ.get("TEMP") or ".") / APP_NAME_EN / "out"

@@ -25,7 +25,10 @@ DB_PATH = DATA_DIR / "yinzhan.db"
 RUNTIME_PATH = DATA_DIR / "runtime.json"
 
 for _d in (DATA_DIR, UPLOAD_DIR, WORK_DIR, OUTPUT_DIR, KEYS_DIR):
-    _d.mkdir(parents=True, exist_ok=True)
+    try:
+        _d.mkdir(parents=True, exist_ok=True)
+    except OSError as _e:            # 受限机器：能读到就行，写失败留给上层报错
+        print(f"  ! 无法创建目录 {_d}：{_e}", file=os.sys.stderr)
 
 # 允许的处理大小上限（字节），超过要求用户走「选择文件」按路径处理
 MAX_UPLOAD = 512 * 1024 * 1024

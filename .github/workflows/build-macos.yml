@@ -65,7 +65,7 @@ jobs:
             "Sanitized_Data-${{ matrix.arch }}.dmg"
           ls -lh *.dmg
 
-      - name: 冒烟测试（解压后能不能起）
+      - name: 冒烟测试（起得来 + 插件加载齐全）
         run: |
           mkdir -p /tmp/smoke
           hdiutil attach "Sanitized_Data-${{ matrix.arch }}.dmg" -mountpoint /tmp/smoke -nobrowse
@@ -73,8 +73,22 @@ jobs:
           hdiutil detach /tmp/smoke -quiet || true
           /tmp/app.app/Contents/MacOS/Sanitized_Data &
           APP_PID=$!
-          sleep 15
-          curl -fsS http://127.0.0.1:8760/api/health && echo "  ✓ 健康检查通过"
+          sleep 20
+          HEALTH=$(curl -fsS http://127.0.0.1:8760/api/health)
+          echo "$HEALTH"
+          # 关键：光能启动不算过，解析器必须有；否则就是插件没打进包
+          python3 - <<'PY'
+          import json, sys, urllib.request
+          h = json.loads(urllib.request.urlopen("http://127.0.0.1:8760/api/health", timeout=10).read())
+          parsers = h["engine"]["parsers"]
+          detectors = h["engine"]["detectors"]
+          print("parsers   =", parsers)
+          print("detectors =", detectors)
+          assert len(parsers) >= 5, "解析器没加载：%s" % parsers
+          assert len(detectors) >= 3, "检测器没加载：%s" % detectors
+          assert h["engine"]["ocr"] is True, "OCR 不可用"
+          print("  ✓ 健康检查通过")
+          PY
           kill $APP_PID || true
 
       - uses: actions/upload-artifact@v4

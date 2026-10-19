@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+import sys
 import traceback
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -97,19 +98,33 @@ def all_detectors() -> dict[str, type[Detector]]:
     return dict(_DETECTORS)
 
 
+# 打包成 exe 后，插件源码被压进 PyInstaller 归档，磁盘上没有 parsers/ 目录，
+# pkgutil 扫不到 → 这里保留一份静态清单兜底。
+_PLUGIN_FALLBACK = {
+    "parsers": ("pdf_parser", "docx_parser", "xlsx_parser", "image_parser",
+                "text_parser", "tiff_parser", "mesh_parser"),
+    "detectors": ("regex_det", "dict_det", "ner_det"),
+    "replacers": ("surrogate", "black", "mask"),
+}
+
+
 def load_plugins() -> list[str]:
     """导入 parsers / detectors / replacers 下所有模块，触发注册。"""
     import yinzhan
     root = Path(yinzhan.__file__).parent
+    frozen = bool(getattr(sys, "frozen", False))
     errors: list[str] = []
     for pkgname in ("parsers", "detectors", "replacers"):
+        names: list[str] = []
         pkg = root / pkgname
-        if not pkg.is_dir():
-            continue
-        for mod in pkgutil.iter_modules([str(pkg)]):
-            if mod.name.startswith("_"):
-                continue
-            full = f"yinzhan.{pkgname}.{mod.name}"
+        if pkg.is_dir():
+            names = [m.name for m in pkgutil.iter_modules([str(pkg)])
+                     if not m.name.startswith("_")]
+        if not names:
+            # 打包后或目录缺失：用静态清单
+            names = list(_PLUGIN_FALLBACK.get(pkgname, ()))
+        for name in names:
+            full = f"yinzhan.{pkgname}.{name}"
             if full in _LOADED:
                 continue
             try:
