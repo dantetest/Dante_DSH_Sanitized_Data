@@ -241,6 +241,8 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
+        if getattr(self, "_head_only", False):
+            return                      # HEAD 只要响应头
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
@@ -413,6 +415,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self._dispatch("GET")
+
+    def do_HEAD(self):
+        """下载器和反向代理常先发 HEAD 探测大小。"""
+        self._head_only = True
+        try:
+            self._dispatch("GET")
+        finally:
+            self._head_only = False
 
     def do_POST(self):
         self._dispatch("POST")
