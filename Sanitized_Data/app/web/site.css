@@ -159,3 +159,14 @@ footer a:hover{color:var(--seal)}
   .grid.g3,.grid.g2,.dl-grid{grid-template-columns:1fr}
   .sitebar nav a{padding:8px 9px;font-size:11.5px}
 }
+
+/* ── 主标语 ── */
+h1.slogan{
+  font-size:clamp(38px,5.6vw,62px);
+  line-height:1.18;
+  letter-spacing:.16em;
+  font-weight:800;
+  text-indent:.02em;
+}
+h1.slogan br + *{}
+@media (max-width:900px){ h1.slogan{letter-spacing:.1em} }
