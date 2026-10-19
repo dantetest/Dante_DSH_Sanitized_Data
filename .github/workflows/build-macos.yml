@@ -11,6 +11,7 @@ name: build-desktop
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ['v*']
 
 jobs:
