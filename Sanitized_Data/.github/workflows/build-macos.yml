@@ -1,0 +1,82 @@
+name: build-desktop
+
+# 用途：在 GitHub 的 macOS 机器上打出「免签名测试包」，不需要苹果开发者账号。
+#
+# 前置：这个仓库要镜像到 GitHub（Gitea 的 Actions 也能跑，但 macOS runner 得自己准备一台 Mac）。
+#
+# 产物：Sanitized_Data-arm64.dmg / Sanitized_Data-x64.dmg（未签名、未公证）
+# 测试者打开方式：右键 → 打开；或终端执行
+#   xattr -dr com.apple.quarantine /Applications/Sanitized_Data.app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  macos:
+    name: macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14      # Apple Silicon
+            arch: arm64
+          - runner: macos-13      # Intel
+            arch: x64
+    defaults:
+      run:
+        working-directory: Sanitized_Data
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/server/requirements.txt
+          python -m pip install pyinstaller pywebview
+
+      - name: PyInstaller 打包
+        run: python -m PyInstaller --clean --noconfirm desktop/app.spec
+
+      - name: ad-hoc 签名（arm64 必须，否则无法运行）
+        run: |
+          codesign --force --deep --sign - "dist/Sanitized_Data.app"
+          codesign --verify --deep --verbose=2 "dist/Sanitized_Data.app" || true
+
+      - name: 打包 DMG
+        run: |
+          hdiutil create -volname "Sanitized_Data" \
+            -srcfolder "dist/Sanitized_Data.app" \
+            -ov -format UDZO \
+            "Sanitized_Data-${{ matrix.arch }}.dmg"
+          ls -lh *.dmg
+
+      - name: 冒烟测试（解压后能不能起）
+        run: |
+          mkdir -p /tmp/smoke
+          hdiutil attach "Sanitized_Data-${{ matrix.arch }}.dmg" -mountpoint /tmp/smoke -nobrowse
+          cp -R "/tmp/smoke/Sanitized_Data.app" /tmp/app.app || cp -R /tmp/smoke/*.app /tmp/app.app
+          hdiutil detach /tmp/smoke -quiet || true
+          /tmp/app.app/Contents/MacOS/Sanitized_Data &
+          APP_PID=$!
+          sleep 15
+          curl -fsS http://127.0.0.1:8760/api/health && echo "  ✓ 健康检查通过"
+          kill $APP_PID || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: Sanitized_Data/Sanitized_Data-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+      - name: 挂到 Release（打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Sanitized_Data/Sanitized_Data-${{ matrix.arch }}.dmg

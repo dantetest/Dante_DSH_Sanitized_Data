@@ -129,6 +129,31 @@ YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
 
 ---
 
+## 桌面版
+
+桌面版把「本机服务 + 界面」打包成一个双击即用的应用，用户不需要装 Python。
+
+| 文件 | 作用 |
+|---|---|
+| `desktop/main.py` | 启动器：单实例检查 → 起服务 → 原生窗口 → 退出清理 |
+| `desktop/app.spec` | PyInstaller 打包配置（onedir） |
+| `desktop/build_win.ps1` | Windows 一键打包：装依赖 → 打包 → 补 VC++ DLL → 自检 → 出安装包 |
+| `desktop/installer.iss` | Inno Setup 安装包，自动检查并静默补齐 WebView2 / VC++ |
+| `desktop/fetch_redist.ps1` | 拉取 WebView2 与 VC++ 运行库安装文件 |
+| `.github/workflows/build-macos.yml` | macOS 免签名测试包（GitHub Actions 双架构） |
+| `app/server/yinzhan/paths.py` | 资源/数据目录解析，区分源码运行、桌面版、环境变量覆盖 |
+
+详细说明：
+
+- 规划与分期：[docs/desktop-plan.md](docs/desktop-plan.md)
+- 构建与分发包（含 macOS 免账号测试包）：[docs/desktop-build.md](docs/desktop-build.md)
+
+> 桌面版默认把数据放在 `%LOCALAPPDATA%\Sanitized_Data`（Windows）或
+> `~/Library/Application Support/Sanitized_Data`（macOS），可用 `YINZHAN_DATA_DIR` 覆盖。
+> 源码运行和服务器部署行为不变，仍用产品目录下的 `data/`。
+
+---
+
 ## 支持的文件
 
 | 格式 | 解析 | 涂黑 | 换名 | 说明 |
