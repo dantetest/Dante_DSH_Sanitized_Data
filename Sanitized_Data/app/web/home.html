@@ -5,7 +5,7 @@
 <script>document.documentElement.className += ' js';</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>数据隐站 · Sanitized_Data</title>
-<meta name="description" content="敏感不出门，AI 照常问。合同、病历、报表、扫描件先在本机脱敏，再交给大模型。">
+<meta name="description" content="把敏感抹掉，让文件放行。合同、病历、报表、扫描件先在本机脱敏，再交给大模型。">
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
@@ -31,9 +31,10 @@
   <section class="hero">
     <div>
       <div class="eyebrow">LOCAL-FIRST · 本机脱敏</div>
-      <h1 class="slogan" id="slogan" aria-label="敏感不出门，AI 照常问">
-        <span class="ln"><span class="ch">敏</span><span class="ch">感</span><span class="ch">不</span><span class="ch">出</span><span class="ch">门</span><span class="ch">，</span></span>
-        <span class="ln"><span class="ch">A</span><span class="ch">I</span><span class="gap"> </span><span class="ch">照</span><span class="ch">常</span><span class="ch">问</span></span>
+      <h1 class="slogan" id="slogan" aria-label="把敏感抹掉，让文件放行">
+        <span class="cursor" id="caret" aria-hidden="true"></span>
+        <span class="ln"><span class="ch">把</span><span class="redact-wrap"><span class="ch">敏</span><span class="ch">感</span><span class="bars" aria-hidden="true"><i></i><i></i><i></i></span></span><span class="ch">抹</span><span class="ch">掉</span><span class="ch">，</span></span>
+        <span class="ln"><span class="ch">让</span><span class="ch">文</span><span class="ch">件</span><span class="ch">放</span><span class="ch">行</span></span>
       </h1>
       <p class="lead">
         合同、病历、报表、正射影像 —— 先在本机脱敏，再交给大模型。
@@ -152,35 +153,71 @@
 </footer>
 
 <script>
-/* 主标语打字机效果：逐字蹦出 + 光标跟随；尊重 prefers-reduced-motion */
+/* 主标语三段式动画：
+   ① 打字机打出「把敏感抹掉」
+   ② 三道黑杆扫过「敏感」——抹掉了，但还看得见是哪两个字
+   ③ 继续打字「，让文件放行」
+   光标用绝对定位，不参与排版，所以全程不挤动后面的字。 */
 (function () {
   var h = document.getElementById('slogan');
-  if (!h) return;
+  var caret = document.getElementById('caret');
+  if (!h || !caret) return;
+
   var chars = [].slice.call(h.querySelectorAll('.ch'));
+  var bars = [].slice.call(h.querySelectorAll('.bars i'));
   if (!chars.length) return;
+
   var reduce = window.matchMedia &&
                window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduce) { chars.forEach(function (c) { c.classList.add('rv'); }); return; }
-
-  var caret = document.createElement('span');
-  caret.className = 'cursor';
-  caret.setAttribute('aria-hidden', 'true');
-
-  var i = 0;
-  function step() {
-    if (i >= chars.length) {
-      setTimeout(function () {
-        caret.style.animation = 'none';
-        caret.style.opacity = '0';
-      }, 1800);
-      return;
-    }
-    var c = chars[i++];
-    c.classList.add('rv');
-    c.parentNode.insertBefore(caret, c.nextSibling);
-    setTimeout(step, 86 + Math.random() * 46);
+  if (reduce) {
+    chars.forEach(function (c) { c.classList.add('rv'); });
+    bars.forEach(function (b) { b.classList.add('on'); });
+    caret.style.display = 'none';
+    return;
   }
-  setTimeout(step, 380);
+
+  // 光标贴到某个字后面；用 offsetLeft/offsetTop，不受弹出动画的 translate 影响
+  function placeCaret(el) {
+    var left = el.offsetLeft + el.offsetWidth + 2;
+    var top = el.offsetTop + el.offsetHeight * 0.14;
+    caret.style.left = left + 'px';
+    caret.style.top = top + 'px';
+    caret.style.height = (el.offsetHeight * 0.78) + 'px';
+  }
+
+  function typeRange(from, to, done) {
+    var i = from;
+    (function step() {
+      if (i >= to) { done && done(); return; }
+      var c = chars[i++];
+      c.classList.add('rv');
+      placeCaret(c);
+      setTimeout(step, 92 + Math.random() * 46);
+    })();
+  }
+
+  function finish() {
+    setTimeout(function () {
+      caret.style.animation = 'none';
+      caret.style.opacity = '0';
+    }, 1900);
+  }
+
+  // ① 打到「掉」为止（索引 0..4）
+  setTimeout(function () {
+    typeRange(0, 5, function () {
+      // ② 三道黑杆依次扫入
+      setTimeout(function () {
+        bars.forEach(function (b, k) {
+          setTimeout(function () { b.classList.add('on'); }, k * 95);
+        });
+        // ③ 黑杆落定后继续打剩下的字
+        setTimeout(function () {
+          typeRange(5, chars.length, finish);
+        }, bars.length * 95 + 300);
+      }, 300);
+    });
+  }, 420);
 })();
 </script>
 </body>
