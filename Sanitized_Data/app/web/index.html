@@ -9,10 +9,17 @@
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="seal" aria-hidden="true"><span>隐</span><span>站</span></div>
-    <div class="brand">数据隐站<small>SANITIZED_DATA</small></div>
+    <a class="homelink" href="/" title="回到首页">
+      <span class="seal" aria-hidden="true"><span>隐</span><span>站</span></span>
+      <span class="brand">数据隐站<small>SANITIZED_DATA</small></span>
+    </a>
     <div class="docno" id="docNo">No. —</div>
     <div class="spacer"></div>
+    <nav class="topnav" aria-label="站点导航">
+      <a href="/download">下载</a>
+      <a href="/mcp">MCP 接入</a>
+      <a href="/">首页</a>
+    </nav>
     <div class="netbadge off" id="netBadge"><span class="dot"></span><span id="netText">正在确认本机状态…</span></div>
   </header>
 

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据隐站 · Sanitized_Data</title>
+<meta name="description" content="本机文件脱敏：合同、病历、报表、扫描件在本机完成识别与脱敏，只把处理过的版本交给 AI。">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="sitebar">
+  <div class="inner">
+    <a class="logo" href="/">
+      <span class="seal"><span>隐</span><span>站</span></span>
+      <span class="name">数据隐站<small>SANITIZED_DATA</small></span>
+    </a>
+    <nav>
+      <a href="/" class="on">首页</a>
+      <a href="/console">控制台</a>
+      <a href="/download">下载</a>
+      <a href="/mcp">MCP 接入</a>
+      <a href="/console" class="cta">开始使用 →</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <div>
+      <div class="eyebrow">LOCAL-FIRST · 本机脱敏</div>
+      <h1>文件交给 AI 之前，<br>最后一道本地的门</h1>
+      <p class="lead">
+        律师的卷宗、医生的病历、财务的报表、测绘的正射影像 ——
+        在本机完成识别与脱敏，只把处理过的版本交出去。
+        大模型看到的永远是换过名字、涂黑过的那一份。
+      </p>
+      <div class="btns">
+        <a class="btn primary" href="/console">打开控制台 →</a>
+        <a class="btn" href="/download">下载桌面版</a>
+        <a class="btn" href="/mcp">接入 MCP</a>
+      </div>
+      <div class="chips">
+        <span class="chip">全程本机 · 不联网</span>
+        <span class="chip">扫描件 OCR</span>
+        <span class="chip">公章 / 手写签名</span>
+        <span class="chip">可逆 · 不可逆双轨</span>
+      </div>
+    </div>
+
+    <div class="doc" aria-hidden="true">
+      <div class="meta"><span>隐站 · 输出副本</span><span class="cls">已隐去</span></div>
+      <h4>委托代理合同</h4>
+      <p>
+        委托人（甲方）：<span class="bar" style="width:58px"></span><br>
+        身份证号码：<span class="bar" style="width:132px"></span><br>
+        住　　　　址：<span class="bar" style="width:170px"></span><br>
+        联系电话：<span class="bar" style="width:88px"></span>
+      </p>
+      <p style="margin-top:16px">
+        受托人（乙方）：<span class="bar" style="width:140px"></span><br>
+        案　　　　号：<span class="bar" style="width:126px"></span><br>
+        争议标的额：<span class="bar" style="width:104px"></span>
+      </p>
+      <div class="stamp">已 隐 去</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>它能做什么</h2>
+    <p class="muted" style="margin-bottom:26px">不是简单打码，是把「文件 → 大模型」这一段完整接管</p>
+    <div class="grid g4">
+      <div class="card">
+        <div class="ico">01 / 识别</div>
+        <h3>扫描件也能读</h3>
+        <p>PDF、Word、Excel、图片、TIF 正射影像。没有文本层的扫描件自动走离线 OCR，逐页上报进度，随时可停。</p>
+      </div>
+      <div class="card">
+        <div class="ico">02 / 视觉</div>
+        <h3>公章与手写</h3>
+        <p>OCR 读不出红色印章和连笔签名，改用图像特征识别：红章直接涂黑，落款签署区整块盖住，手写标为待确认。</p>
+      </div>
+      <div class="card">
+        <div class="ico">03 / 双轨</div>
+        <h3>两个出口</h3>
+        <p>给 AI 读的换名版（映射加密留在本机，可还原）；给人看的涂黑版（破坏性重写，不可还原）。</p>
+      </div>
+      <div class="card">
+        <div class="ico">04 / 自检</div>
+        <h3>出口前再过一遍</h3>
+        <p>导出后对成品重新解析、重新检测，原文还在就拒绝交付。审计日志带签名链，改一条后续全废。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>支持的格式</h2>
+    <p class="muted" style="margin-bottom:22px">解析器是插件式的，新增格式不用改管线</p>
+    <div class="chips" style="gap:10px">
+      <span class="chip">PDF（文本层 / 扫描件）</span>
+      <span class="chip">Word .docx</span>
+      <span class="chip">Excel .xlsx</span>
+      <span class="chip">图片 .png / .jpg（OCR）</span>
+      <span class="chip">TIF 正射影像（剥离地理标签）</span>
+      <span class="chip">纯文本 .txt / .md / .csv / .log</span>
+      <span class="chip">三维 .obj / .ply / .glb / .stl</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>三个入口</h2>
+    <p class="muted" style="margin-bottom:26px">本机跑引擎，浏览器做界面，Agent 走 MCP —— 同一个内核</p>
+    <div class="grid g3">
+      <a class="card" href="/console">
+        <div class="ico">CONSOLE</div>
+        <h3>控制台</h3>
+        <p>拖入文件 → 左右对照 → 框选补漏 → 交付。最直观的方式，适合第一次使用。</p>
+        <div class="go">打开控制台 →</div>
+      </a>
+      <a class="card" href="/download">
+        <div class="ico">DOWNLOAD</div>
+        <h3>下载</h3>
+        <p>Windows / Linux 安装包。解压即用，不需要联网，模型随包分发。</p>
+        <div class="go">前往下载 →</div>
+      </a>
+      <a class="card" href="/mcp">
+        <div class="ico">MCP</div>
+        <h3>MCP 接入</h3>
+        <p>让 Claude、Cursor 等 Agent 在调用模型前自动脱敏。四条配置，复制即用。</p>
+        <div class="go">查看接入方式 →</div>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap inner">
+    <span>数据隐站 · Sanitized_Data v1.0.0</span>
+    <span>·</span>
+    <span>本机处理 · 不联网 · 不留存</span>
+    <span style="margin-left:auto">
+      <a href="/console">控制台</a> ·
+      <a href="/download">下载</a> ·
+      <a href="/mcp">MCP</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

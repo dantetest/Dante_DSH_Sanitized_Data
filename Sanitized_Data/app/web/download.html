@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>下载 · 数据隐站</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="sitebar">
+  <div class="inner">
+    <a class="logo" href="/">
+      <span class="seal"><span>隐</span><span>站</span></span>
+      <span class="name">数据隐站<small>SANITIZED_DATA</small></span>
+    </a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/console">控制台</a>
+      <a href="/download" class="on">下载</a>
+      <a href="/mcp">MCP 接入</a>
+      <a href="/console" class="cta">开始使用 →</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="dl-hero" style="border-bottom:0;padding-bottom:0">
+    <div class="eyebrow">DOWNLOAD · 本地部署</div>
+    <h1 style="font-size:clamp(26px,3.4vw,36px)">下载数据隐站</h1>
+    <p class="lead" style="max-width:720px">
+      解压即用，模型随包分发，首次启动不需要联网。
+      运行需要本机已安装 Python 3.10 及以上版本。
+    </p>
+    <div class="chips">
+      <span class="chip">版本 v1.0.0</span>
+      <span class="chip">Windows x64</span>
+      <span class="chip">Linux x64</span>
+      <span class="chip">离线可用</span>
+    </div>
+  </section>
+
+  <section style="padding-top:34px">
+    <div class="dl-grid">
+      <div class="dl">
+        <div class="os">WINDOWS · x64</div>
+        <div class="file">Sanitized_Data-1.0.0-win64.zip</div>
+        <div class="size">309 KB · 解压后约 3 MB</div>
+        <p class="muted" style="font-size:12px">
+          解压后双击 <code>启动.bat</code>，浏览器自动打开控制台。
+        </p>
+        <div class="act">
+          <a class="btn primary" href="downloads/Sanitized_Data-1.0.0-win64.zip" download>下载 Windows 版 ↓</a>
+        </div>
+      </div>
+
+      <div class="dl">
+        <div class="os">LINUX · x64</div>
+        <div class="file">Sanitized_Data-1.0.0-linux64.tar.gz</div>
+        <div class="size">309 KB · 解压后约 3 MB</div>
+        <p class="muted" style="font-size:12px">
+          解压后执行 <code>./start.sh</code>；服务器部署见下方 systemd / nginx 说明。
+        </p>
+        <div class="act">
+          <a class="btn primary" href="downloads/Sanitized_Data-1.0.0-linux64.tar.gz" download>下载 Linux 版 ↓</a>
+        </div>
+      </div>
+    </div>
+
+    <table class="spec">
+      <tr><th>SHA-256（Windows）</th><td><code style="word-break:break-all">e14914af5e018a1a9be7bb1b12946d37623bc8cf2811e00b62baabaa3c1ed9c4</code></td></tr>
+      <tr><th>SHA-256（Linux）</th><td><code style="word-break:break-all">fb2f60b9b0cb839d62d263e509ade66340d252342aff3297ad7b3495646eb500</code></td></tr>
+      <tr><th>运行环境</th><td>Python 3.10+ · 约 300 MB 内存 · OCR 首次加载约 2 秒</td></tr>
+      <tr><th>依赖</th><td>解压后执行 <code>pip install -r app/server/requirements.txt</code>（含离线 OCR 模型）</td></tr>
+      <tr><th>网络</th><td>除安装依赖外不需要联网；引擎本身不发任何外呼</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>三步跑起来</h2>
+    <div class="steps">
+      <div class="step">
+        <div>
+          <h3>解压并安装依赖</h3>
+          <pre><span class="c"># Windows / Linux 通用</span>
+unzip Sanitized_Data-1.0.0-win64.zip
+cd Sanitized_Data-1.0.0
+pip install -r app/server/requirements.txt</pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>启动</h3>
+          <pre><span class="c"># Windows</span>
+双击 启动.bat
+
+<span class="c"># Linux / macOS</span>
+chmod +x start.sh && ./start.sh</pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>打开控制台</h3>
+          <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
+            默认地址 <code>http://127.0.0.1:8760/console</code>，启动后会自动打开浏览器。
+            拖入文件即可开始。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>服务器部署</h2>
+    <p class="muted" style="margin-bottom:18px">包里自带 <code>deploy/sanitized-data.service</code> 与 <code>deploy/nginx.conf</code></p>
+    <div class="grid g2">
+      <div class="card">
+        <div class="ico">SYSTEMD</div>
+        <h3>开机自启</h3>
+        <pre style="margin-top:10px">sudo cp deploy/sanitized-data.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now sanitized-data
+systemctl status sanitized-data</pre>
+      </div>
+      <div class="card">
+        <div class="ico">NGINX</div>
+        <h3>HTTPS 反代</h3>
+        <p>关键是把真实域名透传给后端，否则同源校验会判定为跨站：</p>
+        <pre style="margin-top:10px"><span class="k">proxy_set_header</span> Host              <span class="s">$http_host</span>;
+<span class="k">proxy_set_header</span> X-Forwarded-Host  <span class="s">$host</span>;
+<span class="k">client_max_body_size</span> <span class="s">512m</span>;</pre>
+      </div>
+    </div>
+    <div class="note">
+      <b>对外服务时</b>请用 <code>./start.sh --host 127.0.0.1</code> 只监听本机，由 nginx 提供 HTTPS；
+      不要把引擎直接暴露在公网。
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap inner">
+    <span>数据隐站 · Sanitized_Data v1.0.0</span>
+    <span>·</span>
+    <span>本机处理 · 不联网 · 不留存</span>
+    <span style="margin-left:auto">
+      <a href="/">首页</a> ·
+      <a href="/console">控制台</a> ·
+      <a href="/mcp">MCP</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

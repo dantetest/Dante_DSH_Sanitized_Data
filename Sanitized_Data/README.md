@@ -31,19 +31,101 @@ Word / Excel / 文本走**流式排版**（不是页面截图），表格单元�
 ## 快速开始
 
 ```powershell
-# 1. 装依赖（只需一次）
+# Windows
 pip install -r app\server\requirements.txt
-
-# 2. 启动（任选其一）
 双击「启动.bat」          # 或 start.bat
-python app\server\run.py
+
+# Linux / macOS
+pip3 install -r app/server/requirements.txt
+chmod +x start.sh && ./start.sh
 ```
 
 浏览器会自动打开 `http://127.0.0.1:8760`（端口被占会顺延到 8840）。
 
-**用法**：把文件拖进纸堆 → 等识别 → 左右对照 → 漏了的用「框选补漏」→ 交付。
+**用法**：首页 →「打开控制台」→ 把文件拖进纸堆 → 等识别 → 左右对照 → 漏了的用「框选补漏」→ 交付。
 
 启动后控制台会打印解析器、OCR 状态、数据目录和实际端口；`Ctrl+C` 退出，退出时自动清掉上传副本和预览中间件。
+
+### 站点结构
+
+| 路径 | 页面 | 说明 |
+|---|---|---|
+| `/` | 首页 | 介绍、入口、能力概览 |
+| `/console` | 控制台 | 主工作区（投放 / 识别 / 对照 / 交付） |
+| `/download` | 下载 | Windows / Linux 安装包、校验值、部署说明 |
+| `/mcp` | MCP 接入 | 让 Claude Desktop / Cursor 等 Agent 自动脱敏 |
+
+左上角的印章和「数据隐站」是回到首页的链接，控制台顶栏也有「首页 / 下载 / MCP 接入」导航。
+
+### Linux 启动参数
+
+```bash
+./start.sh                            # 仅本机访问（默认 127.0.0.1:8760）
+./start.sh --host 0.0.0.0             # 监听所有网卡（对外提供服务时用）
+PORT=9000 ./start.sh                  # 指定端口
+BIND_HOST=0.0.0.0 ./start.sh          # 也可用环境变量
+```
+
+---
+
+## MCP 接入
+
+`app/server/mcp_server.py` 是一个 stdio 的 MCP 服务，让支持 MCP 的 Agent
+在把文件交给模型之前先调用本机脱敏。
+
+| 工具 | 作用 |
+|---|---|
+| `sanitize_document` | 脱敏一个本地文件，返回可外发副本路径 |
+| `redact_text` | 就地脱敏一段文本（适合发日志/报错前过一遍） |
+| `check_support` | 检查格式是否支持 |
+| `list_rules` | 列出规则包 |
+
+Claude Desktop 的 `claude_desktop_config.json`：
+
+```json
+{
+  "mcpServers": {
+    "sanitized-data": {
+      "command": "python",
+      "args": ["D:\\Sanitized_Data\\app\\server\\mcp_server.py"]
+    }
+  }
+}
+```
+
+完整配置（Cursor、通用 stdio、验证步骤）见 `/mcp` 页面。
+
+---
+
+## 服务器部署
+
+仓库里的 `deploy/` 带两个文件：
+
+| 文件 | 用途 |
+|---|---|
+| `deploy/sanitized-data.service` | systemd 开机自启 |
+| `deploy/nginx.conf` | HTTPS 反向代理示例 |
+
+```bash
+sudo cp deploy/sanitized-data.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now sanitized-data
+```
+
+**反向代理必须透传真实域名**，否则服务端的同源校验会把正常请求判成跨站：
+
+```nginx
+proxy_set_header Host              $http_host;
+proxy_set_header X-Forwarded-Host  $host;
+client_max_body_size 512m;
+```
+
+服务端做的是「主机名比较」（忽略协议和端口），并优先信任 `X-Forwarded-Host`，
+所以 `https://cka.blctek.com:8443` → 后端 `cka.blctek.com` 这种组合是能通过的。
+如果还有问题，可以用环境变量显式放行：
+
+```bash
+YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
+```
 
 ---
 
@@ -196,11 +278,16 @@ python ..\tests\e2e.py
 
 ```
 Sanitized_Data/
-├─ 启动.bat                 双击启动
+├─ 启动.bat / start.bat     Windows 双击启动
+├─ start.sh                 Linux / macOS 启动
+├─ deploy/
+│  ├─ sanitized-data.service  systemd 单元
+│  └─ nginx.conf              HTTPS 反代示例
 ├─ app/
 │  ├─ server/               引擎
 │  │  ├─ CONTRACT.md        模块契约（改代码先看这个）
 │  │  ├─ run.py             入口
+│  │  ├─ mcp_server.py      MCP 服务（stdio）
 │  │  └─ yinzhan/
 │  │     ├─ udm.py          统一文档模型
 │  │     ├─ pipeline.py     五段管线
@@ -210,7 +297,12 @@ Sanitized_Data/
 │  │     ├─ detectors/      检测插件
 │  │     ├─ replacers/      替换插件
 │  │     └─ rules/          规则包
-│  ├─ web/                  控制台（离线，无 CDN）
+│  ├─ web/                  站点（离线，无 CDN）
+│  │  ├─ home.html          首页
+│  │  ├─ index.html         控制台
+│  │  ├─ download.html      下载页
+│  │  ├─ mcp.html           MCP 接入页
+│  │  └─ downloads/         安装包（Windows zip / Linux tar.gz）
 │  └─ tests/                自检脚本
 ├─ samples/                 测试文件
 ├─ out/                     导出的成品
@@ -237,6 +329,38 @@ python app\server\rehydrate.py --job j_ab12cd34 回答.txt    # 还原成 回答
 
 **端口被占了？**
 自动从 8760 往后找，实际端口写在 `data/runtime.json`。
+
+**部署到服务器后，上传文件报「跨站请求被拒绝」？**
+这是服务端的防 CSRF 校验：它比对浏览器发来的 `Origin` 和请求的 `Host`。
+反向代理把 `Host` 改写掉之后两者对不上，就会被拦。
+
+服务端现在的判定逻辑是「只比主机名，忽略协议和端口」，并优先看 `X-Forwarded-Host`，
+所以常见的三种情况都能过：
+
+| 场景 | 结果 |
+|---|---|
+| 直连 `http://127.0.0.1:8760` | 通过 |
+| 反代 `Host $host`（端口被剥掉） | 通过 |
+| 反代 `Host` 被改写，但带 `X-Forwarded-Host` | 通过 |
+| 真正的跨站请求 | 拦截并写入 `data/server.log` |
+
+还不行就显式放行：
+
+```bash
+YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
+```
+
+对应的 nginx 配置必须包含：
+
+```nginx
+proxy_set_header Host              $http_host;
+proxy_set_header X-Forwarded-Host  $host;
+client_max_body_size 512m;
+```
+
+**对外提供服务怎么启动？**
+`./start.sh --host 127.0.0.1`（只监听本机，由 nginx 提供 HTTPS）。
+不要把引擎直接绑 `0.0.0.0` 暴露到公网——它没有账号体系。
 
 **扫描件为什么慢？能中途停吗？**
 扫描件没有文本层，只能一页一页跑离线 OCR。当前默认用 **PP-OCRv6 small**，

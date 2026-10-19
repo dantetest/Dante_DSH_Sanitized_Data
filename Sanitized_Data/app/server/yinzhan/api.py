@@ -51,6 +51,21 @@ def _is_client_gone(exc: BaseException) -> bool:
     return getattr(exc, "winerror", None) == 10054
 
 
+def _host_only(value: str) -> str:
+    """从 Origin/Host/X-Forwarded-Host 里取出主机名：小写、去协议、去端口。"""
+    if not value:
+        return ""
+    v = str(value).strip().lower()
+    if "://" in v:
+        v = v.split("://", 1)[1]
+    v = v.split("/", 1)[0]
+    if "@" in v:                      # user:pass@host
+        v = v.rsplit("@", 1)[1]
+    if v.startswith("["):             # IPv6 字面量
+        return v.split("]", 1)[0] + "]"
+    return v.split(":", 1)[0]
+
+
 ROUTES: list[tuple[str, re.Pattern, str]] = []
 
 
@@ -246,11 +261,35 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": {"code": "internal", "message": str(exc)}}, 500)
 
     def _same_origin(self) -> bool:
+        """防 CSRF：只接受「同源」的写请求。
+
+        部署在 nginx/Caddy 反代后面时，Origin 是 https://cka.blctek.com:8443，
+        但 Host 可能被改写成 cka.blctek.com 或 127.0.0.1:8760，
+        直接字符串比较会把正常请求全拦掉。所以这里只比主机名，
+        并优先信任反向代理传来的 X-Forwarded-Host。
+        """
         origin = self.headers.get("Origin")
         if not origin:
+            return True                     # 非浏览器（curl / MCP / 本地脚本）
+        origin_host = _host_only(origin)
+        if not origin_host or origin_host == "null":
             return True
-        host = self.headers.get("Host", "")
-        return origin in (f"http://{host}", f"https://{host}")
+        candidates = []
+        for key in ("X-Forwarded-Host", "Host", "X-Real-Host", "X-Forwarded-Server"):
+            raw = self.headers.get(key)
+            if raw:
+                candidates.append(_host_only(raw.split(",")[0].strip()))
+        if origin_host in [c for c in candidates if c]:
+            return True
+        # 额外白名单：YINZHAN_ALLOWED_ORIGINS="https://a.com,https://b.com"
+        allowed = os.environ.get("YINZHAN_ALLOWED_ORIGINS", "")
+        for item in allowed.split(","):
+            item = item.strip()
+            if item and _host_only(item) == origin_host:
+                return True
+        log_error("跨站请求被拒 origin=%s host=%s xfh=%s" % (
+            origin, self.headers.get("Host"), self.headers.get("X-Forwarded-Host")))
+        return False
 
     # ── 请求体 ──
     def _read_body(self) -> bytes:
@@ -265,10 +304,25 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(n)
 
     # ── 静态文件 ──
+    # 站点结构：/ 首页 · /console 控制台 · /download 下载 · /mcp MCP 接入
+    PAGE_ALIASES = {
+        "": "home.html",
+        "index.html": "home.html",
+        "home": "home.html",
+        "console": "index.html",
+        "console/": "index.html",
+        "app": "index.html",
+        "app/": "index.html",
+        "download": "download.html",
+        "download/": "download.html",
+        "mcp": "mcp.html",
+        "mcp/": "mcp.html",
+    }
+
     def _static(self, path: str) -> bool:
         rel = path.lstrip("/")
-        if rel in ("", "index.html"):
-            target = WEB_DIR / "index.html"
+        if rel in self.PAGE_ALIASES:
+            target = WEB_DIR / self.PAGE_ALIASES[rel]
         else:
             target = (WEB_DIR / rel).resolve()
             try:
@@ -281,7 +335,12 @@ class Handler(BaseHTTPRequestHandler):
         ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript",):
             ctype += "; charset=utf-8"
-        self._send(200, target.read_bytes(), ctype)
+        data = target.read_bytes()
+        # 安装包体积大，允许浏览器缓存
+        extra = {}
+        if rel.startswith("downloads/"):
+            extra["Cache-Control"] = "public, max-age=86400"
+        self._send(200, data, ctype, extra=extra)
         return True
 
     # ── 分发 ──

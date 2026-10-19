@@ -1,0 +1,25 @@
+[Unit]
+Description=Sanitized Data (数据隐站) local redaction engine
+After=network.target
+
+[Service]
+Type=simple
+User=sanitized
+Group=sanitized
+WorkingDirectory=/opt/sanitized-data
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONUTF8=1
+Environment=NO_BROWSER=1
+# 只监听本机，由 nginx 反代对外提供 HTTPS
+ExecStart=/opt/sanitized-data/start.sh --host 127.0.0.1 --port 8760
+Restart=on-failure
+RestartSec=3
+# 加固：限制可写目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sanitized-data/data /opt/sanitized-data/out
+
+[Install]
+WantedBy=multi-user.target

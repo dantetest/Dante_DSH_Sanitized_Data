@@ -28,7 +28,7 @@ BANNER = r"""
 """
 
 
-def pick_port(preferred: int | None = None) -> int:
+def pick_port(host: str, preferred: int | None = None) -> int:
     if preferred:
         return preferred
     lo, hi = PORT_RANGE
@@ -36,18 +36,19 @@ def pick_port(preferred: int | None = None) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                s.bind((HOST, p))
+                s.bind((host, p))
                 return p
             except OSError:
                 continue
     return lo
 
 
-def write_runtime(port: int) -> None:
+def write_runtime(host: str, port: int) -> None:
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     payload = {
         "app": APP_NAME, "version": VERSION,
-        "host": HOST, "port": port,
-        "url": f"http://{HOST}:{port}",
+        "host": host, "port": port,
+        "url": f"http://{shown}:{port}",
         "pid": os.getpid(),
         "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
@@ -69,6 +70,9 @@ def preload() -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="数据隐站本地引擎")
     ap.add_argument("--port", type=int, default=None)
+    ap.add_argument("--host", default=HOST,
+                    help="监听地址。默认 127.0.0.1（仅本机）；"
+                         "要对外提供服务（如放在 nginx 反代后面）用 0.0.0.0")
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--no-ocr", action="store_true")
     args = ap.parse_args(argv)
@@ -90,12 +94,19 @@ def main(argv: list[str] | None = None) -> int:
     if purged:
         print(f"  已清理    {purged} 个上次残留的临时文件")
 
-    port = pick_port(args.port or PORT)
-    httpd = serve(HOST, port)
-    write_runtime(port)
-    url = f"http://{HOST}:{port}"
-    print(f"\n  控制台    {url}")
-    print("  按 Ctrl+C 退出\n")
+    bind_host = args.host or HOST
+    port = pick_port(bind_host, args.port or PORT)
+    httpd = serve(bind_host, port)
+    write_runtime(bind_host, port)
+    public = "127.0.0.1" if bind_host in ("0.0.0.0", "::") else bind_host
+    url = f"http://{public}:{port}"
+    print(f"\n  首页      {url}/")
+    print(f"  控制台    {url}/console")
+    print(f"  下载页    {url}/download")
+    print(f"  MCP 接入  {url}/mcp")
+    if bind_host in ("0.0.0.0", "::"):
+        print("  ⚠ 已监听所有网卡。对外提供服务请务必套 HTTPS 反向代理并加访问控制。")
+    print("\n  按 Ctrl+C 退出\n")
 
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()

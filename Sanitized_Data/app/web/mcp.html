@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP 接入 · 数据隐站</title>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="sitebar">
+  <div class="inner">
+    <a class="logo" href="/">
+      <span class="seal"><span>隐</span><span>站</span></span>
+      <span class="name">数据隐站<small>SANITIZED_DATA</small></span>
+    </a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/console">控制台</a>
+      <a href="/download">下载</a>
+      <a href="/mcp" class="on">MCP 接入</a>
+      <a href="/console" class="cta">开始使用 →</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="dl-hero" style="border-bottom:0;padding-bottom:0">
+    <div class="eyebrow">MCP · MODEL CONTEXT PROTOCOL</div>
+    <h1 style="font-size:clamp(26px,3.4vw,36px)">让你的 Agent 自动脱敏</h1>
+    <p class="lead" style="max-width:760px">
+      MCP 是 Agent 调用外部工具的通用协议。装好这个服务之后，
+      Claude Desktop、Cursor 等支持 MCP 的客户端在把本地文件交给模型之前，
+      会先调用本机的脱敏工具 —— 模型拿到的永远是处理过的那一份。
+    </p>
+    <div class="chips">
+      <span class="chip">stdio 本地进程</span>
+      <span class="chip">不经网络</span>
+      <span class="chip">4 个工具</span>
+      <span class="chip">无需账号</span>
+    </div>
+    <div class="btns">
+      <a class="btn primary" href="/download">先下载安装包 →</a>
+      <a class="btn" href="#config">直接看配置</a>
+    </div>
+  </section>
+
+  <section>
+    <h2>它提供什么工具</h2>
+    <p class="muted" style="margin-bottom:24px">Agent 能调用这四个工具，全部在本机执行</p>
+    <div class="grid g2">
+      <div class="card">
+        <div class="ico">TOOL 01</div>
+        <h3><code>sanitize_document</code></h3>
+        <p>把一个本地文件脱敏，返回可外发副本的路径。支持 PDF / DOCX / XLSX / 图片 / TIF / TXT。</p>
+        <pre style="margin-top:12px"><span class="c">// 参数</span>
+{ <span class="k">"path"</span>: <span class="s">"D:\\合同.pdf"</span>,
+  <span class="k">"mode"</span>: <span class="s">"ai"</span> | <span class="s">"human"</span>,
+  <span class="k">"strictness"</span>: <span class="s">"standard"</span> }</pre>
+      </div>
+      <div class="card">
+        <div class="ico">TOOL 02</div>
+        <h3><code>redact_text</code></h3>
+        <p>把一段文本里的敏感信息就地替换，返回脱敏后的文本。适合发日志、报错、聊天内容之前先过一遍。</p>
+        <pre style="margin-top:12px"><span class="c">// 输入</span>
+委托人张伟，身份证310104198703124510
+<span class="c">// 返回</span>
+委托人陈志远，身份证310104********4518</pre>
+      </div>
+      <div class="card">
+        <div class="ico">TOOL 03</div>
+        <h3><code>check_support</code></h3>
+        <p>检查某个文件格式是否支持、会被哪套规则包处理。调用前先问一句，避免白跑。</p>
+      </div>
+      <div class="card">
+        <div class="ico">TOOL 04</div>
+        <h3><code>list_rules</code></h3>
+        <p>列出本机可用的规则包与规则条目（通用 / 法律 / 医疗 / 财务 / 测绘）。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="config">
+    <h2>配置（复制即用）</h2>
+    <p class="muted" style="margin-bottom:8px">
+      把下面的 JSON 合并进客户端的配置文件，重启客户端即可。
+      <b style="color:var(--seal);font-weight:400">路径要改成你自己的绝对路径。</b>
+    </p>
+
+    <h3 style="margin-top:30px">Claude Desktop</h3>
+    <p class="muted" style="margin-bottom:10px">
+      Windows：<code>%APPDATA%\Claude\claude_desktop_config.json</code> ·
+      macOS：<code>~/Library/Application Support/Claude/claude_desktop_config.json</code>
+    </p>
+    <div class="codewrap">
+      <pre id="cfg-claude">{
+  "mcpServers": {
+    "sanitized-data": {
+      "command": "python",
+      "args": [
+        "D:\\Sanitized_Data\\app\\server\\mcp_server.py"
+      ]
+    }
+  }
+}</pre>
+      <button class="btn copy" data-target="cfg-claude">复制</button>
+    </div>
+
+    <h3 style="margin-top:30px">Cursor</h3>
+    <p class="muted" style="margin-bottom:10px">
+      项目内 <code>.cursor/mcp.json</code> 或全局 <code>~/.cursor/mcp.json</code>
+    </p>
+    <div class="codewrap">
+      <pre id="cfg-cursor">{
+  "mcpServers": {
+    "sanitized-data": {
+      "command": "python",
+      "args": ["D:\\Sanitized_Data\\app\\server\\mcp_server.py"],
+      "env": {}
+    }
+  }
+}</pre>
+      <button class="btn copy" data-target="cfg-cursor">复制</button>
+    </div>
+
+    <h3 style="margin-top:30px">其他 MCP 客户端（通用 stdio）</h3>
+    <div class="codewrap">
+      <pre id="cfg-generic"><span class="c"># 启动命令（stdio，JSON-RPC 2.0）</span>
+python D:\Sanitized_Data\app\server\mcp_server.py
+
+<span class="c"># Linux / macOS</span>
+python3 /opt/sanitized-data/app/server/mcp_server.py</pre>
+      <button class="btn copy" data-target="cfg-generic">复制</button>
+    </div>
+
+    <div class="note" style="margin-top:26px">
+      <b>路径怎么写：</b>Windows 的 JSON 里反斜杠要写两个 <code>\\</code>；
+      如果 <code>python</code> 不在 PATH 里，把 <code>command</code> 换成 Python 的绝对路径，
+      例如 <code>C:\\Python312\\python.exe</code>。
+    </div>
+  </section>
+
+  <section>
+    <h2>验证是否装好</h2>
+    <div class="steps">
+      <div class="step">
+        <div>
+          <h3>先在终端里试跑一次</h3>
+          <pre>python app/server/mcp_server.py
+<span class="c"># 看到这行就说明服务本身没问题：</span>
+[sanitized-data] MCP 服务已启动（stdio），工具：sanitize_document, redact_text, ...</pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>在客户端里提问</h3>
+          <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
+            重启客户端后，让它调用工具：<code>帮我把 D:\合同.pdf 脱敏后总结要点</code>。
+            Agent 会先调 <code>sanitize_document</code> 拿到脱敏副本，再基于副本回答。
+          </p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>确认客户端认到了服务</h3>
+          <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
+            在客户端的 MCP / 工具列表里应该能看到 <code>sanitized-data</code>，
+            以及它下面的四个工具。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>安全边界</h2>
+    <div class="grid g3">
+      <div class="card">
+        <div class="ico">传输</div>
+        <h3>不出本机</h3>
+        <p>MCP 走 stdio，父子进程管道通信，不开端口、不走网络。</p>
+      </div>
+      <div class="card">
+        <div class="ico">数据</div>
+        <h3>临时副本即用即删</h3>
+        <p>上传副本和预览中间件在任务结束或退出时清除，成品才保留。</p>
+      </div>
+      <div class="card">
+        <div class="ico">审计</div>
+        <h3>可举证</h3>
+        <p>每次脱敏写一条签名审计记录，只记类型和数量，不记原值。</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap inner">
+    <span>数据隐站 · Sanitized_Data v1.0.0</span>
+    <span>·</span>
+    <span>本机处理 · 不联网 · 不留存</span>
+    <span style="margin-left:auto">
+      <a href="/">首页</a> ·
+      <a href="/console">控制台</a> ·
+      <a href="/download">下载</a>
+    </span>
+  </div>
+</footer>
+
+<style>
+.codewrap{position:relative}
+.codewrap .copy{position:absolute;top:12px;right:12px;padding:7px 12px;font:400 11px/1 var(--mono);
+  background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.22);color:#D8CDBA}
+.codewrap .copy:hover{background:rgba(255,255,255,.2);color:#fff}
+.codewrap .copy.done{background:var(--seal);border-color:var(--seal);color:#fff}
+</style>
+<script>
+document.querySelectorAll('.copy').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var pre = document.getElementById(btn.dataset.target);
+    if (!pre) return;
+    var text = pre.innerText;
+    var done = function () {
+      var old = btn.textContent;
+      btn.textContent = '已复制';
+      btn.classList.add('done');
+      setTimeout(function () { btn.textContent = old; btn.classList.remove('done'); }, 1600);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
+    } else {
+      fallback(text, done);
+    }
+  });
+});
+function fallback(text, done) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) {}
+  document.body.removeChild(ta);
+}
+</script>
+
+</body>
+</html>
