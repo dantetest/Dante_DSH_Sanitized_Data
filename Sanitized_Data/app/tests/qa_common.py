@@ -1,0 +1,1757 @@
+# -*- coding: utf-8 -*-
+"""数据隐站 · 回归门禁共享工具（qa 所有，测试专用）。
+
+职责：
+  * 采集"基线事实"（e2e、逐样例解析/检测/导出/元数据、规则包、注册表、
+    安全静态扫描、HTTP 静态冒烟 + 真实主路径、已知边界快照）；
+  * 提供回归检查复用的探针（PDF/DOCX/XLSX/图片/TIFF 元数据读取、HTTP 客户端等）。
+
+被 ``app/tests/regression.py`` 使用；也可单独 import 做实验。
+只写临时目录：所有数据目录/导出文件均放在调用方给的 work_root（默认临时目录）下。
+
+注意：Windows 控制台默认 GBK，跑测试请用 ``python -X utf8``。
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+SERVER = REPO / "app" / "server"
+TESTS = REPO / "app" / "tests"
+SAMPLES = REPO / "samples"
+BASELINE_DIR = TESTS / "baseline"
+BASELINE_JSON = BASELINE_DIR / "baseline.json"
+SNAPSHOT_MD = BASELINE_DIR / "SNAPSHOT.md"
+
+PY = sys.executable
+GREEN, RED, YELLOW, DIM, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m"
+
+# 由 setup() 初始化
+WORK = Path()
+DATA = Path()
+EXPORTS = Path()
+NET = Path()
+_READY = False
+
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+ALLOWED_FMTS = {"pdf", "docx", "xlsx", "text", "image", "tiff", "mesh"}
+ALLOWED_LEVELS = {"L0", "L1", "L2", "L3"}
+META_KEYS = {"author", "creator", "producer", "subject", "keywords", "title",
+             "creationdate", "moddate", "last_modified_by", "company", "manager"}
+
+CORE_NS = "{http://purl.org/dc/elements/1.1/}"
+CP_NS = "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}"
+APP_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/extended-properties}"
+
+GEO_TAGS = {33550: "ModelPixelScaleTag", 33922: "ModelTiepointTag",
+            34264: "ModelTransformationTag", 34735: "GeoKeyDirectoryTag",
+            34736: "GeoDoubleParamsTag", 34737: "GeoAsciiParamsTag",
+            42112: "GDAL_METADATA", 42113: "GDAL_NODATA"}
+# RPC（有理多项式系数）标签：真实遥感定位参数，必须为 0
+RPC_TAGS = {50844: "RPCCoefficientTag", 50845: "RPCTransformTag"}
+# 中性化 LOCAL_CS 允许保留的物理结构标签（D3 已批准：本地任意 CRS，可 GIS 打开）
+LOCAL_CRS_ALLOWED_TAGS = {34264, 34735, 34737}
+LOCAL_CRS_MARKER = "sanitized_data local arbitrary"
+# GeoKeyDirectory 里的"真实 CRS"键：2048 地理坐标系 / 3072 投影坐标系
+REAL_CRS_KEYS = {2048: "GeographicTypeGeoKey", 3072: "ProjectedCSTypeGeoKey"}
+
+# TIFF 展示性标签：允许保留（方向/分辨率/单位）
+KEEP_TIFF_TAGS = {274, 282, 283, 296}
+
+ANSI_RE = ANSI
+
+
+# ════════════════════════ 环境 ════════════════════════
+def setup(work_root: str | Path | None = None, clean: bool = False) -> Path:
+    """建临时目录、写环境变量、把 app/server 加进 sys.path。
+
+    必须在 import yinzhan.* 之前调用（config 在 import 时读环境变量）。
+    """
+    global WORK, DATA, EXPORTS, NET, _READY
+    if work_root is None:
+        import tempfile
+        work_root = tempfile.mkdtemp(prefix="yz_qa_")
+    WORK = Path(work_root)
+    if clean and WORK.exists():
+        import shutil
+        shutil.rmtree(WORK, ignore_errors=True)
+    DATA = WORK / "data"
+    EXPORTS = WORK / "exports"
+    NET = WORK / "http"
+    for d in (DATA, EXPORTS, NET):
+        d.mkdir(parents=True, exist_ok=True)
+    os.environ["YINZHAN_DATA_DIR"] = str(DATA)
+    os.environ["YINZHAN_OUTPUT_DIR"] = str(DATA / "out")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.pop("YINZHAN_DEBUG", None)
+    if str(SERVER) not in sys.path:
+        sys.path.insert(0, str(SERVER))
+    _READY = True
+    return WORK
+
+
+def ensure_ready() -> None:
+    if not _READY:
+        setup()
+
+
+# ════════════════════════ 小工具 ════════════════════════
+def say(msg: str = "") -> None:
+    print(msg, flush=True)
+
+
+def now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: str | Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def run_cmd(args: list[str], cwd: Path | None = None, timeout: int = 120) -> dict:
+    try:
+        p = subprocess.run(args, cwd=str(cwd or REPO), capture_output=True,
+                           timeout=timeout)
+        return {"code": p.returncode,
+                "out": p.stdout.decode("utf-8", "replace").strip(),
+                "err": p.stderr.decode("utf-8", "replace").strip()}
+    except Exception as exc:  # noqa: BLE001
+        return {"code": None, "out": "", "err": f"{type(exc).__name__}: {exc}"}
+
+
+def all_text(doc) -> str:
+    parts = []
+    for page in doc.pages:
+        for b in page.blocks:
+            if b.text:
+                parts.append(b.text)
+            for c in getattr(b, "cells", []) or []:
+                if c.text:
+                    parts.append(c.text)
+    return "\n".join(parts)
+
+
+# ════════════════════════ 元信息 ════════════════════════
+def capture_meta() -> dict:
+    head = run_cmd(["git", "-C", str(REPO), "rev-parse", "HEAD"])["out"]
+    branch = run_cmd(["git", "-C", str(REPO), "rev-parse", "--abbrev-ref", "HEAD"])["out"]
+    engine_status = run_cmd(["git", "-C", str(REPO), "status", "--porcelain", "--",
+                             "app/server", "samples"])["out"]
+    tests_status = run_cmd(["git", "-C", str(REPO), "status", "--porcelain", "--",
+                            "app/tests"])["out"]
+    try:
+        import importlib.util
+        gdal = importlib.util.find_spec("osgeo") is not None
+        trimesh = importlib.util.find_spec("trimesh") is not None
+    except Exception:
+        gdal = trimesh = None  # type: ignore
+    return {
+        "captured_at": now_iso(),
+        "git_head": head,
+        "git_head_short": head[:7],
+        "git_branch": branch,
+        "engine_dirty_status": engine_status.splitlines(),
+        "engine_clean": engine_status == "",
+        "tests_dirty_status": tests_status.splitlines(),
+        "python": sys.version.split()[0],
+        "platform": sys.platform,
+        "repo": str(REPO),
+        "no_gdal": not gdal,
+        "no_trimesh": not trimesh,
+        "e2e_command": "cd app\\server; $env:PYTHONIOENCODING='utf-8'; python -X utf8 ..\\tests\\e2e.py",
+    }
+
+
+# ════════════════════════ e2e 子进程 ════════════════════════
+def capture_e2e(timeout: int = 300) -> dict:
+    ensure_ready()
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["YINZHAN_DATA_DIR"] = str(DATA)
+    env["YINZHAN_OUTPUT_DIR"] = str(DATA / "out")
+    t0 = time.time()
+    try:
+        p = subprocess.run([PY, "-X", "utf8", str(TESTS / "e2e.py")],
+                           cwd=str(SERVER), capture_output=True, timeout=timeout, env=env)
+        out = p.stdout.decode("utf-8", "replace")
+        err = p.stderr.decode("utf-8", "replace")
+        code = p.returncode
+    except Exception as exc:  # noqa: BLE001
+        out, err, code = "", f"{type(exc).__name__}: {exc}", None
+    elapsed = round(time.time() - t0, 2)
+    clean = ANSI.sub("", out)
+    summary = [ln.strip() for ln in clean.splitlines() if "汇总" in ln or "全部通过" in ln]
+    ocr_line = [ln.strip() for ln in clean.splitlines() if "OCR" in ln][:1]
+    tail = [ln for ln in clean.strip().splitlines() if ln.strip()][-14:]
+    return {
+        "exit_code": code,
+        "elapsed_s": elapsed,
+        "ok": code == 0,
+        "summary_lines": summary,
+        "ocr_line": ocr_line,
+        "stdout_tail": tail,
+        "stderr_tail": ANSI.sub("", err).strip().splitlines()[-6:],
+    }
+
+
+# ════════════════════════ 元数据探针 ════════════════════════
+def pdf_meta(path: str | Path) -> dict:
+    import fitz
+    path = Path(path)
+    d = fitz.open(str(path))
+    try:
+        meta = {k: v for k, v in (d.metadata or {}).items() if v}
+        try:
+            xmp = d.get_xml_metadata() or ""
+        except Exception:
+            xmp = ""
+        try:
+            has_meta_xref = d.xref_get_key(d.pdf_catalog(), "Metadata")[0] != "null"
+        except Exception:
+            has_meta_xref = False
+        page_texts = []
+        for page in d:
+            try:
+                page_texts.append(page.get_text("text"))
+            except Exception:
+                page_texts.append("")
+    finally:
+        d.close()
+    raw = path.read_bytes()
+    return {"nonempty": meta, "xmp_len": len(xmp.strip()),
+            "has_metadata_xref": has_meta_xref,
+            "raw_has_xpacket": b"xpacket" in raw,
+            "text": "\n".join(page_texts)}
+
+
+def pdf_identity_clean(om: dict) -> bool:
+    bad = [k for k in (om.get("nonempty") or {}) if k.lower() in META_KEYS]
+    return not bad and om.get("xmp_len") == 0 and not om.get("raw_has_xpacket")
+
+
+def _xml_fields(root, mapping: dict) -> dict:
+    out = {}
+    for name, tag in mapping.items():
+        try:
+            el = root.find(tag)
+            out[name] = (el.text or "").strip() if el is not None else ""
+        except Exception:
+            out[name] = ""
+    return out
+
+
+def _zip_part_text(path: Path, part: str, pattern: re.Pattern | None = None) -> list[str]:
+    """读 zip 内某些部件的纯文本；pattern 给定时只返回匹配 pattern 的部件名。"""
+    texts: list[str] = []
+    try:
+        with zipfile.ZipFile(path) as z:
+            for name in z.namelist():
+                if pattern is not None and not pattern.search(name):
+                    continue
+                if name == part:
+                    try:
+                        from lxml import etree
+                        root = etree.fromstring(z.read(name))
+                        texts.append("|".join(t.strip() for t in root.itertext()
+                                              if t.strip()))
+                    except Exception:
+                        texts.append(z.read(name).decode("utf-8", "replace"))
+    except Exception:
+        pass
+    return texts
+
+
+def docx_props(path: str | Path, forbidden: list[str] | None = None) -> dict:
+    """docProps 结构化字段（只看元数据部件，不看正文）。"""
+    from lxml import etree
+    path = Path(path)
+    out: dict = {"parts": {}, "fields": {}, "app_fields": {},
+                 "core_text": "", "app_text": "", "forbidden_hits": []}
+    forbidden = [str(f).strip() for f in (forbidden or []) if str(f).strip()]
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        for part in ("docProps/core.xml", "docProps/app.xml",
+                     "docProps/custom.xml", "docProps/thumbnail.jpeg"):
+            out["parts"][part] = part in names
+        if out["parts"]["docProps/core.xml"]:
+            try:
+                root = etree.fromstring(z.read("docProps/core.xml"))
+                out["fields"] = _xml_fields(root, {
+                    "creator": CORE_NS + "creator",
+                    "lastModifiedBy": CP_NS + "lastModifiedBy",
+                    "title": CORE_NS + "title",
+                    "subject": CORE_NS + "subject",
+                    "description": CORE_NS + "description",
+                    "keywords": CP_NS + "keywords",
+                    "category": CP_NS + "category",
+                    "contentStatus": CP_NS + "contentStatus",
+                })
+                out["core_text"] = "|".join(t.strip() for t in root.itertext() if t.strip())
+            except Exception as exc:  # noqa: BLE001
+                out["core_text"] = f"<parse-error {exc}>"
+        if out["parts"]["docProps/app.xml"]:
+            try:
+                root = etree.fromstring(z.read("docProps/app.xml"))
+                out["app_fields"] = _xml_fields(root, {
+                    "Company": APP_NS + "Company",
+                    "Manager": APP_NS + "Manager",
+                    "Template": APP_NS + "Template",
+                })
+                out["app_text"] = "|".join(t.strip() for t in root.itertext() if t.strip())
+            except Exception as exc:  # noqa: BLE001
+                out["app_text"] = f"<parse-error {exc}>"
+    blob = out["core_text"] + "|" + out["app_text"]
+    out["forbidden_hits"] = [f for f in forbidden if f in blob]
+    key_fields = ("creator", "lastModifiedBy", "title", "subject", "description",
+                  "keywords", "category", "contentStatus")
+    out["identity_fields_empty"] = (
+        all(not out["fields"].get(k) for k in key_fields)
+        and all(not out["app_fields"].get(k) for k in ("Company", "Manager")))
+    return out
+
+
+def xlsx_props(path: str | Path, forbidden: list[str] | None = None) -> dict:
+    from lxml import etree
+    from openpyxl import load_workbook
+    path = Path(path)
+    forbidden = [str(f).strip() for f in (forbidden or []) if str(f).strip()]
+    wb = load_workbook(str(path))
+    props = wb.properties
+    fields = ("creator", "lastModifiedBy", "title", "subject", "description",
+              "keywords", "category", "contentStatus", "identifier", "language",
+              "version", "lastPrinted", "created", "modified")
+    vals = {}
+    for f in fields:
+        try:
+            v = getattr(props, f, None)
+            vals[f] = "" if v is None else str(v)
+        except Exception:
+            vals[f] = ""
+    wb.close()
+    out = {"nonempty_fields": {k: v for k, v in vals.items() if v},
+           "parts": {}, "app_text": "", "core_text": "", "forbidden_hits": []}
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        for part in ("docProps/core.xml", "docProps/app.xml", "docProps/custom.xml"):
+            out["parts"][part] = part in names
+        for part, key in (("docProps/core.xml", "core_text"),
+                          ("docProps/app.xml", "app_text")):
+            if out["parts"][part]:
+                try:
+                    root = etree.fromstring(z.read(part))
+                    out[key] = "|".join(t.strip() for t in root.itertext() if t.strip())
+                except Exception as exc:  # noqa: BLE001
+                    out[key] = f"<parse-error {exc}>"
+    blob = out["core_text"] + "|" + out["app_text"]
+    out["forbidden_hits"] = [f for f in forbidden if f in blob]
+    key_fields = ("creator", "lastModifiedBy", "title", "subject", "description",
+                  "keywords", "category", "contentStatus", "identifier", "language")
+    out["identity_fields_empty"] = all(not out["nonempty_fields"].get(k) for k in key_fields)
+    return out
+
+
+def image_meta(path: str | Path) -> dict:
+    from PIL import Image
+    with Image.open(path) as im:
+        try:
+            exif = dict(im.getexif())
+        except Exception:
+            exif = {}
+        info_keys = [k for k in im.info.keys()
+                     if str(k).lower() in ("exif", "icc_profile", "xmp", "gps", "xml")]
+        return {"size": list(im.size), "format": im.format,
+                "info_keys": info_keys, "exif_entries": len(exif)}
+
+
+def tiff_geo(path: str | Path) -> dict:
+    """TIFF 地理参考探针（区分「真实世界坐标残留」与「已批准的 LOCAL_CS 中性化」）。
+
+    验收口径（D3 已批准）：中性化成品允许物理上保留 LOCAL_CS 结构标签
+    （34264/34735/34737，这是 GIS 能打开的前提），红线是**没有真实世界坐标**：
+    源 ModelPixelScale/ModelTiepoint/EPSG/GDAL_METADATA/RPC 仍出现 → 残留 FAIL。
+    """
+    from PIL import Image
+    path = Path(path)
+    with Image.open(path) as im:
+        try:
+            tags = dict(im.tag_v2.items())
+        except Exception:
+            tags = {}
+        frames = int(getattr(im, "n_frames", 1) or 1)
+        info_keys = [k for k in im.info.keys()
+                     if str(k).lower() in ("exif", "icc_profile", "xmp", "gps", "xml")]
+    present_ids = [tag for tag in GEO_TAGS if tag in tags]
+    present = [GEO_TAGS[t] for t in present_ids]
+    rpc = [name for tag, name in RPC_TAGS.items() if tag in tags]
+    ascii_params = str(tags.get(34737) or "")
+    local_crs = LOCAL_CRS_MARKER in ascii_params.lower()
+
+    # GeoKeyDirectory 里的真实 EPSG（本地 CRS 会写 3076=9001/1024=1 等非真实值）
+    real_epsg: list[str] = []
+    gkd = tags.get(34735)
+    if isinstance(gkd, (tuple, list)) and len(gkd) >= 4:
+        try:
+            n = int(gkd[3])
+            vals = list(gkd[4:4 + 4 * n])
+            for i in range(0, len(vals) - 3, 4):
+                key, _loc, _count, val = int(vals[i]), int(vals[i + 1]), \
+                    int(vals[i + 2]), int(vals[i + 3])
+                if key in REAL_CRS_KEYS and val not in (0, 32767):
+                    real_epsg.append(f"{REAL_CRS_KEYS[key]}={val}")
+        except Exception:
+            pass
+
+    real_geo: list[str] = []
+    real_geo += rpc
+    real_geo += real_epsg
+    if local_crs:
+        # LOCAL_CS 模式：只允许 34264/34735/34737；其它 Geo 结构（33550/33922/
+        # 34736/42112/42113）出现即视为真实参考残留。
+        real_geo += [name for tag, name in GEO_TAGS.items()
+                     if tag in tags and tag not in LOCAL_CRS_ALLOWED_TAGS]
+    else:
+        # 没有本地 CRS 标记：任何 Geo 结构都按"真实参考"算（保守）
+        real_geo = list(dict.fromkeys(present + real_geo))
+
+    return {
+        # 向后兼容字段：仅当"已中性化且无真实残留"时为空
+        "geo_tags": [] if (local_crs and not real_geo) else present,
+        "raw_geo_tags": present,
+        "local_crs": local_crs,
+        "real_geo_residual": sorted(set(real_geo)),
+        "real_epsg": real_epsg,
+        "rpc_tags": rpc,
+        "info_keys": info_keys,
+        "frames": frames,
+        "tag_count": len(tags),
+        "non_display_tags": [tag for tag in tags if tag not in KEEP_TIFF_TAGS],
+    }
+
+
+def tiff_clean(om: dict) -> bool:
+    """TIF 成品是否安全：无真实地理参考残留 + 无 EXIF/ICC/XMP/GPS。"""
+    return (not (om.get("real_geo_residual") or [])
+            and not (om.get("info_keys") or []))
+
+
+def sidecars(path: str | Path) -> dict:
+    """同名 sidecar 残留（.tfw/.prj/.aux.xml/.ovr/.kml）。"""
+    path = Path(path)
+    cands = [path.with_suffix(".tfw"), path.with_suffix(".prj"),
+             path.with_suffix(".aux.xml"), path.with_suffix(".ovr"),
+             path.with_suffix(".kml"), path.parent / (path.name + ".aux.xml"),
+             path.parent / (path.name + ".ovr")]
+    return {c.name: c.exists() for c in cands}
+
+
+# ════════════════════════ 逐样例采集 ════════════════════════
+def _forbidden_from_source(fmt: str, src: dict) -> list[str]:
+    forbidden: list[str] = []
+    if fmt == "pdf":
+        forbidden = list((src.get("nonempty") or {}).values())
+    elif fmt == "docx":
+        forbidden = list((src.get("fields") or {}).values())
+        forbidden += list((src.get("app_fields") or {}).values())
+    elif fmt == "xlsx":
+        forbidden = list((src.get("nonempty_fields") or {}).values())
+    return [str(v).strip() for v in forbidden if len(str(v).strip()) >= 2]
+
+
+def capture_samples() -> tuple[dict, dict]:
+    """对 samples/ 全量跑 解析→检测→双导出→复检→元数据复检。
+
+    返回 (facts, runtime)：
+      facts   —— 可 JSON 序列化，用于基线/检查；
+      runtime —— 实体对象、文档对象等（不落盘），供回归额外断言用。
+    """
+    ensure_ready()
+    from yinzhan import pipeline, registry
+    from yinzhan.jobs import _load_rules
+    from yinzhan.ocr import get_ocr
+    from yinzhan.udm import Decision, ParseContext, VerifyError
+
+    load_errors = registry.load_plugins()
+    ocr = get_ocr()
+    files = sorted(p for p in SAMPLES.iterdir() if p.is_file())
+    out: dict = {"plugin_load_errors": [e.splitlines()[0] for e in load_errors],
+                 "ocr": {"available": bool(ocr.available), "backend": ocr.backend,
+                         "error": ocr.error},
+                 "files": {}}
+    runtime: dict = {"entities": {}, "docs": {}, "parsers": {},
+                     "exports": {}, "ocr": ocr}
+    for path in files:
+        rec: dict = {"file": path.name, "suffix": path.suffix.lower(), "ok": False,
+                     "err": "", "types": {}, "values_sha256": {},
+                     "exports": {}, "warnings": [], "source_meta": {},
+                     "bytes": path.stat().st_size,
+                     "sha256": sha256_file(path)}
+        parser = registry.find_parser(path)
+        if parser is None:
+            rec["err"] = "没有匹配的解析器"
+            out["files"][path.name] = rec
+            continue
+        fmt = parser.format_id
+        rec["fmt"] = fmt
+        runtime["parsers"][path.name] = parser
+        ctx = ParseContext(ocr=ocr, workdir=str(DATA / "work"))
+        t0 = time.time()
+        try:
+            doc = parser.parse(path, ctx)
+        except Exception as exc:  # noqa: BLE001
+            rec["err"] = f"解析失败 {type(exc).__name__}: {exc}"
+            out["files"][path.name] = rec
+            continue
+        runtime["docs"][path.name] = doc
+        rec["parse_ms"] = int((time.time() - t0) * 1000)
+        rec["pages"] = len(doc.pages)
+        rec["blocks"] = sum(len(p.blocks) for p in doc.pages)
+        rec["doc_meta"] = {k: v for k, v in (doc.meta or {}).items()
+                           if isinstance(v, (str, int, float, bool))}
+        try:
+            if fmt == "pdf":
+                rec["source_meta"] = pdf_meta(path)
+            elif fmt == "docx":
+                rec["source_meta"] = docx_props(path)
+            elif fmt == "xlsx":
+                rec["source_meta"] = xlsx_props(path)
+            elif fmt == "image":
+                rec["source_meta"] = image_meta(path)
+            elif fmt == "tiff":
+                rec["source_meta"] = tiff_geo(path)
+        except Exception as exc:  # noqa: BLE001
+            rec["source_meta"] = {"error": f"{type(exc).__name__}: {exc}"}
+
+        rules, pack_label, _ = _load_rules(fmt)
+        rec["pack_label"] = pack_label
+        t1 = time.time()
+        try:
+            det = pipeline.detect(doc, rules, "standard")
+            pipeline.decide(det.entities, det.rules, pipeline.Session())
+        except Exception as exc:  # noqa: BLE001
+            rec["err"] = f"检测失败 {type(exc).__name__}: {exc}"
+            out["files"][path.name] = rec
+            continue
+        runtime["entities"][path.name] = det.entities
+        rec["detect_ms"] = int((time.time() - t1) * 1000)
+        rec["entities"] = len(det.entities)
+        for e in det.entities:
+            rec["types"][e.label] = rec["types"].get(e.label, 0) + 1
+            if e.value:
+                # 基线只存哈希，不落敏感原值
+                rec["values_sha256"].setdefault(e.label, []).append(
+                    sha256_bytes(e.value.encode("utf-8"))[:12])
+        rec["warnings"] = list(doc.warnings) + list(det.warnings)
+        forbidden = _forbidden_from_source(fmt, rec.get("source_meta") or {})
+        rec["metadata_forbidden_values_count"] = len(forbidden)
+
+        for mode in ("ai", "human"):
+            suffix = ".pdf" if fmt == "pdf" else path.suffix
+            out_path = EXPORTS / f"{path.stem}_{mode}{suffix}"
+            runtime["exports"][(path.name, mode)] = str(out_path)
+            ex: dict = {"ok": False}
+            try:
+                if mode == "human":
+                    for e in det.entities:
+                        e.decision = Decision(strategy="black", black=True)
+                res = pipeline.export(doc, parser, det.entities, out_path, {"mode": mode})
+                ex["size"] = res.size
+                ex["warnings"] = list(res.warnings)
+                try:
+                    ver = pipeline.verify(out_path, det.entities, parser, ctx)
+                    ex.update({"ok": True, "verified": ver.get("verified"),
+                               "residual": ver.get("residual"),
+                               "checked": ver.get("checked"), "issues": []})
+                except VerifyError as ve:
+                    ex.update({"ok": False, "err": f"VerifyError: {ve}",
+                               "residual": None})
+                ex["meta_check"] = _meta_check(fmt, out_path, forbidden)
+            except Exception as exc:  # noqa: BLE001
+                ex["err"] = f"{type(exc).__name__}: {exc}"
+            rec["exports"][mode] = ex
+        checks = [e.get("ok") for e in rec["exports"].values()]
+        meta_ok = all((e.get("meta_check") or {}).get("identity_cleared", False)
+                      for e in rec["exports"].values()
+                      if isinstance(e.get("meta_check"), dict)
+                      and "error" not in (e.get("meta_check") or {}))
+        rec["ok"] = bool(checks and all(checks) and meta_ok)
+        out["files"][path.name] = rec
+        say(f"    - {path.name}: {rec.get('fmt')} {rec.get('pages')}p "
+            f"{rec.get('entities')}实体 ai/human ok={rec['ok']}")
+    out["summary"] = {
+        "files_total": len(out["files"]),
+        "files_ok": sum(1 for r in out["files"].values() if r["ok"]),
+        "exports_ok": sum(1 for r in out["files"].values() for e in r["exports"].values()
+                          if e.get("ok")),
+        "residual_total": sum(int(e.get("residual") or 0)
+                              for r in out["files"].values() for e in r["exports"].values()),
+    }
+    return out, runtime
+
+
+def _meta_check(fmt: str, out_path: Path, forbidden: list[str]) -> dict:
+    """导出成品元数据复检（硬）。"""
+    if fmt == "pdf":
+        om = pdf_meta(out_path)
+        bad_keys = [k for k in (om.get("nonempty") or {}) if k.lower() in META_KEYS]
+        return {"out": om, "bad_meta_keys": bad_keys,
+                "xmp_cleared": om.get("xmp_len") == 0,
+                "identity_cleared": pdf_identity_clean(om)}
+    if fmt == "docx":
+        om = docx_props(out_path, forbidden)
+        return {"out": om, "identity_cleared": om["identity_fields_empty"],
+                "thumbnail_removed": not om["parts"].get("docProps/thumbnail.jpeg", False)}
+    if fmt == "xlsx":
+        om = xlsx_props(out_path, forbidden)
+        return {"out": om, "identity_cleared": om["identity_fields_empty"]}
+    if fmt == "image":
+        om = image_meta(out_path)
+        return {"out": om,
+                "identity_cleared": not om["info_keys"] and om["exif_entries"] == 0}
+    if fmt == "tiff":
+        om = tiff_geo(out_path)
+        sc = sidecars(out_path)
+        return {"out": om, "sidecars": sc,
+                "identity_cleared": tiff_clean(om) and not any(sc.values()),
+                "local_crs": om.get("local_crs"),
+                "raw_geo_tags": om.get("raw_geo_tags"),
+                "real_geo_residual": om.get("real_geo_residual")}
+    return {}
+
+
+# ════════════════════════ 规则包 + 注册表 ════════════════════════
+def _validate_rules(packs, rules_mod) -> tuple[list[str], dict, dict]:
+    violations: list[str] = []
+    own_ids: dict[str, list[str]] = {}
+    owner: dict[str, str] = {}
+    for pid, rs in packs.items():
+        ids = []
+        for r in rs:
+            if r.pack != pid:
+                continue
+            ids.append(r.id)
+            if r.id in owner:
+                violations.append(f"规则 id 全局重复：{r.id} 同时属于 {owner[r.id]} 与 {pid}")
+            owner[r.id] = pid
+            if not r.entity or not r.label or not r.detect:
+                violations.append(f"{pid}/{r.id}: 缺少必填字段")
+            if r.level not in ALLOWED_LEVELS:
+                violations.append(f"{pid}/{r.id}: 非法 level {r.level}")
+            bad_scope = [s for s in r.scope
+                         if s not in ALLOWED_FMTS and s not in ("all", "*")]
+            if bad_scope:
+                violations.append(f"{pid}/{r.id}: 非法 scope {bad_scope}")
+            if not r.scope:
+                violations.append(f"{pid}/{r.id}: scope 为空")
+            strat = (r.replace or {}).get("strategy")
+            if strat not in rules_mod.KNOWN_STRATEGIES:
+                violations.append(f"{pid}/{r.id}: 非法替换策略 {strat}")
+        own_ids[pid] = sorted(ids)
+    return violations, own_ids, owner
+
+
+def capture_rules() -> dict:
+    from yinzhan import rules as rules_mod
+    packs = rules_mod.load_packs()
+    infos = rules_mod.packs_info()
+    errors = rules_mod.load_errors()
+    violations, own_ids, _ = _validate_rules(packs, rules_mod)
+    compiled = {}
+    for fmt in sorted(ALLOWED_FMTS):
+        try:
+            compiled[fmt] = len(rules_mod.compile_rules(packs, fmt))
+        except Exception as exc:  # noqa: BLE001
+            compiled[fmt] = f"ERROR {exc}"
+    metas = {m["id"]: m for m in infos}
+    pack_rec = {}
+    for pid in sorted(own_ids):
+        m = metas.get(pid, {})
+        pack_rec[pid] = {
+            "name": m.get("name", pid), "version": m.get("version", 0),
+            "file": m.get("file", ""), "include": m.get("include", []),
+            "own_count": len(own_ids[pid]),
+            "total_count": len(packs.get(pid, [])),
+            "rule_ids": own_ids[pid],
+        }
+    defined_total = len({rid for ids in own_ids.values() for rid in ids})
+    return {
+        "packs": pack_rec,
+        "defined_rules_total": defined_total,
+        "load_errors": errors,
+        "violations": violations,
+        "compiled_by_fmt": compiled,
+        "KNOWN_STRATEGIES": sorted(rules_mod.KNOWN_STRATEGIES),
+    }
+
+
+def capture_registry() -> dict:
+    from yinzhan import registry
+    from yinzhan.ocr import get_ocr
+    errors = registry.load_plugins()
+    parsers = sorted({p.format_id for p in registry.all_parsers().values()
+                      if isinstance(p, registry.Parser)})
+    detectors = sorted(registry.all_detectors().keys())
+    replacers = {}
+    for name in ("surrogate", "black", "mask"):
+        try:
+            replacers[name] = registry.get_replacer(name) is not None
+        except Exception:
+            replacers[name] = False
+    ocr = get_ocr()
+    return {
+        "plugin_load_errors": [e.splitlines()[0] for e in errors],
+        "parsers": parsers,
+        "parser_exts": sorted(k for k in registry.all_parsers().keys() if k.startswith(".")),
+        "detectors": detectors,
+        "replacers": replacers,
+        "ocr": {"available": bool(ocr.available), "backend": ocr.backend,
+                "error": ocr.error},
+    }
+
+
+# ════════════════════════ 安全静态扫描 ════════════════════════
+OUTBOUND_PATTERNS = [
+    (r"^\s*import\s+requests\b", "import requests"),
+    (r"^\s*from\s+requests\b", "from requests"),
+    (r"^\s*import\s+httpx\b", "import httpx"),
+    (r"^\s*import\s+aiohttp\b", "import aiohttp"),
+    (r"^\s*import\s+urllib\.request\b", "import urllib.request"),
+    (r"^\s*from\s+urllib\.request\b", "from urllib.request"),
+    (r"^\s*import\s+http\.client\b", "import http.client"),
+    (r"^\s*from\s+http\.client\b", "from http.client"),
+    (r"urlopen\s*\(", "urlopen("),
+    (r"socket\.create_connection\s*\(", "socket.create_connection("),
+]
+SOCKET_CONNECT_RE = re.compile(r"\.connect\s*\(")
+SQLITE_RE = re.compile(r"sqlite|sqlite3|DB_PATH")
+CALL_CONTEXT_RE = re.compile(
+    r"urlopen\s*\(|Request\s*\(|urlretrieve\s*\(|HTTPConnection\s*\(|"
+    r"webbrowser\.open\s*\(|socket\.(?:create_connection|socket)\s*\(")
+LOOPBACK_RE = re.compile(r"(127\.0\.0\.1|localhost|::1|0\.0\.0\.0)")
+URL_RE = re.compile(r"https?://[^\s'\"<>)]+")
+URL_ALLOWLIST = ("www.w3.org", "schemas.openxmlformats.org", "schemas.microsoft.com",
+                 "purl.org", "ns.adobe.com", "xml.org", "openxmlformats.org")
+
+
+def capture_security_scan() -> dict:
+    ensure_ready()
+    targets = sorted((SERVER / "yinzhan").rglob("*.py")) + [SERVER / "run.py"]
+    for extra in ("mcp_server.py", "rehydrate.py"):
+        p = SERVER / extra
+        if p.is_file():
+            targets.append(p)
+    hits: list[dict] = []
+    url_literals: list[dict] = []
+    urls_called: list[dict] = []
+    browser_launch: list[dict] = []
+    for p in targets:
+        try:
+            text = p.read_text("utf-8")
+        except Exception:
+            continue
+        rel = str(p.relative_to(REPO))
+        for lineno, line in enumerate(text.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            for pat, label in OUTBOUND_PATTERNS:
+                if re.search(pat, line) and not LOOPBACK_RE.search(line):
+                    hits.append({"file": rel, "line": lineno, "pattern": label,
+                                 "text": stripped[:120]})
+            if (SOCKET_CONNECT_RE.search(line) and "socket" in line.lower()
+                    and not SQLITE_RE.search(line) and not LOOPBACK_RE.search(line)):
+                hits.append({"file": rel, "line": lineno, "pattern": ".connect(",
+                             "text": stripped[:120]})
+            if "webbrowser.open" in line:
+                browser_launch.append({"file": rel, "line": lineno,
+                                       "text": stripped[:120]})
+            for u in URL_RE.findall(line):
+                if any(a in u for a in URL_ALLOWLIST) or LOOPBACK_RE.search(u):
+                    continue
+                item = {"file": rel, "line": lineno, "url": u}
+                if "{" in u:
+                    item["context"] = "templated_local_url"
+                    url_literals.append(item)
+                    continue
+                if CALL_CONTEXT_RE.search(line):
+                    item["context"] = "call_context"
+                    urls_called.append(item)
+                else:
+                    item["context"] = "documentation_or_comment"
+                url_literals.append(item)
+    audit_src = (SERVER / "yinzhan" / "audit.py").read_text("utf-8")
+    insert_cols: list[str] = []
+    m = re.search(r"INSERT INTO audit\(([^)]*)\)", audit_src)
+    if m:
+        insert_cols = [c.strip() for c in m.group(1).split(",")]
+    value_like = [c for c in insert_cols
+                  if re.search(r"value|original|plain|text|content", c, re.I)]
+    config_src = (SERVER / "yinzhan" / "config.py").read_text("utf-8")
+    host_match = re.search(r'^HOST\s*=\s*"([^"]+)"', config_src, re.M)
+    default_host = host_match.group(1) if host_match else ""
+    # 依赖清单 + 网络客户端依赖检查（离线安全红线）
+    req_path = SERVER / "requirements.txt"
+    req_src = req_path.read_text("utf-8", "replace") if req_path.is_file() else ""
+    packages = []
+    for line in req_src.splitlines():
+        s = line.split("#", 1)[0].strip()
+        if not s:
+            continue
+        m = re.match(r"([A-Za-z0-9_.\-\[\]]+)", s)
+        if m:
+            packages.append(m.group(1).lower())
+    NETWORK_LIBS = re.compile(
+        r"^(requests|httpx|aiohttp|urllib3|pycurl|websocket-client|websockets|"
+        r"pysocks|httplib2|treq|grequests|python-telegram-bot|discord\.py)$", re.I)
+    net_deps = [p for p in packages if NETWORK_LIBS.match(p)]
+    # 可选重依赖（TIF P0 可能引入 rasterio/pyproj/tifffile）：只记录，不判回归
+    optional_deps: dict[str, bool] = {}
+    try:
+        import importlib.util
+        for name in ("rasterio", "pyproj", "tifffile", "osgeo", "zxingcpp",
+                     "rapidocr", "rapidocr_onnxruntime"):
+            try:
+                optional_deps[name] = importlib.util.find_spec(name) is not None
+            except Exception:
+                optional_deps[name] = False
+    except Exception:
+        pass
+    return {
+        "outbound_hits": hits,
+        "outbound_ok": not hits,
+        "external_url_literals": url_literals,
+        "external_urls_called": urls_called,
+        "external_urls_ok": not urls_called,
+        "browser_launch": browser_launch,
+        "audit_insert_columns": insert_cols,
+        "audit_value_like_columns": value_like,
+        "audit_ok": not value_like,
+        "listen_host_config": default_host,
+        "requirements_packages": packages,
+        "network_deps": net_deps,
+        "requirements_offline_ok": not net_deps,
+        "optional_deps": optional_deps,
+    }
+
+
+# ════════════════════════ HTTP ════════════════════════
+def http_json(url: str, method: str = "GET", payload: dict | None = None,
+              headers: dict | None = None, timeout: int = 60) -> dict:
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    hdrs = {"Content-Type": "application/json"} if data is not None else {}
+    hdrs.update(headers or {})
+    req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return {"status": r.status,
+                    "ctype": r.headers.get("Content-Type", ""),
+                    "body": r.read()}
+    except urllib.error.HTTPError as e:
+        return {"status": e.code, "ctype": e.headers.get("Content-Type", ""),
+                "body": e.read()}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": 0, "ctype": "", "body": b"", "err": repr(exc)}
+
+
+def http_bytes(url: str, method: str = "GET", payload: bytes | None = None,
+               headers: dict | None = None, timeout: int = 120) -> dict:
+    hdrs = dict(headers or {})
+    req = urllib.request.Request(url, data=payload, headers=hdrs, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return {"status": r.status, "ctype": r.headers.get("Content-Type", ""),
+                    "disposition": r.headers.get("Content-Disposition", ""),
+                    "body": r.read()}
+    except urllib.error.HTTPError as e:
+        return {"status": e.code, "ctype": e.headers.get("Content-Type", ""),
+                "body": e.read()}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": 0, "ctype": "", "body": b"", "err": repr(exc)}
+
+
+def pick_port(preferred: int = 18763) -> int:
+    for port in range(preferred, preferred + 20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    return preferred
+
+
+def wait_health(url: str, timeout: float = 90) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        r = http_json(url + "/api/health", timeout=3)
+        if r["status"] == 200:
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def capture_http() -> dict:
+    """启动真实服务（带启动校验与端口重试），返回冒烟 + 主路径事实。
+
+    并发注意：多名开发/CI 可能同时跑门禁，端口可能被别的实例抢走。
+    这里每次启动后都校验 runtime.json 的 pid/port 必须属于本次子进程，
+    对不上就换端口重试，避免"测到别人的服务/别人的数据目录"。
+    """
+    ensure_ready()
+    last: dict = {}
+    base_port = 18763 + (os.getpid() % 17)
+    for attempt in range(6):
+        port = pick_port(base_port + attempt * 3)
+        out = _capture_http_once(port)
+        out["attempt"] = attempt + 1
+        runtime = out.get("runtime") or {}
+        if out.get("started") and runtime.get("pid"):
+            return out
+        last = out
+        if out.get("server_log_tail"):
+            last["last_error_log"] = out["server_log_tail"][-3:]
+        time.sleep(0.2)
+    last.setdefault("error", "服务启动/端口校验重试全部失败")
+    return last
+
+
+def _capture_http_once(port: int) -> dict:
+    """在指定端口启动一次服务并跑冒烟 + 主路径（校验失败由 capture_http 重试）。"""
+    base = f"http://127.0.0.1:{port}"
+    env = dict(os.environ)
+    env.update({"YINZHAN_DATA_DIR": str(DATA), "YINZHAN_OUTPUT_DIR": str(DATA / "out"),
+                "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+    log_path = WORK / f"server_{port}.log"
+    log_fh = open(log_path, "wb")
+    cmd = [PY, "-X", "utf8", "run.py", "--port", str(port),
+           "--no-browser", "--no-ocr"]
+    t0 = time.time()
+    proc = subprocess.Popen(cmd, cwd=str(SERVER), env=env,
+                            stdout=log_fh, stderr=subprocess.STDOUT)
+    out: dict = {"command": " ".join(cmd), "port": port, "base": base,
+                 "started": False, "runtime": {}, "health": {}, "static": {},
+                 "packs_api": {}, "main_path": {}, "csrf": {}, "netstat": [],
+                 "server_log_tail": []}
+    try:
+        out["started"] = wait_health(base)
+        out["startup_s"] = round(time.time() - t0, 2)
+        if not out["started"]:
+            out["error"] = "服务 90 秒内未就绪"
+            return out
+        if proc.poll() is not None:
+            out["started"] = False
+            out["error"] = f"服务进程提前退出（exit={proc.returncode}）"
+            return out
+        # 必须是"本次启动的进程 + 本次端口"写的 runtime.json，否则可能是并发实例
+        try:
+            rt = json.loads((DATA / "runtime.json").read_text("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            out["started"] = False
+            out["runtime"] = {"error": f"{type(exc).__name__}: {exc}"}
+            out["error"] = "看不到本次服务的 runtime.json（并发/竞态？）"
+            return out
+        rt_pid = rt.get("pid")
+        rt_port = rt.get("port")
+        try:
+            same_pid = int(rt_pid) == int(proc.pid)
+            same_port = int(rt_port) == int(port)
+        except (TypeError, ValueError):
+            same_pid = same_port = False
+        if not (same_pid and same_port):
+            out["started"] = False
+            out["runtime"] = {"mismatch": True, "runtime_pid": rt_pid,
+                              "runtime_port": rt_port,
+                              "expected_pid": proc.pid, "expected_port": port}
+            out["error"] = ("runtime.json 不属于本次启动的服务"
+                            "（端口被并发实例占用，重试）")
+            return out
+        out["runtime"] = {"host": rt.get("host"), "port": rt.get("port"),
+                          "url": rt.get("url"), "pid": rt.get("pid")}
+        try:
+            ns = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True,
+                                timeout=20)
+            txt = ns.stdout.decode("gbk", "replace")
+            out["netstat"] = [ln.strip() for ln in txt.splitlines()
+                              if f":{port}" in ln and "LISTEN" in ln.upper()]
+        except Exception as exc:  # noqa: BLE001
+            out["netstat"] = [f"netstat 失败：{exc}"]
+        r = http_json(base + "/api/health")
+        try:
+            body = json.loads(r["body"] or b"{}")
+        except Exception:
+            body = {}
+        out["health"] = {
+            "status": r["status"], "ctype": r["ctype"],
+            "ok": body.get("ok"), "net": body.get("net"),
+            "version": body.get("version"),
+            "ocr": (body.get("engine") or {}).get("ocr"),
+            "parsers": (body.get("engine") or {}).get("parsers"),
+            "detectors": (body.get("engine") or {}).get("detectors"),
+            "packs": (body.get("engine") or {}).get("packs"),
+            "vault_key_len": len(str((body.get("engine") or {}).get("vault_key") or "")),
+            "audit": body.get("audit"),
+        }
+        rp = http_json(base + "/api/packs")
+        try:
+            pbody = json.loads(rp["body"] or b"{}")
+        except Exception:
+            pbody = {}
+        out["packs_api"] = {
+            "status": rp["status"],
+            "packs": pbody.get("packs"),
+            "detail_counts": {k: len(v) for k, v in (pbody.get("detail") or {}).items()},
+        }
+        page_expect = {
+            "/": ["text/html"],
+            "/console": ["text/html"],
+            "/download": ["text/html"],
+            "/mcp": ["text/html"],
+            "/favicon.svg": ["image/svg+xml"],
+            "/favicon.ico": ["image/x-icon", "image/vnd.microsoft.icon"],
+            "/apple-touch-icon.png": ["image/png"],
+        }
+        for path, expects in page_expect.items():
+            rr = http_bytes(base + path, timeout=30)
+            ctype = rr.get("ctype", "")
+            out["static"][path] = {
+                "status": rr["status"], "ctype": ctype, "expect_ctype": expects,
+                "mime_ok": ctype.split(";")[0].strip() in expects,
+                "bytes": len(rr.get("body") or b""),
+            }
+        rr = http_json(base + "/api/jobs", "POST",
+                       {"path": str(SAMPLES / "委托代理合同.pdf")},
+                       headers={"Origin": "http://evil.example.com"})
+        out["csrf"] = {"status": rr["status"], "blocked": rr["status"] == 403,
+                       "ctype": rr["ctype"]}
+
+        # ── 主路径 ──
+        sample = SAMPLES / "委托代理合同.pdf"
+        raw = sample.read_bytes()
+        up = http_bytes(base + "/api/upload", "POST", raw, headers={
+            "X-Filename": urllib.parse.quote(sample.name),
+            "Content-Type": "application/octet-stream"})
+        upj = json.loads(up["body"] or b"{}")
+        mp: dict = {"sample": sample.name, "source_bytes": len(raw),
+                    "source_sha256": sha256_bytes(raw),
+                    "upload": {"status": up["status"],
+                               "upload_id": upj.get("upload_id"),
+                               "size": upj.get("size"), "sha256": upj.get("sha256")}}
+        if up["status"] != 200 or not upj.get("upload_id"):
+            mp["ok"] = False
+            mp["error"] = "上传失败"
+            out["main_path"] = mp
+            return out
+        rj = http_json(base + "/api/jobs", "POST",
+                       {"upload_id": upj["upload_id"], "strictness": "standard"})
+        jj = json.loads(rj["body"] or b"{}")
+        jid = jj.get("job_id")
+        mp["job_create"] = {"status": rj["status"], "job_id": jid,
+                            "name": jj.get("name"), "fmt": jj.get("fmt")}
+        if not jid:
+            mp["ok"] = False
+            mp["error"] = "建任务失败"
+            out["main_path"] = mp
+            return out
+        t1 = time.time()
+        snap: dict = {}
+        stage = ""
+        while time.time() - t1 < 180:
+            rg = http_json(base + f"/api/jobs/{jid}")
+            try:
+                snap = json.loads(rg["body"] or b"{}")
+            except Exception:
+                snap = {}
+            stage = snap.get("stage") or ""
+            if stage in ("ready", "error"):
+                break
+            time.sleep(0.4)
+        mp["job_snapshot"] = {
+            "stage": stage, "progress": snap.get("progress"),
+            "pages": snap.get("pages"), "fmt": snap.get("fmt"),
+            "pack": snap.get("pack"), "strictness": snap.get("strictness"),
+            "counts": snap.get("counts"), "warnings": (snap.get("warnings") or [])[:8],
+            "error": snap.get("error"), "poll_s": round(time.time() - t1, 2),
+        }
+        re_ = http_json(base + f"/api/jobs/{jid}/entities")
+        try:
+            eb = json.loads(re_["body"] or b"{}")
+        except Exception:
+            eb = {}
+        ents = eb.get("entities") or []
+        types: dict[str, int] = {}
+        for e in ents:
+            label = e.get("label") or e.get("type") or "?"
+            types[label] = types.get(label, 0) + 1
+        mp["job_entities"] = {"status": re_["status"], "total": len(ents),
+                              "types": types, "counts": eb.get("counts"),
+                              "entity_ids": [e.get("id") for e in ents[:50]]}
+        # 预览 + 渲染（F8）
+        rv = http_json(base + f"/api/jobs/{jid}/preview/0?mode=orig", timeout=60)
+        try:
+            pv = json.loads(rv["body"] or b"{}")
+        except Exception:
+            pv = {}
+        mp["preview"] = {"status": rv["status"], "kind": pv.get("kind"),
+                         "pages": pv.get("total_pages"),
+                         "blocks": len(pv.get("blocks") or []),
+                         "entities": len(pv.get("entities") or [])}
+        rr2 = http_bytes(base + f"/api/jobs/{jid}/render/0?mode=orig", timeout=60)
+        mp["render"] = {"status": rr2["status"], "ctype": rr2.get("ctype"),
+                        "bytes": len(rr2.get("body") or b""),
+                        "png_magic": (rr2.get("body") or b"")[:8] ==
+                                     b"\x89PNG\r\n\x1a\n"}
+        # 双导出 + 下载
+        mp["exports"] = {}
+        for mode in ("ai", "human"):
+            rx = http_json(base + f"/api/jobs/{jid}/export", "POST",
+                           {"mode": mode}, timeout=180)
+            try:
+                xb = json.loads(rx["body"] or b"{}")
+            except Exception:
+                xb = {}
+            rec = {"status": rx["status"], "ok": rx["status"] == 200,
+                   "name": xb.get("name"), "bytes": xb.get("bytes"),
+                   "sha256": xb.get("sha256"), "mode": xb.get("mode"),
+                   "verify": xb.get("verify"),
+                   "warnings": (xb.get("warnings") or [])[:8]}
+            if rx["status"] == 200:
+                rd = http_bytes(base + f"/api/jobs/{jid}/file?mode={mode}", timeout=120)
+                body = rd.get("body") or b""
+                rec["download"] = {
+                    "status": rd["status"], "ctype": rd.get("ctype"),
+                    "disposition": rd.get("disposition"),
+                    "bytes": len(body), "sha256": sha256_bytes(body),
+                    "magic": body[:8].decode("latin-1"),
+                    "pdf_magic_ok": body[:5] == b"%PDF-",
+                    "nonempty": len(body) > 0,
+                    "match_export_sha": bool(rec.get("sha256")) and
+                                        sha256_bytes(body) == rec.get("sha256"),
+                    "match_export_bytes": rec.get("bytes") == len(body),
+                }
+                (NET / f"download_{mode}.pdf").write_bytes(body)
+            mp["exports"][mode] = rec
+        # 审计
+        ra = http_json(base + "/api/audit?limit=10")
+        try:
+            ab = json.loads(ra["body"] or b"{}")
+        except Exception:
+            ab = {}
+        recs = ab.get("records") or []
+        mp["audit"] = {
+            "status": ra["status"], "records": len(recs),
+            "record_keys": sorted(recs[0].keys()) if recs else [],
+            "counts_has_by_type": bool(recs and
+                                       (recs[0].get("counts") or {}).get("by_type")),
+            "value_fields_present": [
+                k for k in (recs[0].keys() if recs else [])
+                if re.search(r"value|original|plain|content|text", k, re.I)],
+            "stats": ab.get("stats"),
+        }
+        rv2 = http_json(base + "/api/audit/verify", "POST", {})
+        try:
+            vb = json.loads(rv2["body"] or b"{}")
+        except Exception:
+            vb = {}
+        mp["audit_verify"] = {"status": rv2["status"], **vb}
+        # 框选补漏 + 逐条确认（F8）：在导出之后做，不污染主路径
+        try:
+            rm = http_json(base + f"/api/jobs/{jid}/mark", "POST",
+                           {"page": 0, "rect": [0.08, 0.08, 0.18, 0.12],
+                            "etype": "OTHER", "propagate": False})
+            mb = json.loads(rm["body"] or b"{}")
+            eid = (mb.get("entity") or {}).get("id")
+            mp["mark"] = {"status": rm["status"], "added": mb.get("added"),
+                          "has_entity": bool(eid)}
+            if eid:
+                ru = http_json(base + f"/api/jobs/{jid}/entities/{eid}", "POST",
+                               {"action": "accept"})
+                ub = json.loads(ru["body"] or b"{}")
+                mp["mark"]["accept_status"] = ru["status"]
+                mp["mark"]["status_after"] = ub.get("status")
+            rac = http_json(base + f"/api/jobs/{jid}/accept-all", "POST", {})
+            try:
+                acb = json.loads(rac["body"] or b"{}")
+            except Exception:
+                acb = {}
+            mp["accept_all"] = {"status": rac["status"],
+                                "accepted": acb.get("accepted"),
+                                "total": acb.get("total")}
+        except Exception as exc:  # noqa: BLE001
+            mp["mark"] = {"error": f"{type(exc).__name__}: {exc}"}
+        exp = mp["exports"]
+        mp["ok"] = bool(
+            stage == "ready"
+            and exp.get("ai", {}).get("ok") and exp.get("human", {}).get("ok")
+            and exp["ai"].get("verify", {}).get("residual") == 0
+            and exp["human"].get("verify", {}).get("residual") == 0
+            and exp["ai"].get("download", {}).get("pdf_magic_ok")
+            and exp["human"].get("download", {}).get("pdf_magic_ok")
+            and exp["ai"].get("download", {}).get("nonempty")
+            and exp["human"].get("download", {}).get("nonempty")
+        )
+        out["main_path"] = mp
+        return out
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=15)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        time.sleep(0.2)
+        try:
+            log_fh.close()
+        except Exception:
+            pass
+        try:
+            out["server_log_tail"] = log_path.read_text(
+                "utf-8", "replace").strip().splitlines()[-25:]
+        except Exception:
+            pass
+        try:
+            (DATA / "runtime.json").unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def check_rehydrate(job_id: str) -> dict:
+    """F5：AI 导出后映射库应可解密、并能把假值还原回原值。"""
+    ensure_ready()
+    try:
+        from yinzhan import vault
+        payload = vault.load_mapping(job_id)
+        if not payload:
+            return {"ok": False, "err": "映射库没有该任务记录（vault.load_mapping 返回空）"}
+        mapping = payload.get("map") or {}
+        pairs = [(orig, fake) for _etype, table in mapping.items()
+                 for orig, fake in (table or {}).items() if fake]
+        if not pairs:
+            return {"ok": False, "err": "映射为空"}
+        orig, fake = pairs[0]
+        restored = vault.rehydrate(f"前缀{fake}后缀", payload)
+        return {"ok": orig in restored and fake not in restored,
+                "entities": sum(len(t or {}) for t in mapping.values()),
+                "types": sorted(mapping.keys()),
+                "sample_roundtrip": {"restored_ok": orig in restored}}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+def rehydrate_cli_test(job_id: str, timeout: int = 120) -> dict:
+    """F5：命令行还原链路（rehydrate.py --job … src dst）端到端。"""
+    ensure_ready()
+    try:
+        from yinzhan import vault
+        payload = vault.load_mapping(job_id)
+        if not payload:
+            return {"ok": False, "err": "无映射，无法测 CLI"}
+        mapping = payload.get("map") or {}
+        pairs = [(orig, fake) for _table in mapping.values()
+                 for orig, fake in (_table or {}).items() if fake]
+        if not pairs:
+            return {"ok": False, "err": "映射为空，无法测 CLI"}
+        orig, fake = pairs[0]
+        d = WORK / "rehydrate_cli"
+        d.mkdir(parents=True, exist_ok=True)
+        src = d / "answer.txt"
+        dst = d / "answer_restored.txt"
+        src.write_text(f"模型回答里出现：{fake}\n第二行：{fake}\n", "utf-8")
+        env = dict(os.environ)
+        env.update({"YINZHAN_DATA_DIR": str(DATA), "PYTHONIOENCODING": "utf-8",
+                    "PYTHONUTF8": "1"})
+        p = subprocess.run([PY, "-X", "utf8", "rehydrate.py", "--job", job_id,
+                            str(src), str(dst)],
+                           cwd=str(SERVER), capture_output=True, timeout=timeout,
+                           env=env)
+        if p.returncode != 0:
+            return {"ok": False,
+                    "err": f"exit={p.returncode} "
+                           f"{p.stderr.decode('utf-8', 'replace')[-160:]}"}
+        if not dst.is_file():
+            return {"ok": False, "err": "还原文件未生成"}
+        text = dst.read_text("utf-8", "replace")
+        return {"ok": orig in text and fake not in text,
+                "changed_lines": sum(1 for a, b in zip(src.read_text("utf-8").splitlines(),
+                                                       text.splitlines()) if a != b),
+                "detail": "CLI 还原成功（假值→原值）"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+def mcp_stdio_test(timeout: int = 180) -> dict:
+    """F9：MCP stdio 协议端到端：initialize / tools/list / 4 个 tools/call。"""
+    ensure_ready()
+    sample = SAMPLES / "委托代理合同.pdf"
+    calls = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+         "params": {"name": "list_rules", "arguments": {}}},
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+         "params": {"name": "redact_text",
+                    "arguments": {"text": "手机：13817264451，身份证：310104198703124510"}}},
+        {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+         "params": {"name": "check_support", "arguments": {"path": str(sample)}}},
+    ]
+    payload = "\n".join(json.dumps(c, ensure_ascii=False) for c in calls) + "\n"
+    env = dict(os.environ)
+    env.update({"YINZHAN_DATA_DIR": str(DATA), "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1"})
+    cwd = WORK / "mcp_stdio"
+    cwd.mkdir(parents=True, exist_ok=True)
+    try:
+        p = subprocess.run([PY, "-X", "utf8", str(SERVER / "mcp_server.py")],
+                           input=payload.encode("utf-8"), capture_output=True,
+                           timeout=timeout, env=env, cwd=str(cwd))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+    stdout = p.stdout.decode("utf-8", "replace")
+    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+    # stdout 必须只有 JSON-RPC（日志只能走 stderr）
+    parsed, bad_lines = [], []
+    for ln in lines:
+        try:
+            parsed.append(json.loads(ln))
+        except Exception:
+            bad_lines.append(ln[:80])
+    by_id = {r.get("id"): r for r in parsed if isinstance(r, dict)}
+    problems = []
+    if p.returncode != 0:
+        problems.append(f"exit={p.returncode}")
+    if bad_lines:
+        problems.append(f"stdout 非 JSON：{bad_lines[:2]}")
+    if len(parsed) < 5:
+        problems.append(f"响应数 {len(parsed)}<5")
+    init = by_id.get(1) or {}
+    if not (init.get("result") or {}).get("serverInfo"):
+        problems.append("initialize 无 serverInfo")
+    tools = ((by_id.get(2) or {}).get("result") or {}).get("tools") or []
+    names = {t.get("name") for t in tools}
+    if not {"sanitize_document", "redact_text", "check_support", "list_rules"} <= names:
+        problems.append(f"tools/list 缺工具：{sorted(names)}")
+
+    def text_payload(rid: int) -> dict:
+        res = (by_id.get(rid) or {}).get("result") or {}
+        try:
+            return json.loads(res["content"][0]["text"])
+        except Exception:
+            return {}
+
+    rules = text_payload(3)
+    if not rules.get("packs"):
+        problems.append("list_rules 无 packs")
+    red = text_payload(4)
+    redacted = red.get("redacted") or ""
+    if not redacted or "13817264451" in redacted or "310104198703124510" in redacted:
+        problems.append("redact_text 未脱敏/泄露原值")
+    support = text_payload(5)
+    if support.get("supported") is not True:
+        problems.append("check_support 未识别 pdf")
+    return {"ok": not problems,
+            "detail": "；".join(problems) if problems
+            else "initialize/tools/list/3×tools-call 均正常，stdout 全 JSON-RPC",
+            "responses": len(parsed)}
+
+
+# ════════════════════════ 已知边界软记录 ════════════════════════
+def capture_known_limits() -> dict:
+    ensure_ready()
+
+    def read(p: Path) -> str:
+        try:
+            return p.read_text("utf-8")
+        except Exception:
+            return ""
+
+    pdf_src = read(SERVER / "yinzhan" / "parsers" / "pdf_parser.py")
+    docx_src = read(SERVER / "yinzhan" / "parsers" / "docx_parser.py")
+    xlsx_src = read(SERVER / "yinzhan" / "parsers" / "xlsx_parser.py")
+    app_src = read(SERVER / "yinzhan" / "app.py")
+    jobs_src = read(SERVER / "yinzhan" / "jobs.py")
+    mcp_src = read(SERVER / "mcp_server.py")
+    m = re.search(r"MIN_TEXT_CHARS\s*=\s*(\d+)", pdf_src)
+    embedded = []
+    for src, name in ((docx_src, "docx_parser"), (xlsx_src, "xlsx_parser")):
+        for line in src.splitlines():
+            s = line.strip()
+            if "内嵌" in s or ("图片" in s and ("告警" in s or "warn" in s.lower())):
+                embedded.append(f"{name}: {s[:140]}")
+                break
+    georef_src = read(SERVER / "yinzhan" / "georef.py")
+    tiff_local_mode = LOCAL_CRS_MARKER in georef_src.lower()
+    return {
+        "_note": "以下为现状快照，只做软记录；后续 P0 允许改变，不得当成硬断言。",
+        "pdf_text_layer_pages_skipped_ocr": {
+            "min_text_chars": int(m.group(1)) if m else None,
+            "ocr_only_when_text_short": "MIN_TEXT_CHARS" in pdf_src,
+        },
+        "office_embedded_media": {
+            "docx_has_warning": "图片" in docx_src,
+            "xlsx_has_warning": "图片" in xlsx_src,
+            "warning_lines": embedded,
+        },
+        "no_ocr_flag_wired": bool(re.search(r"args\.no_ocr", app_src)),
+        "export_requires_entities": "没有需要隐去的内容" in jobs_src,
+        "mcp_saves_mapping": "save_mapping" in mcp_src,
+        "verify_has_visual_hook": "visual" in read(
+            SERVER / "yinzhan" / "pipeline.py").split("def verify")[-1],
+        # 兼容旧基线字段（v1 早期采集）：verify 是否只查已识别文字
+        "verify_only_checks_identified_text": "visual_marks" not in read(
+            SERVER / "yinzhan" / "pipeline.py").split("def verify")[-1],
+        # TIF 中性化口径（D3 已批准）：真实世界坐标 0 即可，LOCAL_CS 结构允许
+        "tiff_neutralization": {
+            "mode": "LOCAL_CS local arbitrary CRS（D3 批准，可 GIS 打开）"
+                    if tiff_local_mode else "strip / 其他模式",
+            "physical_local_geo_structure_allowed": True,
+            "red_line": "无真实世界坐标：ModelPixelScale/ModelTiepoint/EPSG/"
+                        "GDAL_METADATA/RPC/ICC/EXIF/GPS 残留即 FAIL；"
+                        "34264/34735/34737 本地结构不算残留",
+        },
+    }
+
+
+# ════════════════════════ 基线汇总 ════════════════════════
+def build_required(samples: dict) -> dict:
+    """从基线生成"必须至少命中"的最低要求；OCR 类样例允许 ±1 抖动。"""
+    req = {}
+    for name, r in samples["files"].items():
+        if not r.get("ok"):
+            req[name] = {"fmt": r.get("fmt"), "required_types": {}, "tolerance": 0}
+            continue
+        tol = 1 if r.get("fmt") in ("image", "tiff") else 0
+        must = {label: max(1, count - tol) for label, count in r["types"].items()}
+        req[name] = {"fmt": r.get("fmt"), "required_types": must,
+                     "baseline_types": r["types"], "tolerance": tol,
+                     "baseline_entities": r.get("entities"),
+                     "baseline_pages": r.get("pages"),
+                     "baseline_blocks": r.get("blocks"),
+                     "sha256": r.get("sha256"), "bytes": r.get("bytes")}
+    return req
+
+
+def capture_all(with_http: bool = True) -> dict:
+    """完整采集一次基线。"""
+    base: dict = {"schema": "sanitized-data-baseline/v1"}
+    base["meta"] = capture_meta()
+    e2e = capture_e2e()
+    base["e2e"] = e2e
+    samples, _runtime = capture_samples()
+    base["samples"] = samples
+    base["required"] = {"samples": build_required(samples)}
+    base["rules"] = capture_rules()
+    base["registry"] = capture_registry()
+    base["security"] = capture_security_scan()
+    if with_http:
+        http = capture_http()
+        base["http"] = http
+        base["health"] = {
+            "status": (http.get("health") or {}).get("status"),
+            "net": (http.get("health") or {}).get("net"),
+            "ok": (http.get("health") or {}).get("ok"),
+            "version": (http.get("health") or {}).get("version"),
+            "engine": {
+                "ocr": (http.get("health") or {}).get("ocr"),
+                "parsers": (http.get("health") or {}).get("parsers"),
+                "detectors": (http.get("health") or {}).get("detectors"),
+                "packs": (http.get("health") or {}).get("packs"),
+            },
+            "audit": (http.get("health") or {}).get("audit"),
+            "runtime": http.get("runtime") or {},
+        }
+        base["perf_soft"] = {
+            "e2e_elapsed_s": e2e.get("elapsed_s"),
+            "sample_parse_ms": {n: r.get("parse_ms")
+                                for n, r in samples["files"].items()},
+            "sample_detect_ms": {n: r.get("detect_ms")
+                                 for n, r in samples["files"].items()},
+            "alert_ratio": 1.5,
+        }
+        base["known_limits"] = capture_known_limits()
+        base["rehydrate_soft"] = check_rehydrate(
+            ((http.get("main_path") or {}).get("job_create") or {}).get("job_id") or "")
+    return base
+
+
+# ════════════════════════ 基线写盘 ════════════════════════
+def write_baseline(base: dict) -> tuple[Path, Path]:
+    BASELINE_DIR.mkdir(parents=True, exist_ok=True)
+    base["captured_at"] = base.get("captured_at") or now_iso()
+    BASELINE_JSON.write_text(json.dumps(base, ensure_ascii=False, indent=2) + "\n",
+                             "utf-8")
+    write_snapshot(base, SNAPSHOT_MD)
+    return BASELINE_JSON, SNAPSHOT_MD
+
+
+def load_baseline() -> dict:
+    if not BASELINE_JSON.is_file():
+        raise SystemExit(f"基线不存在：{BASELINE_JSON}\n"
+                         f"先运行：python -X utf8 app/tests/regression.py --update-baseline")
+    return json.loads(BASELINE_JSON.read_text("utf-8"))
+
+
+def write_snapshot(base: dict, path: Path) -> None:
+    e2e = base["e2e"]
+    samples = base["samples"]
+    rules = base["rules"]
+    reg = base["registry"]
+    http = base.get("http") or {}
+    sec = base["security"]
+    lines: list[str] = []
+    A = lines.append
+    A("# 数据隐站 · 基线快照（BASELINE SNAPSHOT）")
+    A("")
+    A(f"- 冻结时间：{base['meta']['captured_at']}")
+    A(f"- git HEAD：`{base['meta']['git_head_short']}`"
+      f"（{base['meta']['git_head']}）  分支 `{base['meta']['git_branch']}`")
+    A(f"- 引擎源码改动：{'无（干净）' if base['meta']['engine_clean'] else '有未提交改动，基线需复核'}")
+    A(f"- Python：{base['meta']['python']}  · 平台：{base['meta']['platform']}")
+    A(f"- 无 GDAL：{base['meta']['no_gdal']}  · 无 trimesh：{base['meta']['no_trimesh']}")
+    A("")
+    A("> **本文件是冻结基线的可读摘要；机器可读版本见 [baseline.json](baseline.json)。**")
+    A("> 判定原则：**新增识别/新增规则导致多识别不算回归**；"
+      "原有必须命中的变少、导出失败、残留>0、元数据回来了、服务外呼，一律算回归。")
+    A("")
+    A("## 0. 如何复跑")
+    A("")
+    A("```powershell")
+    A("python -X utf8 app/tests/regression.py")
+    A("python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改进后重录")
+    A("```")
+    A("")
+    A("## 1. 硬断言（HARD，红了就是回归，必须修）")
+    A("")
+    A("| # | 硬断言 | 基线事实 |")
+    A("|---|---|---|")
+    A(f"| H1 | 基线样例全部解析成功 | "
+      f"{samples['summary']['files_ok']}/{samples['summary']['files_total']} |")
+    A(f"| H2 | 两种导出全部成功、residual=0、成品存在非空、元数据已清 | "
+      f"exports_ok={samples['summary']['exports_ok']}/"
+      f"{samples['summary']['files_total'] * 2}，"
+      f"residual_total={samples['summary']['residual_total']} |")
+    A(f"| H3 | e2e 退出码 0 | exit={e2e['exit_code']}，{e2e['elapsed_s']}s |")
+    A(f"| H4 | 规则包完整、无 load_errors、id 全局唯一、必填字段/scope/策略合法 | "
+      f"packs={len(rules['packs'])}，defined={rules['defined_rules_total']}，"
+      f"load_errors={len(rules['load_errors'])}，violations={len(rules['violations'])} |")
+    A(f"| H5 | 解析器/检测器全部注册成功 | "
+      f"parsers={','.join(reg['parsers'])}；detectors={','.join(reg['detectors'])} |")
+    A(f"| H6 | 服务只监听 127.0.0.1 | runtime.host="
+      f"{(http.get('runtime') or {}).get('host')}；代码 HOST={sec.get('listen_host_config')} |")
+    A(f"| H7 | health.net == blocked | {(base.get('health') or {}).get('net')} |")
+    A(f"| H8 | 静态站点 4 页面 + 3 图标 200 且 MIME 正确 | "
+      f"{sum(1 for v in (http.get('static') or {}).values() if v['status'] == 200 and v['mime_ok'])}/7 |")
+    A(f"| H9 | 真实 HTTP 主路径（上传→任务→ready→双导出→下载）通过 | "
+      f"{(http.get('main_path') or {}).get('ok')} |")
+    A(f"| H10 | 引擎无出站网络（源码静态扫描） | "
+      f"outbound_hits={len(sec['outbound_hits'])}，"
+      f"url_literals={len(sec['external_url_literals'])}（调用上下文 "
+      f"{len(sec['external_urls_called'])}） |")
+    A(f"| H11 | 审计只记类型数量不记原值 | insert 列="
+      f"{','.join(sec['audit_insert_columns'])} |")
+    A("| H12 | Office/图片/TIF/PDF 元数据清理 | 见 §3 元数据矩阵 |")
+    A("| H13 | 映射库（AI 导出）可解密还原 | 见 §5.3 |")
+    A("")
+    A("## 2. 软参考（SOFT，只记录/报警，不算回归）")
+    A("")
+    A("| # | 软参考项 | 基线值 | 说明 |")
+    A("|---|---|---|---|")
+    A(f"| S1 | 性能：e2e 总耗时 / OCR 页耗时 | e2e {e2e['elapsed_s']}s | "
+      f"超过基线 50% 报警（red-lines F12）|")
+    A("| S2 | 已知边界现状 | 见 §6 | 后续 P0 会改，**不得断言永远如此** |")
+    A(f"| S3 | 新增命中 | 基线实体总数 "
+      f"{sum(r.get('entities', 0) for r in samples['files'].values())} | "
+      f"新增类型/数量只提示，不判失败 |")
+    A("")
+    A("## 3. e2e / 样例基线（HARD 依据）")
+    A("")
+    A("| 样例 | fmt | 页 | 块 | 实体 | 换名 residual/size | 涂黑 residual/size |")
+    A("|---|---|---|---|---|---|---|")
+    for name, r in samples["files"].items():
+        ei = r.get("exports", {}).get("ai", {})
+        eh = r.get("exports", {}).get("human", {})
+        A(f"| {name} | {r.get('fmt')} | {r.get('pages')} | {r.get('blocks')} | "
+          f"{r.get('entities')} | {ei.get('residual')} / {ei.get('size')} | "
+          f"{eh.get('residual')} / {eh.get('size')} |")
+    A("")
+    A("### 3.1 必须至少命中的实体（HARD 下限；新增类型/数量不算回归）")
+    A("")
+    A("| 样例 | 最低类型与数量 | OCR 容差 | 样例 sha256（漂移检测） |")
+    A("|---|---|---|---|")
+    for name, req in base["required"]["samples"].items():
+        must = "、".join(f"{k}×{v}" for k, v in req["required_types"].items())
+        sha = (req.get("sha256") or "")[:16]
+        A(f"| {name} | {must} | ±{req['tolerance']} | `{sha}` |")
+    A("")
+    A("### 3.2 元数据清理矩阵（HARD）")
+    A("")
+    A("| 样例 | 源元数据（证明有对象） | 导出后（身份字段清零） |")
+    A("|---|---|---|")
+    for name, r in samples["files"].items():
+        fmt = r.get("fmt")
+        sm = r.get("source_meta") or {}
+        ai = r.get("exports", {}).get("ai", {}).get("meta_check", {}) or {}
+        if fmt == "pdf":
+            src = f"metadata={list((sm.get('nonempty') or {}).keys())}，xmp={sm.get('xmp_len')}"
+            out = ai.get("out") or {}
+            A(f"| {name} | {src} | metadata={list((out.get('nonempty') or {}).keys())}，"
+              f"xmp={out.get('xmp_len')}，身份字段清空={ai.get('identity_cleared')} |")
+        elif fmt == "docx":
+            out = ai.get("out") or {}
+            A(f"| {name} | fields={ {k: v for k, v in (sm.get('fields') or {}).items() if v} } | "
+              f"fields={ {k: v for k, v in (out.get('fields') or {}).items() if v} }，"
+              f"身份字段清空={ai.get('identity_cleared')}，"
+              f"缩略图移除={ai.get('thumbnail_removed')}，"
+              f"源值残留={out.get('forbidden_hits')} |")
+        elif fmt == "xlsx":
+            out = ai.get("out") or {}
+            A(f"| {name} | props={list((sm.get('nonempty_fields') or {}).keys())} | "
+              f"props={list((out.get('nonempty_fields') or {}).keys())}，"
+              f"身份字段清空={ai.get('identity_cleared')}，"
+              f"源值残留={out.get('forbidden_hits')} |")
+        elif fmt == "image":
+            out = ai.get("out") or {}
+            A(f"| {name} | info={sm.get('info_keys')}，exif={sm.get('exif_entries')} | "
+              f"info={out.get('info_keys')}，exif={out.get('exif_entries')}，"
+              f"清空={ai.get('identity_cleared')} |")
+        elif fmt == "tiff":
+            out = ai.get("out") or {}
+            A(f"| {name} | geo={sm.get('geo_tags')} | "
+              f"真实地理参考残留={out.get('real_geo_residual')}，"
+              f"local_crs={out.get('local_crs')}，"
+              f"raw={out.get('raw_geo_tags')}，sidecars={ai.get('sidecars')}，"
+              f"清空={ai.get('identity_cleared')} |")
+    A("")
+    A("> 说明：DOCX/XLSX 的部分时间戳（created/modified）由 python-docx/openpyxl "
+      "重保存时保留，属现状软记录；身份字段（作者/公司/标题等）必须清零，源值不得残留。")
+    A("")
+    A("## 4. 规则包基线（HARD）")
+    A("")
+    A("| 包 | 名称 | 版本 | include | 自有规则 | 含 include 总数 |")
+    A("|---|---|---|---|---|---|")
+    for pid, p in rules["packs"].items():
+        A(f"| {pid} | {p['name']} | {p['version']} | "
+          f"{','.join(p['include']) or '-'} | {p['own_count']} | {p['total_count']} |")
+    A("")
+    A(f"合计自有规则 **{rules['defined_rules_total']}** 条；"
+      f"load_errors={len(rules['load_errors'])}；violations={len(rules['violations'])}。")
+    A("")
+    A("按格式编译条数：" + "、".join(f"{k}={v}" for k, v in rules["compiled_by_fmt"].items()))
+    A("")
+    A("各包规则 id 清单见 `baseline.json` → `rules.packs.*.rule_ids`。"
+      "回归要求：包 id 不缺、每包自有规则数不减少、编译条数不减少（新增不算回归）。")
+    A("")
+    A("## 5. 服务与安全基线（HARD）")
+    A("")
+    A(f"- 注册：parsers={reg['parsers']}；detectors={reg['detectors']}；"
+      f"replacers={reg['replacers']}")
+    A(f"- OCR：available={reg['ocr']['available']}，backend={reg['ocr']['backend']}，"
+      f"error={reg['ocr']['error']}")
+    A(f"- `/api/health`：status={(base.get('health') or {}).get('status')}，"
+      f"net=**{(base.get('health') or {}).get('net')}**，"
+      f"version={(base.get('health') or {}).get('version')}，"
+      f"ocr={((base.get('health') or {}).get('engine') or {}).get('ocr')}")
+    A(f"- runtime.json：host={(http.get('runtime') or {}).get('host')}，"
+      f"port={(http.get('runtime') or {}).get('port')}；netstat 监听行="
+      f"{http.get('netstat')}")
+    A(f"- 外呼静态扫描：hits={sec['outbound_hits']}，URL 字面量上下文 "
+      f"{[(u['url'], u['context']) for u in sec['external_url_literals']]}；"
+      f"本地浏览器拉起={sec.get('browser_launch')}")
+    A(f"- 审计 INSERT 列：{sec['audit_insert_columns']}；疑似原值列={sec['audit_value_like_columns']}")
+    A(f"- 依赖：requirements={sec.get('requirements_packages')}；"
+      f"网络客户端依赖={sec.get('network_deps') or '无'}")
+    A(f"- 可选重依赖实测：{sec.get('optional_deps')}（TIF P0 可能引入 rasterio/pyproj，"
+      f"只记录不判回归）")
+    A("")
+    A("### 5.1 静态站点冒烟")
+    A("")
+    A("| 路径 | 状态 | Content-Type | 期望 MIME |")
+    A("|---|---|---|---|")
+    for route_path, v in (http.get("static") or {}).items():
+        expect = v.get("expect_ctype")
+        expect_s = "/".join(expect) if isinstance(expect, list) else str(expect)
+        A(f"| `{route_path}` | {v['status']} | {v['ctype']} | {expect_s} |")
+    A("")
+    A("### 5.2 真实 HTTP 主路径（上传 → 任务 → ready → 双导出 → 下载）")
+    A("")
+    mp = http.get("main_path") or {}
+    A(f"- 样例：{mp.get('sample')}（{mp.get('source_bytes')} bytes）")
+    A(f"- 上传：status={(mp.get('upload') or {}).get('status')}；"
+      f"任务：{(mp.get('job_create') or {}).get('job_id')}；"
+      f"stage={(mp.get('job_snapshot') or {}).get('stage')}")
+    A(f"- 实体类型：{(mp.get('job_entities') or {}).get('types')}")
+    A(f"- 预览：{mp.get('preview')}；渲染：{mp.get('render')}")
+    for mode in ("ai", "human"):
+        ex = (mp.get("exports") or {}).get(mode) or {}
+        dl = ex.get("download") or {}
+        A(f"- {mode}：status={ex.get('status')}，bytes={ex.get('bytes')}，"
+          f"verify={ex.get('verify')}，下载 status={dl.get('status')}，"
+          f"magic={dl.get('magic')}，非空={dl.get('nonempty')}")
+    A(f"- 审计：records={(mp.get('audit') or {}).get('records')}，"
+      f"verify={mp.get('audit_verify')}")
+    A(f"- 框选/逐条确认：mark={mp.get('mark')}，accept-all={mp.get('accept_all')}")
+    A(f"- **主路径结论：{'PASS' if mp.get('ok') else 'FAIL'}**")
+    A("")
+    A("### 5.3 映射库与还原（HARD）")
+    A("")
+    A(f"- {base.get('rehydrate_soft')}")
+    A("")
+    A("## 6. 已知边界快照（SOFT，后续 P0 会修改，不要当硬断言）")
+    A("")
+    kl = base.get("known_limits") or {}
+    A(f"- PDF 文本层页不 OCR：只对文本 < `{kl.get('pdf_text_layer_pages_skipped_ocr', {}).get('min_text_chars')}` "
+      f"字的页走 OCR 分支")
+    A(f"- Office 内嵌图片：仅告警、不自动脱敏（{kl.get('office_embedded_media')}）")
+    A(f"- `--no-ocr` 启动参数是否接线：{kl.get('no_ocr_flag_wired')}（False=现状未接线）")
+    A(f"- 无实体时不可导出（仅清理场景受限）：{kl.get('export_requires_entities')}")
+    A(f"- MCP 路径是否保存映射（S6）：{kl.get('mcp_saves_mapping')}（False=现状缺口，后续修复不算回归）")
+    A("- **正射 TIF 中性化（D3 已批准）**：成品物理上仍保留 LOCAL_CS 本地任意 CRS 的 "
+      "GeoTIFF 结构标签（34264/34735/34737，GIS 可打开）。红线是"
+      "**没有真实世界坐标**：源 ModelPixelScale / ModelTiepoint / EPSG / "
+      "GDAL_METADATA / RPC / ICC / EXIF / GPS 一旦残留即 FAIL；"
+      "LOCAL_CS 结构本身不算残留（详见 `docs/impl/tiff.md §10`）。")
+    A("")
+    A("## 7. 采集环境说明")
+    A("")
+    A("- 采集使用临时数据目录（YINZHAN_DATA_DIR=临时目录），仓库 `data/` 不被基线污染。")
+    A("- e2e 采集命令同仓库约定；结构化明细由同一引擎在进程内按 e2e 相同步骤复跑得到。")
+    A("- 语义：e2e 只做 detect/decide/export/verify；HTTP 主路径会额外走 jobs 的表单人名、"
+      "同值扩散、签署区/视觉实体补充，所以两者实体数可能不同，均属正常。")
+    A("")
+    reason = (base.get("meta") or {}).get("update_reason")
+    if reason:
+        A("## 8. 本次基线更新理由（人工填写）")
+        A("")
+        A(f"> {reason}")
+        A("")
+    history = (base.get("meta") or {}).get("update_history") or []
+    if history:
+        A("## 9. 基线更新记录（最近 10 次）")
+        A("")
+        A("| 时间 | HEAD | engine_clean | 理由 |")
+        A("|---|---|---|---|")
+        for item in history[-10:]:
+            A(f"| {item.get('at')} | {item.get('head')} | "
+              f"{item.get('engine_clean')} | {item.get('reason')} |")
+        A("")
+    path.write_text("\n".join(lines) + "\n", "utf-8")

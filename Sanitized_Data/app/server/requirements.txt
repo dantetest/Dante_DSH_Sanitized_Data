@@ -15,6 +15,14 @@ rapidocr-onnxruntime>=1.3   # 兜底：PP-OCRv4，老环境用
 onnxruntime>=1.16
 opencv-python-headless>=4.8
 
+# 条码 / 二维码（离线解码，Apache-2.0；自带全部码制，不下载模型、不联网）
+zxing-cpp>=3.1,<4
+
+# 正射 TIF：大图/16bit/多波段/坐标中性化（P0；可选依赖：import 失败自动回退 Pillow + warning）
+# rasterio=BSD-3（内含 GDAL），pyproj=MIT；离线 wheel 与校验和见 docs/impl/tiff.md
+rasterio>=1.4.3
+pyproj>=3.7.2
+
 # 加密（映射库）
 cryptography>=41.0
 
@@ -24,4 +32,6 @@ cryptography>=41.0
 # - 现场实测（6 核 CPU，A4 扫描页，42 页测试集，纯 OCR 解析）：
 #     PP-OCRv4：约 6.1 秒/页，合计约 245 秒
 #     PP-OCRv6：约 2.1 秒/页，合计约 87 秒
-# - GDAL 可选：装了就能读 TIF 的完整地理标签，没装也能剥离
+# - 离线安装：zxing-cpp / rasterio / pyproj 均有 Windows wheel，可 --no-index --find-links
+#   安装（清单/sha256 见 docs/impl/barcode.md、docs/impl/tiff.md）；运行时不联网
+# - GDAL 命令行不需要：rasterio 自带 GDAL 库；未装 rasterio 时 TIF 走 Pillow 降级

@@ -13,6 +13,9 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = Path(SPECPATH).resolve().parent        # Sanitized_Data/
 APP = ROOT / "app"
 ENTRY = ROOT / "desktop" / "main.py"
+# 图标资产：唯一图源 desktop/assets/app.svg，派生 app.ico / app.icns（重建方法见
+# docs/research/06-图标适配检查与替换记录.md）。Windows 用 ico，macOS 用 icns。
+ASSETS = ROOT / "desktop" / "assets"
 
 # 关键：collect_submodules 在 spec 求值时就执行，必须先把 app/server 放进 sys.path，
 # 否则收集结果为空 → 插件模块不会被打进包 → 运行时 0 个解析器。
@@ -27,9 +30,15 @@ binaries = []
 hiddenimports = collect_submodules("yinzhan")                    # 动态加载的解析器/检测器
 print(f"[spec] 收集到 yinzhan 子模块 {len(hiddenimports)} 个")
 
-# 这两个包用动态导入，静态分析会漏，必须 collect_all
-for pkg in ("rapidocr", "onnxruntime"):
-    d, b, h = collect_all(pkg)
+# 这几个包用动态导入/二进制扩展，静态分析会漏，必须 collect_all。
+# zxingcpp 是条码/二维码识别引擎（Apache-2.0），模型/数据随 wheel 分发、运行时不联网。
+# rasterio/pyproj 是正射 TIF 中性化/大图处理的可选依赖（BSD-3 / MIT）。
+for pkg in ("rapidocr", "onnxruntime", "zxingcpp", "rasterio", "pyproj"):
+    try:
+        d, b, h = collect_all(pkg)
+    except Exception as exc:      # 开发机未装某引擎时不让整个 spec 崩
+        print(f"[spec] 跳过 {pkg}: {exc}")
+        continue
     datas += d
     binaries += b
     hiddenimports += h
@@ -74,6 +83,7 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    icon=str(ASSETS / ("app.icns" if sys.platform == "darwin" else "app.ico")),
 )
 
 coll = COLLECT(
@@ -87,7 +97,7 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name="Sanitized_Data.app",
-        icon=None,
+        icon=str(ASSETS / "app.icns"),
         bundle_identifier="com.blctek.sanitizeddata",
         info_plist={
             "CFBundleName": "数据隐站",

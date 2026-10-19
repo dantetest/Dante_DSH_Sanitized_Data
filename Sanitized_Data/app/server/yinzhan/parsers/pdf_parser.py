@@ -200,11 +200,13 @@ def _normalize_ocr_text(text: str) -> str:
 
 
 def _collect_visual(page: fitz.Page, blocks: list[Block], page_index: int,
-                    doc: Document) -> None:
+                    doc: Document, scanned: bool = False) -> None:
     """在页面上找红章和手写签名候选，结果记进 doc.visual_marks。
 
     这里单独渲染一次（150dpi），不复用 OCR 那张 200dpi 的图：
     一是精度够，二是就算 OCR 被跳过（有文本层的页）也能查印章。
+    ``scanned=True`` 表示这页是无文本层的扫描页；跨媒体扫描（人脸/码类）
+    只在扫描页或含内嵌图片的页上跑，纯文本页跳过，避免普通合同 PDF 变慢。
     """
     try:
         import numpy as np
@@ -224,6 +226,50 @@ def _collect_visual(page: fitz.Page, blocks: list[Block], page_index: int,
                 kind=kind, page=page_index,
                 rect=(box[0] * to_pt, box[1] * to_pt, box[2] * to_pt, box[3] * to_pt),
             ))
+
+        # 跨媒体目标扫描（二维码/条码/人脸/证件…）。只有注册了扫描器才多渲染一张，
+        # 没有扩展模块时普通 PDF 的解析耗时与基线完全一致。纯文本页（无内嵌图片、
+        # 非扫描页）直接跳过：合同 PDF 不该为一次条码扫描多花一倍时间。
+        try:
+            from .. import mediascan
+
+            if mediascan.has_enabled():
+                if not scanned:
+                    try:
+                        has_images = bool(page.get_images(full=True))
+                    except Exception:
+                        has_images = True      # 判断失败时宁可多扫，不漏
+                    if not has_images:
+                        return
+                try:
+                    scan_dpi = int(os.environ.get("YINZHAN_SCAN_DPI", "200") or 200)
+                except ValueError:
+                    scan_dpi = 200
+                scan_dpi = max(72, min(400, scan_dpi))
+                if scan_dpi == int(VISUAL_DPI):
+                    scan_arr = arr
+                else:
+                    scan_pix = page.get_pixmap(dpi=scan_dpi)
+                    scan_arr = np.frombuffer(scan_pix.samples, dtype=np.uint8)
+                    scan_arr = scan_arr.reshape(scan_pix.height, scan_pix.width, 3)
+                scan_to_px = scan_dpi / 72.0
+                scan_boxes = []
+                for b in blocks:
+                    if b.bbox:
+                        x0, y0, x1, y1 = b.bbox
+                        scan_boxes.append({
+                            "text": b.text,
+                            "rect": (x0 * scan_to_px, y0 * scan_to_px,
+                                     x1 * scan_to_px, y1 * scan_to_px),
+                        })
+                marks, scan_warns = mediascan.analyze(
+                    scan_arr, page=page_index, dpi=float(scan_dpi),
+                    options={"text_boxes": scan_boxes})
+                doc.visual_marks.extend(mediascan.to_visual_marks(
+                    marks, scale=72.0 / scan_dpi, page=page_index))
+                doc.warnings.extend(scan_warns)
+        except Exception as scan_exc:
+            doc.warnings.append(f"第 {page_index + 1} 页图像目标扫描跳过：{scan_exc}")
     except Exception as exc:  # 视觉检测失败不能影响主流程
         doc.warnings.append(f"第 {page_index + 1} 页图像检测跳过：{exc}")
 
@@ -537,7 +583,8 @@ class PdfParser(registry.Parser):
                     )
                     blocks = _page_text_blocks(page, page_index)
                     text = "".join(block.text for block in blocks)
-                    if len(text.strip()) < MIN_TEXT_CHARS:
+                    scanned = len(text.strip()) < MIN_TEXT_CHARS
+                    if scanned:
                         ctx.report(page_index, page_count,
                                    f"正在识别第 {page_index + 1}/{page_count} 页（扫描件）")
                         ocr_blocks = _ocr_page_blocks(page, page_index, ctx, doc.warnings)
@@ -550,8 +597,8 @@ class PdfParser(registry.Parser):
                                     "已保留原文本层")
                     udm_page.blocks = blocks
                     doc.pages.append(udm_page)
-                    # OCR 读不出来的东西（红章、手写签名）单独用图像特征找
-                    _collect_visual(page, blocks, page_index, doc)
+                    # OCR 读不出来的东西（红章、手写签名、码类/人脸…）
+                    _collect_visual(page, blocks, page_index, doc, scanned=scanned)
                     ctx.report(page_index + 1, page_count,
                                f"已读取 {page_index + 1}/{page_count} 页")
                 except Exception as exc:

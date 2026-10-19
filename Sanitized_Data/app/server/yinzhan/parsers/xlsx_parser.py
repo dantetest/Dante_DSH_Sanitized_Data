@@ -279,6 +279,21 @@ class XlsxParser(Parser):
                 document.warnings.append(
                     f"工作簿含 {object_count} 个图表/图片/透视对象，其中文字未纳入检测"
                 )
+            # P0 安全默认：内嵌图片不会自动脱敏，导出时必须二次确认
+            # （见 docs/red-lines.md 扩展点 E3）；re_parse 成品时这段同样生效，
+            # Verify 据此判断"成品里还有未处理媒体"。
+            media_parts: list[str] = []
+            try:
+                with zipfile.ZipFile(path) as archive:
+                    media_parts = [name for name in archive.namelist()
+                                   if name.lower().startswith("xl/media/")]
+            except Exception:
+                media_parts = []
+            if media_parts:
+                meta["embedded_media"] = {
+                    "count": len(media_parts),
+                    "parts": media_parts[:20],
+                }
             document.meta = meta
         except Exception as exc:  # 结构异常时保留已解析页
             document.warnings.append(f"XLSX 工作表遍历中断，已保留部分内容：{exc}")

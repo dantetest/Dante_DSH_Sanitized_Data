@@ -427,6 +427,20 @@ class ImageParser(registry.Parser):
         page = Page(index=0, width=width, height=height)
         page.blocks = _ocr_blocks(rgb, 0, ctx, doc.warnings, with_quad=True)
         page.ref = {"format": pil_format, "ocr": bool(page.blocks)}
+        # 图像目标扫描（人脸/证件/车牌/二维码/条码…）：没有文字可读的目标在这里找。
+        # 没有注册扫描器时 has_enabled() 为 False，不产生任何开销。
+        try:
+            from .. import mediascan
+
+            if mediascan.has_enabled():
+                text_boxes = [{"text": b.text, "rect": b.bbox}
+                              for b in page.blocks if b.bbox]
+                marks, scan_warns = mediascan.analyze(
+                    rgb, page=0, dpi=0.0, options={"text_boxes": text_boxes})
+                doc.visual_marks.extend(mediascan.to_visual_marks(marks))
+                doc.warnings.extend(scan_warns)
+        except Exception as exc:      # 扩展扫描失败不能带崩主流程
+            doc.warnings.append(f"图像目标扫描跳过：{exc}")
         doc.pages.append(page)
         return doc
 

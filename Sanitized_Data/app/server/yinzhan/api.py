@@ -95,6 +95,12 @@ def health(ctx):
         _, _, packs = _load_rules("pdf")
     except Exception:
         pass
+    try:
+        from . import mediascan
+        scanners = mediascan.scanner_names()
+        scan_enabled = mediascan.has_enabled()
+    except Exception:
+        scanners, scan_enabled = [], False
     return {
         "ok": True, "version": VERSION, "net": "blocked",
         "engine": {
@@ -103,6 +109,8 @@ def health(ctx):
             "parsers": sorted({p.format_id for p in registry.all_parsers().values()
                                if isinstance(p, registry.Parser)}),
             "detectors": sorted(registry.all_detectors().keys()),
+            "scanners": scanners,
+            "scan_enabled": scan_enabled,
             "packs": packs,
             "vault_key": vault.key_fingerprint(),
         },
@@ -196,7 +204,10 @@ def cancel_job(ctx, jid):
 @route("POST", r"/api/jobs/(?P<jid>[^/]+)/export")
 def export(ctx, jid):
     body = ctx.json()
-    return MANAGER.export(jid, body.get("mode", "ai"))
+    options = {
+        "allow_unprocessed_media": bool(body.get("allow_unprocessed_media")),
+    }
+    return MANAGER.export(jid, body.get("mode", "ai"), options=options)
 
 
 @route("GET", r"/api/audit")

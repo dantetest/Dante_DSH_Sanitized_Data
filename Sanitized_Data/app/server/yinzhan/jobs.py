@@ -64,6 +64,19 @@ def _load_rules(fmt: str, pack_ids: list[str] | None = None) -> tuple[list[Rule]
     return compiled, label, index
 
 
+def _embedded_media_info(doc: Document) -> dict:
+    """解析器写在 ``doc.meta["embedded_media"]`` 的未处理媒体信息。
+
+    约定结构：``{"count": int, "parts": [部件名...]}``。P0 阶段只检测 + 阻断，
+    P1 再做 Office 内嵌图片的自动脱敏。
+    """
+    try:
+        media = (getattr(doc, "meta", None) or {}).get("embedded_media") or {}
+        return dict(media) if isinstance(media, dict) else {}
+    except Exception:
+        return {}
+
+
 @dataclass
 class Job:
     id: str
@@ -219,6 +232,19 @@ class JobManager:
                 job.warnings.append(f"表单人名补充跳过：{exc}")
 
             pipeline.decide(job.entities, job.rules, job.session)
+
+            # 金额一致性（P0 财务）：同一勾稽组统一缩放因子、合计按分项重算，
+            # 避免逐处 ±25% 随机导致「合计≠分项之和」。见 docs/red-lines.md E4。
+            try:
+                from .replacers import amount_consistency
+
+                plan = amount_consistency.build_amount_plan(
+                    job.entities, job.rules, job.session)
+                if plan:
+                    amount_consistency.apply_plan(job.entities, plan, job.session)
+                    job.warnings.append(f"金额一致性缩放 {len(plan)} 处")
+            except Exception as exc:
+                job.warnings.append(f"金额一致性处理跳过：{exc}")
 
             # OCR 会把同一行切碎（公章压字、扫描歪斜），这里把已识别的值在
             # 全文其它位置补齐，否则签字页上的公司名会漏。
@@ -426,34 +452,63 @@ class JobManager:
             return new_doc
 
     # ── 导出 ──
-    def export(self, job_id: str, mode: str) -> dict:
+    def export(self, job_id: str, mode: str, options: dict | None = None) -> dict:
+        """导出成品。
+
+        :param options: 导出选项。``allow_unprocessed_media=True`` 表示用户已确认
+            「文件里有未脱敏的内嵌图片，仍要导出」（P0 安全默认：检测到即阻断，
+            必须二次确认；见 docs/red-lines.md 扩展点 E3）。
+        """
         job = self.get(job_id)
         if mode not in ("ai", "human"):
             raise YinzhanError("导出模式只能是 ai 或 human")
+        options = dict(options or {})
         with job.lock:
             if job.stage != "ready" or job.doc is None:
                 raise YinzhanError("任务还没准备好")
-            if not [e for e in job.entities if e.status != "rejected"]:
+            active = [e for e in job.entities if e.status != "rejected"]
+            # 「仅清理」场景：没有可涂的实体，但文件里有必须剥离的元数据/地理参考
+            # （典型：只有 Geo 标签、没有可 OCR 文字的正射影像）。以前会直接报
+            # 「没有需要隐去的内容」，导致这类文件出不去。
+            if not active and not pipeline.has_cleanup_targets(job.doc):
                 raise YinzhanError("没有需要隐去的内容")
+            media = _embedded_media_info(job.doc)
+            media_count = int(media.get("count") or 0)
+            if media_count and not options.get("allow_unprocessed_media"):
+                err = YinzhanError(
+                    f"检测到 {media_count} 张未脱敏的内嵌图片（DOCX/XLSX 内的图片/图表），"
+                    "当前版本不会自动处理这些图片。要继续导出吗？")
+                err.code = "media_confirmation_required"
+                err.media_count = media_count
+                raise err
             job.stage = "exporting"
         try:
             seal = _seal_no()
             suffix = "换名" if mode == "ai" else "已隐去"
             stem = Path(job.name).stem
             out = unique_path(OUTPUT_DIR / f"{safe_name(stem, 60)}_{suffix}_{seal}{_ext(job.path)}")
-            result = self._export_to(job, mode, out, do_verify=True)
+            result = self._export_to(job, mode, out, do_verify=True, options=options)
 
             counts = job.counts()
             out_hash = sha256_file(out)
             audit.append(
                 job_id=job.id, doc_name=job.name, doc_hash=sha256_file(job.path),
-                fmt=job.fmt, counts={"total": counts["total"], "by_type": counts["by_type"]},
+                fmt=job.fmt,
+                counts={"total": counts["total"], "by_type": counts["by_type"],
+                        # 未处理媒体被用户二次确认放行时，审计留下痕迹
+                        "media_count": media_count,
+                        "media_confirmed": bool(options.get("allow_unprocessed_media"))},
                 rule_pack=job.pack_label, mode=mode,
                 out_hash=out_hash, out_name=out.name,
             )
             if mode == "ai":
-                vault.save_mapping(job.id, job.session.to_dict(),
-                                   {"name": job.name, "seal": seal})
+                # 映射库除文字实体图外，也保存解析器交出来的地理坐标变换参数
+                # （正射 TIF 中性化需要可还原；见 docs/red-lines.md E5）。
+                extra = {"name": job.name, "seal": seal}
+                geo_params = (job.doc.extra or {}).get("geo_params") if job.doc else None
+                if geo_params:
+                    extra["geo"] = geo_params
+                vault.save_mapping(job.id, job.session.to_dict(), extra)
             record = {
                 "out": str(out), "name": out.name, "seal_no": seal,
                 "sha256": out_hash, "mode": mode,
@@ -470,7 +525,9 @@ class JobManager:
                 job.stage = "ready"
             raise
 
-    def _export_to(self, job: Job, mode: str, out: Path, do_verify: bool) -> dict:
+    def _export_to(self, job: Job, mode: str, out: Path, do_verify: bool,
+                   options: dict | None = None) -> dict:
+        options = dict(options or {})
         ents = [e for e in job.entities if e.status != "rejected"]
         if mode == "human":
             for e in ents:
@@ -480,12 +537,15 @@ class JobManager:
                 if e.decision is None:
                     e.decision = Decision(strategy="black", black=True)
 
-        res = pipeline.export(job.doc, job.parser, ents, out, {"mode": mode})
+        res = pipeline.export(job.doc, job.parser, ents, out,
+                              {"mode": mode, **options})
         info = {"path": res.path, "warnings": list(res.warnings)}
         if do_verify:
             ctx = ParseContext(ocr=get_ocr(), workdir=str(WORK_DIR))
             try:
-                info["verify"] = pipeline.verify(out, ents, job.parser, ctx)
+                info["verify"] = pipeline.verify(
+                    out, ents, job.parser, ctx,
+                    doc=job.doc, options=options)
             except Exception:
                 out.unlink(missing_ok=True)
                 raise
@@ -499,13 +559,26 @@ _TYPE_LABEL = {
     "BANK": "账号", "ORG": "机构", "AMOUNT": "金额", "CASE_NO": "案号",
     "EMAIL": "邮箱", "SECRET": "密钥", "OTHER": "其他敏感",
     "SEAL": "公章/印章", "SIGNATURE": "手写签名", "SIG_BLOCK": "签署区",
+    "HANDWRITING": "疑似手写",
+    "FACE": "人脸", "ID_DOCUMENT": "证件", "PLATE": "车牌",
+    "ROAD_SIGN": "路牌", "DOOR_ADDRESS": "门牌/门址",
+    "QRCODE": "二维码", "BARCODE": "条形码",
 }
 
-# 印章默认直接处理（它一定是敏感信息）；手写签名先标成待确认，
-# 因为墨迹检测可能误报，让用户扫一眼再定。
+# 视觉/码类标记的展示口径。前三元组向后兼容旧代码：
+# (etype, label, status[, level])；视觉类默认都不可逆涂黑，低置信度的先进待确认。
+# 人脸/证件/码类属于识别身份或承载数据的高危目标，默认直接处理；
+# 车牌/路牌/门址可能误报，先标待确认，让用户在对照台一眼确认。
 _VISUAL_SPEC = {
-    "seal":      ("SEAL", "公章/印章", "accepted"),
-    "signature": ("SIGNATURE", "手写签名", "pending"),
+    "seal":        ("SEAL", "公章/印章", "accepted", "L3"),
+    "signature":   ("SIGNATURE", "手写签名", "pending", "L3"),
+    "face":        ("FACE", "人脸", "accepted", "L3"),
+    "id_document": ("ID_DOCUMENT", "证件", "accepted", "L3"),
+    "plate":       ("PLATE", "车牌", "pending", "L2"),
+    "road_sign":   ("ROAD_SIGN", "路牌", "pending", "L2"),
+    "door_address": ("DOOR_ADDRESS", "门牌/门址", "pending", "L2"),
+    "qrcode":      ("QRCODE", "二维码", "accepted", "L3"),
+    "barcode":     ("BARCODE", "条形码", "accepted", "L2"),
 }
 
 
@@ -558,11 +631,12 @@ def _visual_entities(doc: Document, sig_blocks: list | None = None) -> list[Enti
         # 已经落在「签署区」黑框里的印章，不用再单独列一次
         if vm.kind == "seal" and any(_inside(vm.rect, r) for r in sig_by_page.get(vm.page, [])):
             continue
-        etype, label, status = spec
+        etype, label, status = spec[0], spec[1], spec[2]
+        level = spec[3] if len(spec) > 3 else "L3"
         out.append(Entity(
             id=Entity.new_id(), etype=etype, label=label, value="",
             spans=[Span(rect=vm.rect, page=vm.page)],
-            level="L3", confidence=vm.confidence, origin="visual",
+            level=level, confidence=vm.confidence, origin="visual",
             status=status,
             decision=Decision(strategy="black", black=True, replacement=None),
         ))

@@ -33,13 +33,28 @@ function fmtSize(value) {
 const TYPE_CN = {
   PERSON: '人名', ID_CARD: '身份证', PHONE: '电话', ADDRESS: '地址', ORG: '机构',
   CASE_NO: '案号', AMOUNT: '金额', BANK: '账号', LICENSE: '证照号', EMAIL: '邮箱',
-  DATE: '日期', IP: '网络地址', OTHER: '其他敏感',
+  DATE: '日期', IP: '网络地址',
+  // 视觉 / 码类（mediascan 检出；后端 jobs._VISUAL_SPEC 的 etype）
+  SEAL: '公章/印章', SIGNATURE: '手写签名', SIG_BLOCK: '签署区', HANDWRITING: '疑似手写',
+  FACE: '人脸', ID_DOCUMENT: '证件', PLATE: '车牌', ROAD_SIGN: '路牌',
+  DOOR_ADDRESS: '门牌/门址', QRCODE: '二维码', BARCODE: '条形码',
+  OTHER: '其他敏感',
 };
-const TYPE_ORDER = ['PERSON', 'ID_CARD', 'ADDRESS', 'PHONE', 'ORG', 'CASE_NO', 'AMOUNT', 'BANK', 'LICENSE', 'EMAIL', 'DATE', 'IP', 'OTHER'];
+const TYPE_ORDER = [
+  'PERSON', 'ID_CARD', 'ADDRESS', 'PHONE', 'ORG', 'CASE_NO', 'AMOUNT', 'BANK', 'LICENSE', 'EMAIL', 'DATE', 'IP',
+  'FACE', 'ID_DOCUMENT', 'PLATE', 'ROAD_SIGN', 'DOOR_ADDRESS',
+  'SEAL', 'SIGNATURE', 'SIG_BLOCK', 'HANDWRITING', 'QRCODE', 'BARCODE',
+  'OTHER',
+];
 const TYPE_COLOR = {
   PERSON: '#B23A2E', ID_CARD: '#1A1714', ADDRESS: '#8C6A3F', PHONE: '#4C6B4A',
   ORG: '#6B5B8A', CASE_NO: '#A8763E', AMOUNT: '#3F6B7A', BANK: '#8C5A5A',
-  LICENSE: '#6B6B5A', EMAIL: '#7A5A4A', DATE: '#6B6B5A', IP: '#4A5A6B', OTHER: '#8C8272',
+  LICENSE: '#6B6B5A', EMAIL: '#7A5A4A', DATE: '#6B6B5A', IP: '#4A5A6B',
+  // 视觉 / 码类：沿用纸面档案的 muted 色系（不引入高饱和色），组名仍以中文为准
+  SEAL: '#8C2F26', SIGNATURE: '#5E4A66', SIG_BLOCK: '#7A6E5A', HANDWRITING: '#4F6B6B',
+  FACE: '#B0573F', ID_DOCUMENT: '#40372F', PLATE: '#46603A', ROAD_SIGN: '#8A6A2F',
+  DOOR_ADDRESS: '#6B4636', QRCODE: '#2E3A48', BARCODE: '#24211C',
+  OTHER: '#8C8272',
 };
 const STRICT_CN = { loose: '宽松', standard: '标准', strict: '最严' };
 const STAGE_CN = {
@@ -1448,19 +1463,51 @@ function onExportCard(card) {
   if (mode === 'human' && !card.classList.contains('armed')) { armHumanCard(card); return; }
   doExport(mode);
 }
+/* 导出结果里的 verify 是「只增不改」的契约：verified / residual / checked 为数值，
+   visual_residual 为数值，media = { count, confirmed }；以后多出来的字段认不出就
+   忽略，绝不能因为未知字段把已经成功的交付判成失败。 */
+function verifyCount(value) {
+  if (value == null) return null;
+  if (Array.isArray(value)) return value.length;
+  if (typeof value === 'object') {
+    if (value.count != null) return num(value.count);
+    if (value.unprocessed != null) return num(value.unprocessed);
+    return null;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+function readVerify(raw) {
+  const v = (raw && typeof raw.verify === 'object' && raw.verify) ? raw.verify : {};
+  let residual = verifyCount(v.residual);
+  if (residual == null) residual = verifyCount(raw && raw.residual);
+  let visualResidual = verifyCount(v.visual_residual);
+  if (visualResidual == null && v.visual && typeof v.visual === 'object') {
+    visualResidual = verifyCount(v.visual.residual);
+  }
+  let media = null;
+  if (v.media && typeof v.media === 'object') {
+    const count = verifyCount(v.media);
+    if (count != null) media = { count, confirmed: v.media.confirmed === true };
+  } else if (v.media != null) {
+    const count = verifyCount(v.media);
+    if (count != null) media = { count, confirmed: false };
+  }
+  return { residual, visualResidual, media };
+}
 function normalizeExport(res) {
   const raw = (res && res.result && typeof res.result === 'object') ? res.result : (res || {});
   const path = raw.path || raw.out || raw.file || '';
   const seal = raw.seal_no || raw.seal || '';
   const sha = raw.sha256 || raw.hash || '';
-  let residual = null;
-  if (raw.verify && raw.verify.residual != null) residual = num(raw.verify.residual);
-  else if (raw.residual != null) residual = num(raw.residual);
+  const verify = readVerify(raw);
   return {
     path: String(path || ''),
     seal: seal ? String(seal) : '',
     sha: sha ? String(sha) : '',
-    residual,
+    residual: verify.residual,
+    visualResidual: verify.visualResidual,
+    media: verify.media,
     warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
   };
 }
@@ -1481,8 +1528,15 @@ function renderExportResult(card, mode, info) {
     '编号　' + (info.seal || '—'),
     '指纹　' + (info.sha ? info.sha.slice(0, 12) : '—'),
     '自检　' + (info.residual == null ? '已完成' : (info.residual === 0 ? '残留 0 处' : '残留 ' + info.residual + ' 处')),
-    '位置　' + (info.path || '本机输出目录'),
   ];
+  // 新增的复检维度：有就展示，没有就跳过（老版本后端不会返回这两项）
+  if (info.visualResidual != null) {
+    rows.push('视觉残留　' + (info.visualResidual === 0 ? '0 处' : info.visualResidual + ' 处'));
+  }
+  if (info.media && info.media.count > 0) {
+    rows.push('内嵌媒体　' + info.media.count + ' 处未处理' + (info.media.confirmed ? '（你已确认导出）' : ''));
+  }
+  rows.push('位置　' + (info.path || '本机输出目录'));
   rows.forEach((line) => detail.appendChild(mk('div', 'res-line', line)));
   if (info.warnings.length) detail.appendChild(mk('div', 'res-line', '另有 ' + info.warnings.length + ' 条提示'));
   card.appendChild(detail);
@@ -1493,8 +1547,29 @@ function renderExportResult(card, mode, info) {
   link.textContent = '下载这一份 ↓';
   card.appendChild(link);
 }
-async function doExport(mode) {
+/* 内嵌媒体二次确认（docs/red-lines.md E3，后端 jobs.export）：
+   首次导出 body 仍只有 { mode }（原逻辑不变）；后端检测到 DOCX/XLSX 里未脱敏的
+   内嵌图片/图表时，返回 400 + error.code="media_confirmation_required"。
+   用户点「仍要导出」才重发同一 POST，body 加 allow_unprocessed_media:true。 */
+function exportRequestBody(mode, allowMedia) {
+  const body = { mode };
+  if (allowMedia) body.allow_unprocessed_media = true;
+  return JSON.stringify(body);
+}
+function mediaConfirmText(err) {
+  const raw = cleanMessage(err && err.human);
+  if (!raw) return '这份文件里有未脱敏的内嵌图片，当前版本不会自动处理它们。仍要导出吗？';
+  return /[？?]$/.test(raw) ? raw : raw + ' 仍要导出吗？';
+}
+function askMediaConfirmation(mode, err) {
+  toast(mediaConfirmText(err), [
+    { label: '仍要导出', fn: () => { doExport(mode, { allowMedia: true }); } },
+    { label: '先不导出', fn: () => { toast('已取消导出，原件没有被改动。'); } },
+  ], 15000);
+}
+async function doExport(mode, opts = {}) {
   if (!state.jobId || state.modalBusy) return;
+  const allowMedia = !!(opts && opts.allowMedia);
   const card = mode === 'ai' ? ui.cardAi : ui.cardHuman;
   state.modalBusy = true;
   card.classList.add('busy');
@@ -1504,7 +1579,7 @@ async function doExport(mode) {
     const res = await api('/api/jobs/' + jobPath() + '/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode }),
+      body: exportRequestBody(mode, allowMedia),
     });
     renderExportResult(card, mode, normalizeExport(res));
     state.exported = true;
@@ -1513,7 +1588,16 @@ async function doExport(mode) {
     toast(mode === 'ai' ? '已交付 · 换名版生成好了，可以喂给 AI。' : '已交付 · 涂黑版生成好了，可以发出去了。');
   } catch (err) {
     resetCard(card);
-    toast((err && err.human) || '成品没能生成，原件没有被改动。');
+    if (err && err.code === 'media_confirmation_required') {
+      if (allowMedia) {
+        // 已确认仍被拒：只能是本机版本没接受这个确认，别让用户反复点
+        toast('本机没有接受「仍要导出」的确认，请重启隐站后再试。', null, 8000);
+      } else {
+        askMediaConfirmation(mode, err);
+      }
+    } else {
+      toast((err && err.human) || '成品没能生成，原件没有被改动。');
+    }
   } finally {
     state.modalBusy = false;
     card.classList.remove('busy');

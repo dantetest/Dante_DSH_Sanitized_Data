@@ -1,4 +1,4 @@
-﻿# 数据隐站 · Windows 打包脚本
+# 数据隐站 · Windows 打包脚本
 #   powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 #
 # 产物：
@@ -12,6 +12,12 @@ Write-Host "`n[1/6] 检查构建依赖" -ForegroundColor Cyan
 $need = @()
 python -c "import PyInstaller" 2>$null; if ($LASTEXITCODE -ne 0) { $need += 'pyinstaller' }
 python -c "import webview"     2>$null; if ($LASTEXITCODE -ne 0) { $need += 'pywebview' }
+# 条码/二维码识别引擎（P0 起必需，Apache-2.0，离线 wheel）
+python -c "import zxingcpp"    2>$null; if ($LASTEXITCODE -ne 0) { $need += 'zxing-cpp' }
+# 正射 TIF 中性化/大图（P0 起建议安装；缺失时自动降级为 Pillow + warning）
+python -c "import rasterio, pyproj" 2>$null; if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ! 未安装 rasterio/pyproj：TIF 大图/位深/中性化会降级（见 docs/impl/tiff.md）" -ForegroundColor Yellow
+}
 if ($need.Count -gt 0) {
     Write-Host "  安装：$($need -join ', ')"
     python -m pip install --quiet --disable-pip-version-check @need
@@ -45,6 +51,14 @@ if (Test-Path $exe) {
     try {
         $h = (Invoke-WebRequest 'http://127.0.0.1:8760/api/health' -UseBasicParsing -TimeoutSec 5).Content | ConvertFrom-Json
         "  ✓ 服务已启动  OCR=$($h.engine.ocr)  解析器=$($h.engine.parsers -join ',')"
+        # 打包关键自检：识别引擎与图像扫描器必须真的被收进包里
+        "  扫描器=$($h.engine.scanners -join ',')  启用=$($h.engine.scan_enabled)"
+        if (-not ($h.engine.scanners -contains 'barcode')) {
+            Write-Host "  ! 警告：条形码扫描器未加载（检查 zxingcpp 是否被 collect_all 收进包）" -ForegroundColor Yellow
+        }
+        if ($h.engine.ocr -ne $true) {
+            Write-Host "  ! 警告：OCR 未就绪（检查 rapidocr/onnxruntime 模型是否打进包）" -ForegroundColor Yellow
+        }
     } catch {
         "  ! 自检请求失败（可能窗口已打开但端口不同，检查 data\runtime.json）"
     }

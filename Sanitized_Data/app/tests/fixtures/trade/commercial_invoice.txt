@@ -1,0 +1,11 @@
+商业发票 COMMERCIAL INVOICE
+卖方：宁波华信进出口有限公司
+买方：ABC INTERNATIONAL TRADING CO., LTD.
+发票号：INV-2026-0001
+合同号：HX-2026-001
+HS编码：8471300000
+商品名称：笔记本电脑
+单价：USD 320.00/台
+总价：USD 128,000.00
+价格条款：CIF 汉堡
+数量：400 台

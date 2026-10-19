@@ -49,6 +49,12 @@ TOOLS = [
                          "description": "ai=换名可还原（喂模型）；human=涂黑不可还原（给人看）"},
                 "strictness": {"type": "string", "enum": ["loose", "standard", "strict"],
                                "default": "standard"},
+                "allow_unprocessed_media": {
+                    "type": "boolean", "default": False,
+                    "description": ("文件内含未脱敏的内嵌图片时是否仍然导出。"
+                                    "默认 false（安全默认，会拒绝并提示）；"
+                                    "用户明确同意后再传 true。"),
+                },
             },
             "required": ["path"],
         },
@@ -113,15 +119,37 @@ def tool_sanitize_document(args: dict) -> dict:
     doc = parser.parse(src, ctx)
     rules, pack, _ = _load_rules(doc.fmt)
     det = pipeline.detect(doc, rules, strictness)
-    pipeline.decide(det.entities, det.rules, pipeline.Session())
+    # 换名版要可还原：会话映射必须保留下来（S6 红线：MCP 路径也要存映射）
+    session = pipeline.Session()
+    pipeline.decide(det.entities, det.rules, session)
+    # 金额一致性：同一勾稽组统一缩放、合计按分项重算
+    try:
+        from yinzhan.replacers import amount_consistency
+
+        plan = amount_consistency.build_amount_plan(det.entities, det.rules, session)
+        if plan:
+            amount_consistency.apply_plan(det.entities, plan, session)
+    except Exception:
+        pass
     pipeline.propagate_values(doc, det.entities)
 
-    from yinzhan.jobs import _low_confidence_entities, _visual_entities
+    from yinzhan.jobs import _embedded_media_info, _low_confidence_entities, _visual_entities
 
     sig = pipeline.find_signature_blocks(doc)
     ents = list(det.entities)
     ents.extend(_visual_entities(doc, sig))
     ents.extend(_low_confidence_entities(doc, ents))
+
+    # P0 安全默认：Office 里的内嵌图片当前不会自动脱敏，检测到就拒绝导出，
+    # 需调用方显式传 allow_unprocessed_media=true 二次确认。
+    allow_media = bool(args.get("allow_unprocessed_media"))
+    media = _embedded_media_info(doc)
+    media_count = int(media.get("count") or 0)
+    if media_count and not allow_media:
+        return _error(
+            f"检测到 {media_count} 张未脱敏的内嵌图片（DOCX/XLSX 内的图片/图表），"
+            "当前版本不会自动处理这些图片。如确认要导出，请传 "
+            "allow_unprocessed_media=true。")
 
     if mode == "human":
         from yinzhan.udm import Decision
@@ -144,10 +172,27 @@ def tool_sanitize_document(args: dict) -> dict:
     verified, residual = None, None
     try:
         v = pipeline.verify(out, [e for e in ents if e.status != "rejected"],
-                            parser, ctx)
+                            parser, ctx, doc=doc,
+                            options={"allow_unprocessed_media": allow_media})
         verified, residual = v.get("verified"), v.get("residual")
     except Exception as exc:
         verified, residual = False, str(exc)
+
+    # 换名版映射落盘（加密），供 rehydrate 还原；MCP 没有 job_id，用 mcp_ 前缀
+    mapping_id = None
+    if mode == "ai" and verified:
+        try:
+            from yinzhan import vault
+            from yinzhan.utils import now
+
+            mapping_id = "mcp_" + now().strftime("%Y%m%d%H%M%S%f")
+            extra = {"name": src.name, "source": str(src), "transport": "mcp"}
+            geo_params = (doc.extra or {}).get("geo_params")
+            if geo_params:
+                extra["geo"] = geo_params
+            vault.save_mapping(mapping_id, session.to_dict(), extra)
+        except Exception as exc:
+            log("保存映射失败：", exc)
 
     return _text_result({
         "ok": True,
@@ -157,6 +202,7 @@ def tool_sanitize_document(args: dict) -> dict:
         "entities": len([e for e in ents if e.status != "rejected"]),
         "by_type": counts,
         "verify": {"verified": verified, "residual": residual},
+        "mapping_id": mapping_id,
         "warnings": list(getattr(res, "warnings", []) or [])[:5],
     })
 

@@ -507,13 +507,109 @@ META_KEYS = {
 
 GEO_TAGS = {33550, 33922, 34735, 34264, 42112, 42113}
 
+# 视觉/码类实体 -> 重解析成品后「本不该再出现」的 visual_marks kind。
+# 只在 P0 新抽出的目标上做残留判定；印章/签名的复检沿用旧逻辑，避免误报。
+_RECT_ETYPE_KIND = {
+    "FACE": "face",
+    "ID_DOCUMENT": "id_document",
+    "PLATE": "plate",
+    "ROAD_SIGN": "road_sign",
+    "DOOR_ADDRESS": "door_address",
+    "QRCODE": "qrcode",
+    "BARCODE": "barcode",
+}
+
+_VISUAL_IOU = 0.3
+
+
+def _iou_box(a, b) -> float:
+    """两个矩形的交并比。"""
+    try:
+        x0, y0 = max(a[0], b[0]), max(a[1], b[1])
+        x1, y1 = min(a[2], b[2]), min(a[3], b[3])
+        if x1 <= x0 or y1 <= y0:
+            return 0.0
+        inter = (x1 - x0) * (y1 - y0)
+        area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+        area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+        union = area_a + area_b - inter
+        return inter / union if union > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+def _visual_residual(re_doc: Document, entities: list[Entity]) -> list[str]:
+    """重解析成品后仍能扫到同类视觉/码类目标 = 没涂干净。
+
+    坐标系：实体 span.rect 与 visual_marks.rect 都是各自解析器输出的页面坐标
+    （PDF 为 pt、图片/TIFF 为 px），所以可以直接比。
+    """
+    found: dict[str, list] = {}
+    for mark in getattr(re_doc, "visual_marks", None) or []:
+        found.setdefault(getattr(mark, "kind", ""), []).append(mark)
+    if not found:
+        return []
+    bad: list[str] = []
+    for entity in entities:
+        if entity.status == "rejected":
+            continue
+        kind = _RECT_ETYPE_KIND.get(entity.etype)
+        if not kind:
+            continue
+        marks = found.get(kind) or []
+        if not marks:
+            continue
+        for span in entity.spans or []:
+            if not span.rect:
+                continue
+            page = span.page if span.page is not None else 0
+            for mark in marks:
+                if getattr(mark, "page", 0) != page:
+                    continue
+                if _iou_box(span.rect, mark.rect) >= _VISUAL_IOU:
+                    bad.append(f"{entity.label}@{page}")
+                    break
+            else:
+                continue
+            break
+    return bad
+
+
+def has_cleanup_targets(doc: Document) -> bool:
+    """没有实体时，文件里是否仍有「必须清理才算交付」的内容。
+
+    典型场景：正射影像只有 Geo 标签、没有可 OCR 的文字；以前这种文件会卡在
+    「没有需要隐去的内容」无法导出（详见 docs/red-lines.md 扩展点 E2）。
+    """
+    meta = getattr(doc, "meta", None) or {}
+    if meta.get("geo_tags"):
+        return True
+    if (getattr(doc, "extra", None) or {}).get("geo_transform"):
+        return True
+    if (getattr(doc, "extra", None) or {}).get("geo_params"):
+        return True
+    for key, value in meta.items():
+        try:
+            if value and str(key).lower() in META_KEYS:
+                return True
+        except Exception:
+            continue
+    return False
+
 
 def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
-           ctx: ParseContext) -> dict:
-    """对成品再跑一遍：原文是否还在、元数据是否干净。"""
+           ctx: ParseContext, *, doc: Document | None = None,
+           options: dict | None = None) -> dict:
+    """对成品再跑一遍：原文是否还在、元数据是否干净、视觉/码类是否清干净。
+
+    :param doc: 原始文档（可选）。用于检查「未处理的内嵌媒体」等导出前信息。
+    :param options: 导出选项，``allow_unprocessed_media=True`` 表示用户已二次
+        确认要导出含未脱敏内嵌图片的 Office 文件（见 docs/red-lines.md E3）。
+    """
     issues: list[str] = []
     residual: list[str] = []
     checked = 0
+    options = dict(options or {})
 
     try:
         re_doc = parser.parse(exported, ctx)
@@ -523,6 +619,9 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
     text = _all_text(re_doc)
     for e in entities:
         if e.status == "rejected" or not e.value:
+            continue
+        # keep = 产品显式保留（如 HS 编码/价格条款，按决策不进脱敏），不是残留
+        if e.decision is not None and e.decision.strategy == "keep":
             continue
         checked += 1
         needle = e.value
@@ -539,6 +638,16 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
         dirty = [k for k, v in meta.items() if v and k.lower() in META_KEYS]
         if dirty:
             issues.append("元数据未清理：" + ", ".join(dirty[:5]))
+        # 图片/TIF 的隐藏元数据：ICC/EXIF/GPS/XMP 残留同样要拦
+        extra_dirty = []
+        for key, value in meta.items():
+            if not value:
+                continue
+            low = str(key).lower()
+            if any(tag in low for tag in ("icc", "exif", "gps", "xmp", "iptc")):
+                extra_dirty.append(str(key))
+        if extra_dirty:
+            issues.append("元数据未清理：" + ", ".join(extra_dirty[:5]))
     except Exception:
         pass
 
@@ -546,10 +655,33 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
     if geo:
         issues.append("地理参考标签仍在：" + ", ".join(map(str, geo)))
 
+    # 视觉/码类复检：成品重解析后还能扫到同类目标，说明涂黑没盖住
+    visual_bad = _visual_residual(re_doc, entities)
+    if visual_bad:
+        issues.append(f"仍有 {len(visual_bad)} 处视觉/码类目标残留：" + ", ".join(visual_bad[:8]))
+
+    # 未处理的内嵌媒体：P0 只检测 + 阻断/二次确认
+    media_info = {}
+    try:
+        media_info = dict((getattr(re_doc, "meta", None) or {}).get("embedded_media") or {})
+    except Exception:
+        media_info = {}
+    media_count = int(media_info.get("count") or 0)
+    if media_count and not options.get("allow_unprocessed_media"):
+        issues.append(f"文件里仍有 {media_count} 张未脱敏的内嵌图片")
+
     ok = not issues
     if not ok:
         raise VerifyError("；".join(issues))
-    return {"verified": True, "residual": len(residual), "checked": checked, "issues": []}
+    return {
+        "verified": True,
+        "residual": len(residual),
+        "checked": checked,
+        "visual_residual": len(visual_bad),
+        "media": {"count": media_count,
+                  "confirmed": bool(options.get("allow_unprocessed_media"))},
+        "issues": [],
+    }
 
 
 def _all_text(doc: Document) -> str:

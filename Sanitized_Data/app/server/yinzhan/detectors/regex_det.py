@@ -195,7 +195,10 @@ class RegexDetector(Detector):
                  near_before: int = 24, near_after: int = 8,
                  flags: int = 0, confidence: float = 0.99,
                  strip_prefix: list[str] | tuple[str, ...] | None = None,
-                 strip_suffix: list[str] | tuple[str, ...] | None = None) -> None:
+                 strip_suffix: list[str] | tuple[str, ...] | None = None,
+                 unless_validate: str | list[str] | tuple[str, ...] | None = None,
+                 exclude_near: list[str] | tuple[str, ...] | None = None,
+                 exclude_before: int = 24, exclude_after: int = 8) -> None:
         if not pattern:
             raise ValueError("RegexDetector 需要非空 pattern")
         self.pattern = str(pattern)
@@ -207,9 +210,21 @@ class RegexDetector(Detector):
             self.validate_name = "none"
             validator = _always_ok
         self.validator = validator
+        # 反向校验：命中这些校验器之一就丢弃（典型：银行卡规则要排除「其实像身份证」的值）
+        if isinstance(unless_validate, str):
+            unless_validate = [unless_validate]
+        self.unless_validators = tuple(
+            _VALIDATORS[str(name).strip().lower()]
+            for name in (unless_validate or ())
+            if str(name).strip().lower() in _VALIDATORS
+        )
         self.near = tuple(str(x) for x in near) if near else ()
         self.near_before = max(0, int(near_before))
         self.near_after = max(0, int(near_after))
+        # 排除上下文：窗口出现这些词就不算（典型：固定电话规则不要吃掉「发票代码：0310...」）
+        self.exclude_near = tuple(str(x) for x in exclude_near) if exclude_near else ()
+        self.exclude_before = max(0, int(exclude_before))
+        self.exclude_after = max(0, int(exclude_after))
         self.confidence = float(confidence)
         # 机构类正则容易把前面的"委托/被告/公司的"一起吃进来，允许裁剪。
         self.strip_prefix = tuple(
@@ -237,6 +252,9 @@ class RegexDetector(Detector):
         strip_suffix = spec.get("strip_suffix")
         if isinstance(strip_suffix, str):
             strip_suffix = [strip_suffix]
+        exclude_near = spec.get("exclude_near")
+        if isinstance(exclude_near, str):
+            exclude_near = [exclude_near]
         return cls(
             pattern=str(pattern),
             validate=str(spec.get("validate") or "none"),
@@ -247,6 +265,10 @@ class RegexDetector(Detector):
             confidence=float(spec.get("confidence", 0.99)),
             strip_prefix=strip_prefix,
             strip_suffix=strip_suffix,
+            unless_validate=spec.get("unless_validate"),
+            exclude_near=exclude_near,
+            exclude_before=int(spec.get("exclude_before", 24)),
+            exclude_after=int(spec.get("exclude_after", 8)),
         )
 
     # ── 上下文窗口 ──
@@ -255,6 +277,13 @@ class RegexDetector(Detector):
             return True
         window = text[max(0, start - self.near_before):min(len(text), end + self.near_after)]
         return any(hint in window for hint in self.near)
+
+    def _exclude_ok(self, text: str, start: int, end: int) -> bool:
+        if not self.exclude_near:
+            return True
+        window = text[max(0, start - self.exclude_before):
+                      min(len(text), end + self.exclude_after)]
+        return not any(hint in window for hint in self.exclude_near)
 
     # ── 检测 ──
     def detect(self, doc: Document, rule: Rule,
@@ -286,7 +315,11 @@ class RegexDetector(Detector):
                             break
                 if not value or not self.validator(value):
                     continue
+                if any(fn(value) for fn in self.unless_validators):
+                    continue
                 if not self._near_ok(text, start, end):
+                    continue
+                if not self._exclude_ok(text, start, end):
                     continue
                 entity = merged.get(value)
                 if entity is None:

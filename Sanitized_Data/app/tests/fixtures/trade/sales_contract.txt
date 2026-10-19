@@ -1,0 +1,7 @@
+销售合同 SALES CONTRACT
+合同号：HX-2026-001
+卖方：宁波华信进出口有限公司
+买方：ABC INTERNATIONAL TRADING CO., LTD.
+总价：USD 128,000.00
+价格条款：FOB 宁波
+付款方式：T/T

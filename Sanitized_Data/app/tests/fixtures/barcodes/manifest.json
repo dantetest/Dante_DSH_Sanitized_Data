@@ -1,0 +1,270 @@
+{
+ "generator": "app/tests/test_barcodes.py::_generate_fixtures",
+ "zxing_cpp": "?",
+ "note": "合成测试图，仅用于本仓库单测；可用 python -X utf8 app/tests/test_barcodes.py 重建",
+ "cases": {
+  "qr_invoice.png": {
+   "kind": "qrcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "745b3143374e288efed39465f323d4e443207df4dd21655ae553f6b910b5a0e0",
+   "shape": [
+    246,
+    246
+   ]
+  },
+  "datamatrix_invoice.png": {
+   "kind": "qrcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "eaee5265aca996293939459e3c5ba1f43008252ede0fe98c99d41a4f48c7d4bb",
+   "shape": [
+    396,
+    84
+   ]
+  },
+  "pdf417_invoice.png": {
+   "kind": "qrcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "50415952f2af84e07d50a7cf1e02367f52dcff42a1d637ca49a924d6bff26a9c",
+   "shape": [
+    846,
+    240
+   ]
+  },
+  "aztec_invoice.png": {
+   "kind": "qrcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "bd1233f0082025b5bdd16996908ed0fb0cab5b2ba13504853834e5d11f2883c0",
+   "shape": [
+    162,
+    162
+   ]
+  },
+  "microqr.png": {
+   "kind": "qrcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "a1e7b519b69e6acda4c428c97746dc45b8b1d47e74b90ee7492ae4c91f563e8f",
+   "shape": [
+    168,
+    168
+   ]
+  },
+  "ean13.png": {
+   "kind": "barcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "a80c9b8715dbb27a9dc672c49dd0d88c6f8263edad5bcc861674f84bb6d5d7ba",
+   "shape": [
+    678,
+    330
+   ]
+  },
+  "ean8.png": {
+   "kind": "barcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "508d2145d4908cd59e6d9299bfd5c0f5b06a1860c8dffe2e7c1d174c255ef347",
+   "shape": [
+    486,
+    330
+   ]
+  },
+  "code128.png": {
+   "kind": "barcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "6cb72e474cc10b3af389c1179800496a18d4185ac619da3d485008574a408350",
+   "shape": [
+    1518,
+    300
+   ]
+  },
+  "code39.png": {
+   "kind": "barcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "17d8b0cb138c12331f1aa5c2bf307469ba2c1f5ffa3765e4a88e15f58d49042d",
+   "shape": [
+    894,
+    300
+   ]
+  },
+  "itf.png": {
+   "kind": "barcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "ecd88ec572c716869241d23c60ae590a77f3e2f49216aa4b2fa8e5ede9abf401",
+   "shape": [
+    714,
+    300
+   ]
+  },
+  "qr_rot90.png": {
+   "kind": "qrcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "6ede92f7bc56b4dba7ca7c23d7afda3cf076884b2967c12849fb54736a8d54ce",
+   "shape": [
+    328,
+    328
+   ]
+  },
+  "qr_inverted.png": {
+   "kind": "qrcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "d0ba5273be05887f75283c502cb21f789ce146577cc6fa36cc638fed24d5a878",
+   "shape": [
+    328,
+    328
+   ]
+  },
+  "qr_lowcontrast.png": {
+   "kind": "qrcode",
+   "expect_min": 1,
+   "rois": [],
+   "allow_detect_only": false,
+   "sha256": "e17ddb201eab039c936fce7a8dbbeeaf0378abc46f16aee80716ad886a0d6f48",
+   "shape": [
+    328,
+    328
+   ]
+  },
+  "qr_occluded_detect_only.png": {
+   "kind": "qrcode",
+   "expect_min": 1,
+   "rois": [
+    [
+     0.0,
+     0.0,
+     328.0,
+     328.0
+    ]
+   ],
+   "allow_detect_only": true,
+   "sha256": "5a691c759929a0e4f70292ddbd251f1ff0054b544a1752e7b7c94a2a7b3c38d0",
+   "shape": [
+    328,
+    328
+   ]
+  },
+  "multi_code_page_300dpi.png": {
+   "kind": "qrcode",
+   "expect_min": 6,
+   "rois": [
+    [
+     120.0,
+     120.0,
+     366.0,
+     366.0
+    ],
+    [
+     700.0,
+     120.0,
+     1096.0,
+     204.0
+    ],
+    [
+     1200.0,
+     120.0,
+     2046.0,
+     360.0
+    ],
+    [
+     1900.0,
+     120.0,
+     2062.0,
+     282.0
+    ],
+    [
+     120.0,
+     700.0,
+     798.0,
+     1030.0
+    ],
+    [
+     120.0,
+     950.0,
+     1110.0,
+     1250.0
+    ]
+   ],
+   "allow_detect_only": false,
+   "sha256": "39b7f7029da1e0c642177b6ecc0f3b494f84f5e5ae2bd048919e953ee367acbe",
+   "shape": [
+    2480,
+    3508
+   ]
+  },
+  "invoice_style_300dpi.png": {
+   "kind": "qrcode",
+   "expect_min": 2,
+   "rois": [
+    [
+     1850.0,
+     140.0,
+     2178.0,
+     468.0
+    ],
+    [
+     200.0,
+     2900.0,
+     652.0,
+     3120.0
+    ]
+   ],
+   "allow_detect_only": false,
+   "sha256": "65f197e8e056a2abf42a0f8549babbf2e53e7bd234846dced8073f02bb00cef8",
+   "shape": [
+    2480,
+    3508
+   ]
+  },
+  "tiny_qr_page_300dpi.png": {
+   "kind": "qrcode",
+   "expect_min": 3,
+   "rois": [
+    [
+     200.0,
+     2200.0,
+     323.0,
+     2323.0
+    ],
+    [
+     900.0,
+     2200.0,
+     1064.0,
+     2364.0
+    ],
+    [
+     1600.0,
+     2200.0,
+     1846.0,
+     2446.0
+    ]
+   ],
+   "allow_detect_only": false,
+   "sha256": "31a3e19d16cdfa4d5b6e234f41d0856db8623753c009439b742d847a589a0e6e",
+   "shape": [
+    2480,
+    3508
+   ]
+  }
+ }
+}

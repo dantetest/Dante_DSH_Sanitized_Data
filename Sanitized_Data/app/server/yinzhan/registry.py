@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import pkgutil
 import sys
 import traceback
@@ -103,9 +104,15 @@ def all_detectors() -> dict[str, type[Detector]]:
 _PLUGIN_FALLBACK = {
     "parsers": ("pdf_parser", "docx_parser", "xlsx_parser", "image_parser",
                 "text_parser", "tiff_parser", "mesh_parser"),
-    "detectors": ("regex_det", "dict_det", "ner_det"),
-    "replacers": ("surrogate", "black", "mask"),
+    "detectors": ("regex_det", "dict_det", "ner_det",
+                  "finance_validators", "trade_validators"),
+    "replacers": ("surrogate", "black", "mask", "amount_consistency"),
 }
+
+# 顶层扫描器模块：导入即向 mediascan 注册（人脸/码类等页面图像目标）。
+# 不放在 parsers/detectors 包内，是因为它们不属于「解析器/文本检测器」，
+# 而是供解析器调用的图像扫描扩展。
+_SCANNER_MODULES = ("yinzhan.barcodes", "yinzhan.visual_targets")
 
 
 def load_plugins() -> list[str]:
@@ -132,6 +139,18 @@ def load_plugins() -> list[str]:
                 _LOADED.add(full)
             except Exception:  # 插件坏了不能带崩整个引擎
                 errors.append(f"{full}: {traceback.format_exc(limit=2)}")
+
+    # 页面图像扫描器（人脸/证件/车牌/二维码/条码…）
+    for modname in _SCANNER_MODULES:
+        if modname in _LOADED:
+            continue
+        try:
+            if importlib.util.find_spec(modname) is None:
+                continue          # 该扩展还没落地（开发期），跳过不算错误
+            importlib.import_module(modname)
+            _LOADED.add(modname)
+        except Exception:
+            errors.append(f"{modname}: {traceback.format_exc(limit=2)}")
     return errors
 
 

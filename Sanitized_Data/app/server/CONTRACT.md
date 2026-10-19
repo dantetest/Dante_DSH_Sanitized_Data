@@ -1,12 +1,15 @@
-# 数据隐站 · 引擎契约 v1
+# 数据隐站 · 引擎契约 v2
 
 > 所有模块只依赖本文件描述的数据结构与 API。改动契约必须先改本文件。
+> v2（2026-10-19 方案 A 启动）：新增页面图像扫描扩展点、Verify 视觉/码类复检、
+> 未处理内嵌媒体二次确认、仅清理导出；安全与回归红线见 `docs/red-lines.md`。
 
 ## 0. 运行环境
 
 - Python 3.12（`python` 在 PATH 上），Windows 10/11
-- 可用三方库（已装）：`fitz`(PyMuPDF 1.27)、`docx`、`openpyxl`、`PIL`、`lxml`、`numpy`、`rapidocr_onnxruntime`、`cv2`、`cryptography`、`pypdf`
-- **不可用**：GDAL、trimesh、tesseract、paddleocr
+- 可用三方库（已装）：`fitz`(PyMuPDF 1.27)、`docx`、`openpyxl`、`PIL`、`lxml`、`numpy`、`rapidocr_onnxruntime`、`cv2`、`cryptography`、`pypdf`、`zxing-cpp>=3.1`（Apache-2.0，条码/二维码）
+- 可选三方库（P0 正射 TIF 用；未装时解析器必须降级并写 warning）：`rasterio`(BSD)、`pyproj`(MIT)
+- **不可用**：GDAL 命令行、trimesh、tesseract、paddleocr
 - **网络**：任何代码都不得主动发起网络请求（除 `127.0.0.1` 回环）
 
 ## 1. 目录
@@ -234,9 +237,63 @@ def build(rule: Rule, value: str, ctx: ReplaceContext) -> Decision
 - 映射表用 `cryptography` AES-GCM 加密落盘，密钥在本机 `keys/` 下。
 - 审计只记类型与数量，**不记原值**。
 - 任何对外发包的行为都要显式拒绝（代码里不出现 `requests` / `urllib` 外呼）。
+- 完整的更新红线与回归门禁见 `docs/red-lines.md`，改代码前后必须跑 `app/tests/regression.py`。
 
 ## 9. 前端契约
 
 - 单页应用，`app/web/index.html` + `app.js` + `style.css`，由 `api.py` 静态托管。
 - 视觉沿用 `原型.html` 的打字机主题（纸色 `#F4EEE1`、墨 `#1A1714`、朱红 `#B23A2E`、涂黑 `#0D0B09`）。
 - 必须实现：投放 → 识别进度（轮询 `/api/jobs/{id}`）→ 对照台（raster 与 flow 两种渲染）→ 框选补漏 → 逐条确认 → 交付（两种导出）。
+
+## 10. v2 扩展点（方案 A P0 起）
+
+### 10.1 页面图像扫描（`yinzhan/mediascan.py`）
+
+- 给「OCR 读不到、只能靠图像找」的目标统一入口：人脸、证件、车牌、路牌、门址、印章/签名、二维码/条码。
+- 扩展模块在 import 时注册：`mediascan.register_scanner(name, fn, kinds=..., priority=...)`；`fn(image_rgb, ctx) -> list[ScanHit]`，`ctx.options` 会带 `text_boxes`（OCR 文本框，像素坐标）与 `dpi`。
+- 解析器（image/tiff/pdf）在拿到页面图后调用 `mediascan.analyze()`，命中写进 `Document.visual_marks`；没有注册扫描器时 `has_enabled()` 为 False，零开销。
+- 扫描器顶层模块（如 `yinzhan/barcodes.py`、`yinzhan/visual_targets.py`）由 `registry.load_plugins()` 自动 import；扫描器异常只写 `doc.warnings`，不得中断解析。
+- `VisualMark.kind` 约定：`seal | signature | face | id_document | plate | road_sign | door_address | qrcode | barcode`。`jobs._VISUAL_SPEC` 定义 kind → etype/中文名/默认状态/密级；视觉类一律 `black` 决策。
+- 性能开关：`YINZHAN_SCAN`（总开关）、`YINZHAN_SCAN_VISUAL`、`YINZHAN_SCAN_BARCODE`、`YINZHAN_SCAN_DISABLE`、`YINZHAN_SCAN_DPI`（PDF 扫描渲染 dpi，默认 200）、`YINZHAN_SCAN_MAX_PIXELS`。
+
+### 10.2 Verify 复检（`pipeline.verify`）
+
+```python
+verify(exported, entities, parser, ctx, *, doc=None, options=None) -> dict
+```
+
+返回新增：`visual_residual: int`（重解析成品后仍扫到的同类视觉/码类目标数）、
+`media: {"count": int, "confirmed": bool}`。任一残留/未确认媒体 → `VerifyError`，成品删除。
+
+### 10.3 未处理内嵌媒体（P0：检测 + 二次确认）
+
+- DOCX/XLSX 解析器在 `doc.meta["embedded_media"] = {"count": int, "parts": [...]}` 记录内嵌图片/OLE。
+- `POST /api/jobs/{id}/export` 检测到该字段且 `allow_unprocessed_media` 不为 true 时：
+  HTTP 400，`{"error": {"code": "media_confirmation_required", "message": "...N 张..."}}`；用户确认后重发 `{"mode": ..., "allow_unprocessed_media": true}`。
+- MCP `sanitize_document` 同规则：参数 `allow_unprocessed_media`（默认 false）。
+- 导出产物重新解析后仍有媒体且未确认 → Verify 拦截。
+
+### 10.4 仅清理导出
+
+- 没有可涂实体、但 `pipeline.has_cleanup_targets(doc)` 为真（`doc.meta["geo_tags"]`、`doc.extra["geo_params"]`、可清理元数据）时允许导出：只做元数据/地理参考剥离。
+- 典型：只有 Geo 标签、没有可 OCR 文字的正射影像；此前会被「没有需要隐去的内容」卡死。
+
+### 10.5 地理中性化语义（正射 TIF P0，已批准 D1/D2/D3）
+
+- 默认 `geo_mode="neutralized"`：剥离源真实地理参考（ModelPixelScale/ModelTiepoint/
+  ModelTransformation/GeoKeyDirectory/RPC 等），写入 **LOCAL_CS 本地任意 CRS**
+  （GIS 可打开，但无真实世界坐标）；变换参数（dx/dy/θ/锚点/源 CRS WKT）写入
+  `doc.extra["geo_params"]`，jobs 自动存进加密 vault 的 extra["geo"]。
+- `geo_mode="strip"`（可选）：彻底不写任何 Geo tag。
+- 语义约定（Verify 依赖）：`doc.meta["geo_tags"]` 只表示**成品里仍存在的真实地理参考**，
+  中性化/剥离后必须为空；`doc.meta["geo_neutralized"]=True` 表示已做中性化；
+  `doc.meta["geo_source_tags"]` 记录源文件被剥离的真实标签名（审计用）。
+  **LOCAL_CS 结构本身不算残留，真实 CRS/RPC/ICC/EXIF/GPS/XMP 残留才算。**
+- 解析器侧与 `pipeline.verify` 双重复检；`meta` 键名含 icc/exif/gps/xmp/iptc 且为真 → VerifyError。
+
+### 10.6 规则与依赖纪律
+
+- 新增规则包按域独立文件（`trade-cn.yaml`、`finance-cn.yaml` 等），默认全部启用；**新增规则必须过既有样例误报检查**。
+- 新增校验器放域独立文件（`detectors/finance_validators.py`、`detectors/trade_validators.py`），`@register_validator` 注册；`regex_det` 通用新增 `unless_validate`（反向校验）与 `exclude_near`（上下文排除）。
+- `common.yaml` 由 Lead 统一维护：USCC 已挂 `uscc_checksum`；银行卡排除身份证；固定电话排除发票代码。
+- 新增依赖必须离线可装、许可证免费安全（MIT/BSD/Apache-2.0/PSF），并在 `desktop/app.spec` 与 `requirements.txt` 同步。**不得引入运行时联网组件**。

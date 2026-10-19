@@ -829,10 +829,12 @@ class DocxParser(Parser):
             part_names = [str(part.partname) for part in parsed.part.package.parts]
         except Exception:
             part_names = []
-        if any("/word/embeddings/" in name for name in part_names):
-            document.warnings.append("文档含内嵌对象（OLE/附件），其中内容未做脱敏")
-        if any("/word/media/" in name for name in part_names):
+        media_parts = [n for n in part_names if "/word/media/" in n]
+        embed_parts = [n for n in part_names if "/word/embeddings/" in n]
+        if media_parts:
             document.warnings.append("文档含内嵌图片，图片内容未做 OCR/脱敏")
+        if embed_parts:
+            document.warnings.append("文档含内嵌对象（OLE/附件），其中内容未做脱敏")
         if any("/word/charts/" in name for name in part_names):
             document.warnings.append("文档含图表，图表标题/数据标签文字未纳入检测")
         if any("glossary" in name for name in part_names):
@@ -842,6 +844,14 @@ class DocxParser(Parser):
 
         meta = _collect_core_meta(parsed)
         meta.update(_read_app_meta(path))
+        # P0 安全默认：内嵌图片/对象当前不会自动脱敏，导出时必须二次确认
+        # （见 docs/red-lines.md 扩展点 E3）。re_parse 成品时这段同样生效，
+        # Verify 据此判断"成品里还有未处理媒体"。
+        if media_parts or embed_parts:
+            meta["embedded_media"] = {
+                "count": len(media_parts) + len(embed_parts),
+                "parts": (media_parts + embed_parts)[:20],
+            }
         document.meta = meta
         return document
 

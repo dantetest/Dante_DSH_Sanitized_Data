@@ -51,6 +51,8 @@ rules:
       - type: regex
         pattern: '(?<!\d)\d(?:[ -]?\d){15,18}(?!\d)'
         validate: luhn
+        # 18 位身份证号有时也能通过 Luhn 校验，不能当银行卡换掉
+        unless_validate: cn_id_checksum
     replace: {strategy: surrogate}
 
   - id: cn.phone
@@ -73,6 +75,8 @@ rules:
     detect:
       - type: regex
         pattern: '(?<!\d)0\d{2,3}[ -]?\d{7,8}(?!\d)'
+        # 12 位「发票代码」也是 0 开头连续数字，不能当固定电话换掉
+        exclude_near: [发票代码, 发票号码, 发票]
     replace: {strategy: surrogate}
 
   - id: cn.email
@@ -106,6 +110,8 @@ rules:
     detect:
       - type: regex
         pattern: '(?<![0-9A-Za-z])(?=[0-9A-HJ-NPQRTUWXY]{18}(?![0-9A-Za-z]))(?=[0-9A-HJ-NPQRTUWXY]{0,17}[A-HJ-NPQRTUWXY])[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}(?![0-9A-Za-z])'
+        # GB 32100-2015 校验位：没有它，18 位执业许可证号/内部编号会被误当 USCC
+        validate: uscc_checksum
     replace: {strategy: surrogate}
 
   # ── 金额 ──
