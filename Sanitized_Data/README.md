@@ -1,4 +1,4 @@
-# 数据隐站 · Data Sanctuary
+# 数据隐站 · Sanitized_Data
 
 > 文件交给 AI 之前，最后一道本地的门。
 
@@ -195,7 +195,7 @@ python ..\tests\e2e.py
 ## 目录
 
 ```
-数据隐站/
+Sanitized_Data/
 ├─ 启动.bat                 双击启动
 ├─ app/
 │  ├─ server/               引擎

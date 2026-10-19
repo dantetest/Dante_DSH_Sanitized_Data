@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 APP_NAME = "数据隐站"
-APP_NAME_EN = "Data Sanctuary"
+APP_NAME_EN = "Sanitized_Data"
 VERSION = "1.0.0"
 
 # app/server/yinzhan/config.py -> app / 数据隐站

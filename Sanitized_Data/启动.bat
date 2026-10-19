@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title Data Sanctuary
+title Sanitized_Data
 setlocal
 cd /d "%~dp0"
 
