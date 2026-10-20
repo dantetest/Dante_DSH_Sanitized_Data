@@ -1,60 +1,20 @@
 {
   "schema": "sanitized-data-baseline/v1",
   "meta": {
-    "captured_at": "2026-10-20T00:18:11+0800",
-    "git_head": "fb9023364bb5d99e3fba19cbf3d78a81fd898492",
-    "git_head_short": "fb90233",
+    "captured_at": "2026-10-20T11:17:16+0800",
+    "git_head": "e84b9d2bc2c74b9741b027d929c45d43f06693f8",
+    "git_head_short": "e84b9d2",
     "git_branch": "main",
-    "engine_dirty_status": [
-      "M Sanitized_Data/app/server/CONTRACT.md",
-      " M Sanitized_Data/app/server/mcp_server.py",
-      " M Sanitized_Data/app/server/requirements.txt",
-      " M Sanitized_Data/app/server/yinzhan/api.py",
-      " M Sanitized_Data/app/server/yinzhan/detectors/regex_det.py",
-      " M Sanitized_Data/app/server/yinzhan/jobs.py",
-      " M Sanitized_Data/app/server/yinzhan/parsers/docx_parser.py",
-      " M Sanitized_Data/app/server/yinzhan/parsers/image_parser.py",
-      " M Sanitized_Data/app/server/yinzhan/parsers/pdf_parser.py",
-      " M Sanitized_Data/app/server/yinzhan/parsers/tiff_parser.py",
-      " M Sanitized_Data/app/server/yinzhan/parsers/xlsx_parser.py",
-      " M Sanitized_Data/app/server/yinzhan/pipeline.py",
-      " M Sanitized_Data/app/server/yinzhan/registry.py",
-      " M Sanitized_Data/app/server/yinzhan/rules/common.yaml",
-      " M Sanitized_Data/app/server/yinzhan/rules/finance-cn.yaml",
-      " M \"Sanitized_Data/samples/\\344\\275\\217\\351\\231\\242\\347\\227\\205\\345\\216\\206.docx\"",
-      " M \"Sanitized_Data/samples/\\345\\247\\224\\346\\211\\230\\344\\273\\243\\347\\220\\206\\345\\220\\210\\345\\220\\214.pdf\"",
-      " M \"Sanitized_Data/samples/\\345\\257\\271\\350\\264\\246\\345\\215\\225.xlsx\"",
-      "?? Sanitized_Data/app/server/yinzhan/barcodes.py",
-      "?? Sanitized_Data/app/server/yinzhan/detectors/finance_validators.py",
-      "?? Sanitized_Data/app/server/yinzhan/detectors/trade_validators.py",
-      "?? Sanitized_Data/app/server/yinzhan/georef.py",
-      "?? Sanitized_Data/app/server/yinzhan/mediascan.py",
-      "?? Sanitized_Data/app/server/yinzhan/replacers/amount_consistency.py",
-      "?? Sanitized_Data/app/server/yinzhan/rules/trade-cn.yaml",
-      "?? Sanitized_Data/app/server/yinzhan/visual_targets.py"
-    ],
-    "engine_clean": false,
-    "tests_dirty_status": [
-      "M Sanitized_Data/app/tests/make_samples.py",
-      "?? Sanitized_Data/app/tests/README.md",
-      "?? Sanitized_Data/app/tests/baseline/",
-      "?? Sanitized_Data/app/tests/fixtures/",
-      "?? Sanitized_Data/app/tests/qa_common.py",
-      "?? Sanitized_Data/app/tests/regression.py",
-      "?? Sanitized_Data/app/tests/run_all.py",
-      "?? Sanitized_Data/app/tests/test_barcodes.py",
-      "?? Sanitized_Data/app/tests/test_finance.py",
-      "?? Sanitized_Data/app/tests/test_tiff.py",
-      "?? Sanitized_Data/app/tests/test_trade.py",
-      "?? Sanitized_Data/app/tests/test_visual.py"
-    ],
+    "engine_dirty_status": [],
+    "engine_clean": true,
+    "tests_dirty_status": [],
     "python": "3.12.9",
     "platform": "win32",
     "repo": "D:\\DSH_DESKTOP_WORKSPACE\\Sanitized_Data",
     "no_gdal": true,
     "no_trimesh": true,
     "e2e_command": "cd app\\server; $env:PYTHONIOENCODING='utf-8'; python -X utf8 ..\\tests\\e2e.py",
-    "update_reason": "方案 A P0 第一波：底座+条码+财务+图像+贸易+前端+正射TIF（LOCAL_CS 中性化），红线全绿",
+    "update_reason": "真实判决书漏识别修复：跨行案号/地址、标签姓名、竖排审判员、带空格金额；新增 joined_regex 检测器与 test_legal_detect（18项）",
     "update_history": [
       {
         "at": "2026-10-19T23:54:51+0800",
@@ -81,12 +41,25 @@
           "residual_total": 0
         },
         "rules": 66
+      },
+      {
+        "at": "2026-10-20T11:17:16+0800",
+        "head": "e84b9d2",
+        "engine_clean": true,
+        "reason": "真实判决书漏识别修复：跨行案号/地址、标签姓名、竖排审判员、带空格金额；新增 joined_regex 检测器与 test_legal_detect（18项）",
+        "samples": {
+          "files_total": 5,
+          "files_ok": 5,
+          "exports_ok": 10,
+          "residual_total": 0
+        },
+        "rules": 71
       }
     ]
   },
   "e2e": {
     "exit_code": 0,
-    "elapsed_s": 7.84,
+    "elapsed_s": 7.9,
     "ok": true,
     "summary_lines": [
       "汇总：5/5 个文件解析成功",
@@ -97,12 +70,12 @@
     ],
     "stdout_tail": [
       "  ▸ 对账单.xlsx",
-      "    xlsx · 1 页 · 25 块 · 识别 13 处 · 解析 3ms · 检测 4ms",
+      "    xlsx · 1 页 · 25 块 · 识别 13 处 · 解析 15ms · 检测 6ms",
       "    手机号×3  固定电话×1  统一社会信用代码×1  律师事务所×1  人名×2  身份证号×3  银行卡号×2",
       "    ✓ 换名导出 5370B · 残留 0",
       "    ✓ 涂黑导出 5226B · 残留 0",
       "  ▸ 正射影像.tif",
-      "    tiff · 1 页 · 4 块 · 识别 3 处 · 解析 1034ms · 检测 1ms",
+      "    tiff · 1 页 · 4 块 · 识别 3 处 · 解析 987ms · 检测 0ms",
       "    图幅号×1  控制点号×1  坐标系名称×1",
       "    ✓ 换名导出 33774B · 残留 0",
       "    ✓ 涂黑导出 26353B · 残留 0",
@@ -112,12 +85,12 @@
       "  全部通过"
     ],
     "stderr_tail": [
-      "[INFO] 2026-10-20 00:18:14,666 [RapidOCR] base.py:23: Using engine_name: onnxruntime",
-      "[INFO] 2026-10-20 00:18:14,668 [RapidOCR] download_file.py:60: File exists and is valid: C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\ch_ppocr_mobile_v2.0_cls_mobile.onnx",
-      "[INFO] 2026-10-20 00:18:14,668 [RapidOCR] main.py:63: Using C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\ch_ppocr_mobile_v2.0_cls_mobile.onnx",
-      "[INFO] 2026-10-20 00:18:14,778 [RapidOCR] base.py:23: Using engine_name: onnxruntime",
-      "[INFO] 2026-10-20 00:18:14,796 [RapidOCR] download_file.py:60: File exists and is valid: C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\PP-OCRv6_rec_small.onnx",
-      "[INFO] 2026-10-20 00:18:14,796 [RapidOCR] main.py:63: Using C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\PP-OCRv6_rec_small.onnx"
+      "[INFO] 2026-10-20 11:17:20,147 [RapidOCR] base.py:23: Using engine_name: onnxruntime",
+      "[INFO] 2026-10-20 11:17:20,155 [RapidOCR] download_file.py:60: File exists and is valid: C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+      "[INFO] 2026-10-20 11:17:20,155 [RapidOCR] main.py:63: Using C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+      "[INFO] 2026-10-20 11:17:20,248 [RapidOCR] base.py:23: Using engine_name: onnxruntime",
+      "[INFO] 2026-10-20 11:17:20,273 [RapidOCR] download_file.py:60: File exists and is valid: C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\PP-OCRv6_rec_small.onnx",
+      "[INFO] 2026-10-20 11:17:20,273 [RapidOCR] main.py:63: Using C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\PP-OCRv6_rec_small.onnx"
     ]
   },
   "samples": {
@@ -135,15 +108,18 @@
         "err": "",
         "types": {
           "手机号": 1,
+          "地址": 1,
           "科室": 1,
           "人名": 3,
-          "地址": 1,
           "身份证号": 1,
           "病历号/住院号": 2
         },
         "values_sha256": {
           "手机号": [
             "e39e23cc8f27"
+          ],
+          "地址": [
+            "d31941d3a7a4"
           ],
           "科室": [
             "e30a60efc5bd"
@@ -152,9 +128,6 @@
             "7daeee8f7c87",
             "95e39952ad1c",
             "8171f707a393"
-          ],
-          "地址": [
-            "d31941d3a7a4"
           ],
           "身份证号": [
             "df4cde4fba0f"
@@ -287,7 +260,7 @@
         "bytes": 37440,
         "sha256": "221f860f5ff347195e6d634cee0cfbefcc471bf27d0a38ccb49a25a985c5ae3d",
         "fmt": "docx",
-        "parse_ms": 23,
+        "parse_ms": 15,
         "pages": 1,
         "blocks": 25,
         "doc_meta": {
@@ -298,7 +271,7 @@
           "template": "Normal.dotm"
         },
         "pack_label": "common,finance-cn,geo-cn,legal-cn,medical-cn,trade-cn",
-        "detect_ms": 39,
+        "detect_ms": 29,
         "entities": 9,
         "metadata_forbidden_values_count": 5
       },
@@ -392,7 +365,7 @@
         "bytes": 48407,
         "sha256": "f04d33de8ca0d80069dd562ae49a936a12507a576788cb068ceb06967e691e28",
         "fmt": "image",
-        "parse_ms": 1107,
+        "parse_ms": 1141,
         "pages": 1,
         "blocks": 8,
         "doc_meta": {
@@ -400,7 +373,7 @@
           "mode": "RGB"
         },
         "pack_label": "common,finance-cn,geo-cn,legal-cn,medical-cn,trade-cn",
-        "detect_ms": 2,
+        "detect_ms": 8,
         "entities": 6,
         "metadata_forbidden_values_count": 0
       },
@@ -414,12 +387,12 @@
           "固定电话": 1,
           "案号": 1,
           "统一社会信用代码": 1,
+          "地址": 1,
           "律师事务所": 1,
           "金额": 2,
           "当事人/代理人": 2,
           "人名": 2,
           "机构名称": 1,
-          "地址": 1,
           "身份证号": 1,
           "银行卡号": 1
         },
@@ -435,6 +408,9 @@
           ],
           "统一社会信用代码": [
             "bfe69090ab26"
+          ],
+          "地址": [
+            "a34136d8035d"
           ],
           "律师事务所": [
             "b6d690919e60"
@@ -454,9 +430,6 @@
           "机构名称": [
             "69f8a086f45b"
           ],
-          "地址": [
-            "a34136d8035d"
-          ],
           "身份证号": [
             "3637ffe2d288"
           ],
@@ -467,7 +440,7 @@
         "exports": {
           "ai": {
             "ok": true,
-            "size": 7214,
+            "size": 7206,
             "warnings": [],
             "verified": true,
             "residual": 0,
@@ -481,7 +454,7 @@
                 "xmp_len": 0,
                 "has_metadata_xref": false,
                 "raw_has_xpacket": false,
-                "text": "委 托 代 理 合 同\n委托人（甲方）：\n性        别：男\n身份证号码：\n住        址：\n联系电话：\n受托人（乙方）：\n执业许可证号：31310000E12345678X\n统一社会信用代码：\n承 办 律 师：\n联系电话：\n案        由：房屋买卖合同纠纷\n案        号：\n承 办 法 官：\n对方当事人：\n一、委托事项\n甲方因与\n房屋买卖合同纠纷一案，委托乙方指派律师担任其诉讼代理人。\n二、代理费用\n本案争议标的额为\n。代理费为\n，\n由甲方于本合同签订之日起五日内支付至乙方下列账户：\n户    名：\n开 户 行：\n账    号：\n甲方（签字）：____________     乙方（盖章）：____________\n2025 年 3 月 12 日\n14709167576\n043-12589914\n（2025）沪0104民初43898号\n92556727AFNPHBNTDG\n上海市众成律师事务所\n上海市众成律师事务所\n人民币3,545,281.72元\n人民币91,013.39元\n戴天\n谢一梓\n谢一梓\n韦欣琪\n钟卓一\n中国工商银行上海市正大支行\n上海市徐汇区望江路933弄442号2437室\n310104195405134442\n6289 9816 0866 7043 968\n\n补 充 条 款\n1. 乙方指定联系人：\n，电话 \n。\n2. 甲方送达地址：\n。\n3. 争议标的额如有变更，以\n案为准。\n4. 本合同一式两份，双方各执一份。\n043-12589914\n（2025）沪0104民初43898号\n韦欣琪\n上海市徐汇区望江路933弄442号2437室\n"
+                "text": "委 托 代 理 合 同\n委托人（甲方）：\n性        别：男\n身份证号码：\n住        址：\n联系电话：\n受托人（乙方）：\n执业许可证号：31310000E12345678X\n统一社会信用代码：\n承 办 律 师：\n联系电话：\n案        由：房屋买卖合同纠纷\n案        号：\n承 办 法 官：\n对方当事人：\n一、委托事项\n甲方因与\n房屋买卖合同纠纷一案，委托乙方指派律师担任其诉讼代理人。\n二、代理费用\n本案争议标的额为\n。代理费为\n，\n由甲方于本合同签订之日起五日内支付至乙方下列账户：\n户    名：\n开 户 行：\n账    号：\n甲方（签字）：____________     乙方（盖章）：____________\n2025 年 3 月 12 日\n14709167576\n043-12589914\n（2025）沪0104民初43898号\n92556727AFNPHBNTDG\n上海市徐汇区复兴路93弄183号341室\n上海市恒信律师事务所\n上海市恒信律师事务所\n人民币2,490,770.61元\n人民币85,300.21元\n邹佑\n何天弘\n何天弘\n孔佑俊\n周世墨\n中国工商银行上海市卓远支行\n310104195405134442\n6289 9816 0866 7043 968\n\n补 充 条 款\n1. 乙方指定联系人：\n，电话 \n。\n2. 甲方送达地址：\n。\n3. 争议标的额如有变更，以\n案为准。\n4. 本合同一式两份，双方各执一份。\n043-12589914\n（2025）沪0104民初43898号\n上海市徐汇区复兴路93弄183号341室\n孔佑俊\n"
               },
               "bad_meta_keys": [],
               "xmp_cleared": true,
@@ -490,7 +463,7 @@
           },
           "human": {
             "ok": true,
-            "size": 2827,
+            "size": 2825,
             "warnings": [],
             "verified": true,
             "residual": 0,
@@ -529,7 +502,7 @@
         "bytes": 2959,
         "sha256": "7dfff6fe3bf8bf0dbabccb68a800e3df626ef4abba1f62fa36260aaae55d9f5f",
         "fmt": "pdf",
-        "parse_ms": 113,
+        "parse_ms": 100,
         "pages": 2,
         "blocks": 30,
         "doc_meta": {
@@ -540,7 +513,7 @@
           "pages": 2
         },
         "pack_label": "common,finance-cn,geo-cn,legal-cn,medical-cn,trade-cn",
-        "detect_ms": 7,
+        "detect_ms": 0,
         "entities": 15,
         "metadata_forbidden_values_count": 5
       },
@@ -590,7 +563,7 @@
         "exports": {
           "ai": {
             "ok": true,
-            "size": 5370,
+            "size": 5373,
             "warnings": [
               "已清空 3 项工作簿属性（作者/标题/关键词等）",
               "成品不保留公式缓存值（openpyxl 语义），Excel 打开时会自动重算"
@@ -603,7 +576,7 @@
               "out": {
                 "nonempty_fields": {
                   "created": "2026-10-19 15:53:22",
-                  "modified": "2026-10-19 16:18:24"
+                  "modified": "2026-10-20 03:17:30"
                 },
                 "parts": {
                   "docProps/core.xml": true,
@@ -611,7 +584,7 @@
                   "docProps/custom.xml": false
                 },
                 "app_text": "Microsoft Excel Compatible / Openpyxl 3.1.5|3.1",
-                "core_text": "2026-10-19T15:53:22Z|2026-10-19T16:18:24Z",
+                "core_text": "2026-10-19T15:53:22Z|2026-10-20T03:17:30Z",
                 "forbidden_hits": [],
                 "identity_fields_empty": true
               },
@@ -620,7 +593,7 @@
           },
           "human": {
             "ok": true,
-            "size": 5226,
+            "size": 5229,
             "warnings": [
               "已清空 3 项工作簿属性（作者/标题/关键词等）",
               "成品不保留公式缓存值（openpyxl 语义），Excel 打开时会自动重算"
@@ -633,7 +606,7 @@
               "out": {
                 "nonempty_fields": {
                   "created": "2026-10-19 15:53:22",
-                  "modified": "2026-10-19 16:18:24"
+                  "modified": "2026-10-20 03:17:30"
                 },
                 "parts": {
                   "docProps/core.xml": true,
@@ -641,7 +614,7 @@
                   "docProps/custom.xml": false
                 },
                 "app_text": "Microsoft Excel Compatible / Openpyxl 3.1.5|3.1",
-                "core_text": "2026-10-19T15:53:22Z|2026-10-19T16:18:24Z",
+                "core_text": "2026-10-19T15:53:22Z|2026-10-20T03:17:30Z",
                 "forbidden_hits": [],
                 "identity_fields_empty": true
               },
@@ -680,7 +653,7 @@
           "title": "2025年3月对账单"
         },
         "pack_label": "common,finance-cn,geo-cn,legal-cn,medical-cn,trade-cn",
-        "detect_ms": 3,
+        "detect_ms": 0,
         "entities": 13,
         "metadata_forbidden_values_count": 5
       },
@@ -711,7 +684,7 @@
             "size": 33774,
             "warnings": [
               "rasterio 路线：保留原 dtype/波段，写出本地任意 CRS + 内部金字塔；换名/涂黑处理文本框 2 个、涂黑框 1 个",
-              "已做坐标中性化：随机平移+旋转，成品为本地任意 CRS（θ=2.466816°，dx=-1856.054m，dy=1495.041m）；参数已交上层加密保存"
+              "已做坐标中性化：随机平移+旋转，成品为本地任意 CRS（θ=0.100615°，dx=-4731.813m，dy=850.699m）；参数已交上层加密保存"
             ],
             "verified": true,
             "residual": 0,
@@ -775,7 +748,7 @@
             "size": 26353,
             "warnings": [
               "rasterio 路线：保留原 dtype/波段，写出本地任意 CRS + 内部金字塔；换名/涂黑处理文本框 0 个、涂黑框 3 个",
-              "已做坐标中性化：随机平移+旋转，成品为本地任意 CRS（θ=2.588575°，dx=-1039.679m，dy=4099.356m）；参数已交上层加密保存"
+              "已做坐标中性化：随机平移+旋转，成品为本地任意 CRS（θ=0.354647°，dx=4453.539m，dy=-2952.142m）；参数已交上层加密保存"
             ],
             "verified": true,
             "residual": 0,
@@ -886,7 +859,7 @@
         "bytes": 1440312,
         "sha256": "a8776f3de09528a28149726e81c152ea4f6a2b9b46f70d1a76e2523dccb2cf0f",
         "fmt": "tiff",
-        "parse_ms": 1035,
+        "parse_ms": 1001,
         "pages": 1,
         "blocks": 4,
         "doc_meta": {
@@ -900,7 +873,7 @@
           "preview_scale": 1.0
         },
         "pack_label": "common,finance-cn,geo-cn,legal-cn,medical-cn,trade-cn",
-        "detect_ms": 2,
+        "detect_ms": 0,
         "entities": 3,
         "metadata_forbidden_values_count": 0
       }
@@ -918,17 +891,17 @@
         "fmt": "docx",
         "required_types": {
           "手机号": 1,
+          "地址": 1,
           "科室": 1,
           "人名": 3,
-          "地址": 1,
           "身份证号": 1,
           "病历号/住院号": 2
         },
         "baseline_types": {
           "手机号": 1,
+          "地址": 1,
           "科室": 1,
           "人名": 3,
-          "地址": 1,
           "身份证号": 1,
           "病历号/住院号": 2
         },
@@ -971,12 +944,12 @@
           "固定电话": 1,
           "案号": 1,
           "统一社会信用代码": 1,
+          "地址": 1,
           "律师事务所": 1,
           "金额": 2,
           "当事人/代理人": 2,
           "人名": 2,
           "机构名称": 1,
-          "地址": 1,
           "身份证号": 1,
           "银行卡号": 1
         },
@@ -985,12 +958,12 @@
           "固定电话": 1,
           "案号": 1,
           "统一社会信用代码": 1,
+          "地址": 1,
           "律师事务所": 1,
           "金额": 2,
           "当事人/代理人": 2,
           "人名": 2,
           "机构名称": 1,
-          "地址": 1,
           "身份证号": 1,
           "银行卡号": 1
         },
@@ -1056,10 +1029,12 @@
         "version": 1,
         "file": "common.yaml",
         "include": [],
-        "own_count": 14,
-        "total_count": 14,
+        "own_count": 16,
+        "total_count": 16,
         "rule_ids": [
           "cn.address",
+          "cn.address_labeled",
+          "cn.address_residence",
           "cn.amount",
           "cn.amount_cn",
           "cn.bankcard",
@@ -1083,7 +1058,7 @@
           "common"
         ],
         "own_count": 22,
-        "total_count": 36,
+        "total_count": 38,
         "rule_ids": [
           "cn.account_license_no",
           "cn.audit_cpa",
@@ -1117,7 +1092,7 @@
           "common"
         ],
         "own_count": 5,
-        "total_count": 19,
+        "total_count": 21,
         "rule_ids": [
           "cn.control_point",
           "cn.crs",
@@ -1133,15 +1108,18 @@
         "include": [
           "common"
         ],
-        "own_count": 6,
-        "total_count": 20,
+        "own_count": 9,
+        "total_count": 25,
         "rule_ids": [
           "cn.case_no",
           "cn.case_ref",
           "cn.court_name",
           "cn.law_firm",
           "cn.lawyer_license",
-          "cn.legal_party"
+          "cn.legal_party",
+          "legal.agent_name",
+          "legal.judge_name",
+          "legal.rep_name"
         ]
       },
       "medical-cn": {
@@ -1152,7 +1130,7 @@
           "common"
         ],
         "own_count": 4,
-        "total_count": 18,
+        "total_count": 20,
         "rule_ids": [
           "cn.department",
           "cn.hospital",
@@ -1168,7 +1146,7 @@
           "common"
         ],
         "own_count": 15,
-        "total_count": 29,
+        "total_count": 31,
         "rule_ids": [
           "trade.amount_fx",
           "trade.awb_no",
@@ -1188,17 +1166,17 @@
         ]
       }
     },
-    "defined_rules_total": 66,
+    "defined_rules_total": 71,
     "load_errors": [],
     "violations": [],
     "compiled_by_fmt": {
-      "docx": 66,
-      "image": 56,
+      "docx": 71,
+      "image": 61,
       "mesh": 13,
-      "pdf": 66,
-      "text": 66,
-      "tiff": 56,
-      "xlsx": 66
+      "pdf": 71,
+      "text": 71,
+      "tiff": 61,
+      "xlsx": 71
     },
     "KNOWN_STRATEGIES": [
       "black",
@@ -1243,6 +1221,7 @@
     ],
     "detectors": [
       "dict",
+      "joined_regex",
       "ner",
       "regex"
     ],
@@ -1334,15 +1313,15 @@
     }
   },
   "http": {
-    "command": "C:\\Program Files\\Python312\\python.exe -X utf8 run.py --port 18764 --no-browser --no-ocr",
-    "port": 18764,
-    "base": "http://127.0.0.1:18764",
+    "command": "C:\\Program Files\\Python312\\python.exe -X utf8 run.py --port 18771 --no-browser --no-ocr",
+    "port": 18771,
+    "base": "http://127.0.0.1:18771",
     "started": true,
     "runtime": {
       "host": "127.0.0.1",
-      "port": 18764,
-      "url": "http://127.0.0.1:18764",
-      "pid": 19832
+      "port": 18771,
+      "url": "http://127.0.0.1:18771",
+      "pid": 3168
     },
     "health": {
       "status": 200,
@@ -1362,33 +1341,34 @@
       ],
       "detectors": [
         "dict",
+        "joined_regex",
         "ner",
         "regex"
       ],
       "packs": [
         {
           "id": "common",
-          "count": 14
+          "count": 16
         },
         {
           "id": "finance-cn",
-          "count": 36
+          "count": 38
         },
         {
           "id": "geo-cn",
-          "count": 19
+          "count": 21
         },
         {
           "id": "legal-cn",
-          "count": 20
+          "count": 25
         },
         {
           "id": "medical-cn",
-          "count": 18
+          "count": 20
         },
         {
           "id": "trade-cn",
-          "count": 29
+          "count": 31
         }
       ],
       "vault_key_len": 12,
@@ -1468,36 +1448,36 @@
       "packs": [
         {
           "id": "common",
-          "count": 14
+          "count": 16
         },
         {
           "id": "finance-cn",
-          "count": 36
+          "count": 38
         },
         {
           "id": "geo-cn",
-          "count": 19
+          "count": 21
         },
         {
           "id": "legal-cn",
-          "count": 20
+          "count": 25
         },
         {
           "id": "medical-cn",
-          "count": 18
+          "count": 20
         },
         {
           "id": "trade-cn",
-          "count": 29
+          "count": 31
         }
       ],
       "detail_counts": {
-        "common": 14,
+        "common": 16,
         "trade-cn": 15,
         "medical-cn": 4,
         "finance-cn": 22,
         "geo-cn": 5,
-        "legal-cn": 6
+        "legal-cn": 9
       }
     },
     "main_path": {
@@ -1506,13 +1486,13 @@
       "source_sha256": "7dfff6fe3bf8bf0dbabccb68a800e3df626ef4abba1f62fa36260aaae55d9f5f",
       "upload": {
         "status": 200,
-        "upload_id": "u_a6c48a752e87",
+        "upload_id": "u_86fed5e04357",
         "size": 2959,
         "sha256": "7dfff6fe3bf8bf0dbabccb68a800e3df626ef4abba1f62fa36260aaae55d9f5f"
       },
       "job_create": {
         "status": 200,
-        "job_id": "j_a78dd8b0",
+        "job_id": "j_a3b0da76",
         "name": "委托代理合同.pdf",
         "fmt": "pdf"
       },
@@ -1533,12 +1513,12 @@
             "固定电话": 1,
             "案号": 1,
             "统一社会信用代码": 1,
+            "地址": 1,
             "律师事务所": 1,
             "金额": 2,
             "当事人/代理人": 2,
             "人名": 2,
             "机构名称": 1,
-            "地址": 1,
             "身份证号": 1,
             "银行卡号": 1
           }
@@ -1547,7 +1527,7 @@
           "金额一致性缩放 2 处"
         ],
         "error": null,
-        "poll_s": 0.45
+        "poll_s": 0.43
       },
       "job_entities": {
         "status": 200,
@@ -1557,12 +1537,12 @@
           "固定电话": 1,
           "案号": 1,
           "统一社会信用代码": 1,
+          "地址": 1,
           "律师事务所": 1,
           "金额": 2,
           "当事人/代理人": 2,
           "人名": 2,
           "机构名称": 1,
-          "地址": 1,
           "身份证号": 1,
           "银行卡号": 1
         },
@@ -1576,32 +1556,32 @@
             "固定电话": 1,
             "案号": 1,
             "统一社会信用代码": 1,
+            "地址": 1,
             "律师事务所": 1,
             "金额": 2,
             "当事人/代理人": 2,
             "人名": 2,
             "机构名称": 1,
-            "地址": 1,
             "身份证号": 1,
             "银行卡号": 1
           }
         },
         "entity_ids": [
-          "e_f4469486",
-          "e_2c3c02bb",
-          "e_483f802c",
-          "e_cb309623",
-          "e_3c919e89",
-          "e_d5b8b094",
-          "e_f220ebdd",
-          "e_8a5353f0",
-          "e_031bd599",
-          "e_614dbe18",
-          "e_49d6a74f",
-          "e_7cfe382a",
-          "e_bf46f30e",
-          "e_b0368fae",
-          "e_9848099d"
+          "e_e83e1681",
+          "e_98ac1724",
+          "e_aa494946",
+          "e_c1940161",
+          "e_4b9b3b9b",
+          "e_5aacf495",
+          "e_959b5031",
+          "e_a2a2edd3",
+          "e_764ac281",
+          "e_fcd8ce60",
+          "e_35a4fe42",
+          "e_93dbcb94",
+          "e_9cb1a1c7",
+          "e_957f2a05",
+          "e_b2df4b91"
         ]
       },
       "preview": {
@@ -1622,8 +1602,8 @@
           "status": 200,
           "ok": true,
           "name": "委托代理合同_换名_20261020-0001.pdf",
-          "bytes": 7210,
-          "sha256": "ec41d12d54a1d7ce8795a5901c93c05c8dd6b9a8a79b40f8a4e70339681ab4e2",
+          "bytes": 7203,
+          "sha256": "3f102502be59b4dd847af983abf6f650ec80a984b9959ac8fe9a67fa358d628c",
           "mode": "ai",
           "verify": {
             "verified": true,
@@ -1641,8 +1621,8 @@
             "status": 200,
             "ctype": "application/octet-stream",
             "disposition": "attachment; filename*=UTF-8''%E5%A7%94%E6%89%98%E4%BB%A3%E7%90%86%E5%90%88%E5%90%8C_%E6%8D%A2%E5%90%8D_20261020-0001.pdf",
-            "bytes": 7210,
-            "sha256": "ec41d12d54a1d7ce8795a5901c93c05c8dd6b9a8a79b40f8a4e70339681ab4e2",
+            "bytes": 7203,
+            "sha256": "3f102502be59b4dd847af983abf6f650ec80a984b9959ac8fe9a67fa358d628c",
             "magic": "%PDF-1.7",
             "pdf_magic_ok": true,
             "nonempty": true,
@@ -1654,8 +1634,8 @@
           "status": 200,
           "ok": true,
           "name": "委托代理合同_已隐去_20261020-0002.pdf",
-          "bytes": 2826,
-          "sha256": "97e2df008f0ea3e2dd92d5c6bd24ca0df6deb41873ca60f04de790a34968a5b7",
+          "bytes": 2825,
+          "sha256": "0928442ce3c22923b1744b65486ec2ecaed91952bcfb623b16396eed5693349c",
           "mode": "human",
           "verify": {
             "verified": true,
@@ -1673,8 +1653,8 @@
             "status": 200,
             "ctype": "application/octet-stream",
             "disposition": "attachment; filename*=UTF-8''%E5%A7%94%E6%89%98%E4%BB%A3%E7%90%86%E5%90%88%E5%90%8C_%E5%B7%B2%E9%9A%90%E5%8E%BB_20261020-0002.pdf",
-            "bytes": 2826,
-            "sha256": "97e2df008f0ea3e2dd92d5c6bd24ca0df6deb41873ca60f04de790a34968a5b7",
+            "bytes": 2825,
+            "sha256": "0928442ce3c22923b1744b65486ec2ecaed91952bcfb623b16396eed5693349c",
             "magic": "%PDF-1.7",
             "pdf_magic_ok": true,
             "nonempty": true,
@@ -1705,7 +1685,7 @@
         "value_fields_present": [],
         "stats": {
           "records": 2,
-          "last": "2026-10-20T00:18:30+08:00"
+          "last": "2026-10-20T11:17:36+08:00"
         }
       },
       "audit_verify": {
@@ -1734,12 +1714,12 @@
       "ctype": "application/json; charset=utf-8"
     },
     "netstat": [
-      "TCP    127.0.0.1:18764        0.0.0.0:0              LISTENING       19832"
+      "TCP    127.0.0.1:18771        0.0.0.0:0              LISTENING       3168"
     ],
     "server_log_tail": [
-      "[2026-10-20 00:18:29] 跨站请求被拒 origin=http://evil.example.com host=127.0.0.1:18764 xfh=None"
+      "[2026-10-20 11:17:35] 跨站请求被拒 origin=http://evil.example.com host=127.0.0.1:18771 xfh=None"
     ],
-    "startup_s": 2.51,
+    "startup_s": 2.55,
     "attempt": 1
   },
   "health": {
@@ -1760,33 +1740,34 @@
       ],
       "detectors": [
         "dict",
+        "joined_regex",
         "ner",
         "regex"
       ],
       "packs": [
         {
           "id": "common",
-          "count": 14
+          "count": 16
         },
         {
           "id": "finance-cn",
-          "count": 36
+          "count": 38
         },
         {
           "id": "geo-cn",
-          "count": 19
+          "count": 21
         },
         {
           "id": "legal-cn",
-          "count": 20
+          "count": 25
         },
         {
           "id": "medical-cn",
-          "count": 18
+          "count": 20
         },
         {
           "id": "trade-cn",
-          "count": 29
+          "count": 31
         }
       ]
     },
@@ -1796,26 +1777,26 @@
     },
     "runtime": {
       "host": "127.0.0.1",
-      "port": 18764,
-      "url": "http://127.0.0.1:18764",
-      "pid": 19832
+      "port": 18771,
+      "url": "http://127.0.0.1:18771",
+      "pid": 3168
     }
   },
   "perf_soft": {
-    "e2e_elapsed_s": 7.84,
+    "e2e_elapsed_s": 7.9,
     "sample_parse_ms": {
-      "住院病历.docx": 23,
-      "名片.png": 1107,
-      "委托代理合同.pdf": 113,
+      "住院病历.docx": 15,
+      "名片.png": 1141,
+      "委托代理合同.pdf": 100,
       "对账单.xlsx": 4,
-      "正射影像.tif": 1035
+      "正射影像.tif": 1001
     },
     "sample_detect_ms": {
-      "住院病历.docx": 39,
-      "名片.png": 2,
-      "委托代理合同.pdf": 7,
-      "对账单.xlsx": 3,
-      "正射影像.tif": 2
+      "住院病历.docx": 29,
+      "名片.png": 8,
+      "委托代理合同.pdf": 0,
+      "对账单.xlsx": 0,
+      "正射影像.tif": 0
     },
     "alert_ratio": 1.5
   },
@@ -1862,5 +1843,5 @@
       "restored_ok": true
     }
   },
-  "captured_at": "2026-10-20T00:18:30+0800"
+  "captured_at": "2026-10-20T11:17:36+0800"
 }

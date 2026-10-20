@@ -1,8 +1,8 @@
 # 数据隐站 · 基线快照（BASELINE SNAPSHOT）
 
-- 冻结时间：2026-10-20T00:18:11+0800
-- git HEAD：`fb90233`（fb9023364bb5d99e3fba19cbf3d78a81fd898492）  分支 `main`
-- 引擎源码改动：有未提交改动，基线需复核
+- 冻结时间：2026-10-20T11:17:16+0800
+- git HEAD：`e84b9d2`（e84b9d2bc2c74b9741b027d929c45d43f06693f8）  分支 `main`
+- 引擎源码改动：无（干净）
 - Python：3.12.9  · 平台：win32
 - 无 GDAL：True  · 无 trimesh：True
 
@@ -22,9 +22,9 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 |---|---|---|
 | H1 | 基线样例全部解析成功 | 5/5 |
 | H2 | 两种导出全部成功、residual=0、成品存在非空、元数据已清 | exports_ok=10/10，residual_total=0 |
-| H3 | e2e 退出码 0 | exit=0，7.84s |
-| H4 | 规则包完整、无 load_errors、id 全局唯一、必填字段/scope/策略合法 | packs=6，defined=66，load_errors=0，violations=0 |
-| H5 | 解析器/检测器全部注册成功 | parsers=docx,image,mesh,pdf,text,tiff,xlsx；detectors=dict,ner,regex |
+| H3 | e2e 退出码 0 | exit=0，7.9s |
+| H4 | 规则包完整、无 load_errors、id 全局唯一、必填字段/scope/策略合法 | packs=6，defined=71，load_errors=0，violations=0 |
+| H5 | 解析器/检测器全部注册成功 | parsers=docx,image,mesh,pdf,text,tiff,xlsx；detectors=dict,joined_regex,ner,regex |
 | H6 | 服务只监听 127.0.0.1 | runtime.host=127.0.0.1；代码 HOST=127.0.0.1 |
 | H7 | health.net == blocked | blocked |
 | H8 | 静态站点 4 页面 + 3 图标 200 且 MIME 正确 | 7/7 |
@@ -38,7 +38,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 | # | 软参考项 | 基线值 | 说明 |
 |---|---|---|---|
-| S1 | 性能：e2e 总耗时 / OCR 页耗时 | e2e 7.84s | 超过基线 50% 报警（red-lines F12）|
+| S1 | 性能：e2e 总耗时 / OCR 页耗时 | e2e 7.9s | 超过基线 50% 报警（red-lines F12）|
 | S2 | 已知边界现状 | 见 §6 | 后续 P0 会改，**不得断言永远如此** |
 | S3 | 新增命中 | 基线实体总数 46 | 新增类型/数量只提示，不判失败 |
 
@@ -48,17 +48,17 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 |---|---|---|---|---|---|---|
 | 住院病历.docx | docx | 1 | 25 | 9 | 0 / 34620 | 0 / 34512 |
 | 名片.png | image | 1 | 8 | 6 | 0 / 44097 | 0 / 17104 |
-| 委托代理合同.pdf | pdf | 2 | 30 | 15 | 0 / 7214 | 0 / 2827 |
-| 对账单.xlsx | xlsx | 1 | 25 | 13 | 0 / 5370 | 0 / 5226 |
+| 委托代理合同.pdf | pdf | 2 | 30 | 15 | 0 / 7206 | 0 / 2825 |
+| 对账单.xlsx | xlsx | 1 | 25 | 13 | 0 / 5373 | 0 / 5229 |
 | 正射影像.tif | tiff | 1 | 4 | 3 | 0 / 33774 | 0 / 26353 |
 
 ### 3.1 必须至少命中的实体（HARD 下限；新增类型/数量不算回归）
 
 | 样例 | 最低类型与数量 | OCR 容差 | 样例 sha256（漂移检测） |
 |---|---|---|---|
-| 住院病历.docx | 手机号×1、科室×1、人名×3、地址×1、身份证号×1、病历号/住院号×2 | ±0 | `221f860f5ff34719` |
+| 住院病历.docx | 手机号×1、地址×1、科室×1、人名×3、身份证号×1、病历号/住院号×2 | ±0 | `221f860f5ff34719` |
 | 名片.png | 手机号×1、固定电话×1、电子邮箱×1、律师事务所×1、人名×1、地址×1 | ±1 | `f04d33de8ca0d800` |
-| 委托代理合同.pdf | 手机号×1、固定电话×1、案号×1、统一社会信用代码×1、律师事务所×1、金额×2、当事人/代理人×2、人名×2、机构名称×1、地址×1、身份证号×1、银行卡号×1 | ±0 | `7dfff6fe3bf8bf0d` |
+| 委托代理合同.pdf | 手机号×1、固定电话×1、案号×1、统一社会信用代码×1、地址×1、律师事务所×1、金额×2、当事人/代理人×2、人名×2、机构名称×1、身份证号×1、银行卡号×1 | ±0 | `7dfff6fe3bf8bf0d` |
 | 对账单.xlsx | 手机号×3、固定电话×1、统一社会信用代码×1、律师事务所×1、人名×2、身份证号×3、银行卡号×2 | ±0 | `dea4d8b7c26cf410` |
 | 正射影像.tif | 图幅号×1、控制点号×1、坐标系名称×1 | ±1 | `a8776f3de09528a2` |
 
@@ -78,25 +78,25 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 | 包 | 名称 | 版本 | include | 自有规则 | 含 include 总数 |
 |---|---|---|---|---|---|
-| common | 通用 · 个人信息 | 1 | - | 14 | 14 |
-| finance-cn | 财务 · 账号/工商/发票/审计 | 2 | common | 22 | 36 |
-| geo-cn | 测绘 · 地理信息 | 1 | common | 5 | 19 |
-| legal-cn | 法律 · 民事诉讼 | 1 | common | 6 | 20 |
-| medical-cn | 医疗 · 病历与诊疗 | 1 | common | 4 | 18 |
-| trade-cn | 进出口贸易 · 单证 | 1 | common | 15 | 29 |
+| common | 通用 · 个人信息 | 1 | - | 16 | 16 |
+| finance-cn | 财务 · 账号/工商/发票/审计 | 2 | common | 22 | 38 |
+| geo-cn | 测绘 · 地理信息 | 1 | common | 5 | 21 |
+| legal-cn | 法律 · 民事诉讼 | 1 | common | 9 | 25 |
+| medical-cn | 医疗 · 病历与诊疗 | 1 | common | 4 | 20 |
+| trade-cn | 进出口贸易 · 单证 | 1 | common | 15 | 31 |
 
-合计自有规则 **66** 条；load_errors=0；violations=0。
+合计自有规则 **71** 条；load_errors=0；violations=0。
 
-按格式编译条数：docx=66、image=56、mesh=13、pdf=66、text=66、tiff=56、xlsx=66
+按格式编译条数：docx=71、image=61、mesh=13、pdf=71、text=71、tiff=61、xlsx=71
 
 各包规则 id 清单见 `baseline.json` → `rules.packs.*.rule_ids`。回归要求：包 id 不缺、每包自有规则数不减少、编译条数不减少（新增不算回归）。
 
 ## 5. 服务与安全基线（HARD）
 
-- 注册：parsers=['docx', 'image', 'mesh', 'pdf', 'text', 'tiff', 'xlsx']；detectors=['dict', 'ner', 'regex']；replacers={'surrogate': True, 'black': True, 'mask': True}
+- 注册：parsers=['docx', 'image', 'mesh', 'pdf', 'text', 'tiff', 'xlsx']；detectors=['dict', 'joined_regex', 'ner', 'regex']；replacers={'surrogate': True, 'black': True, 'mask': True}
 - OCR：available=True，backend=ppocrv6，error=None
 - `/api/health`：status=200，net=**blocked**，version=1.0.0，ocr=True
-- runtime.json：host=127.0.0.1，port=18764；netstat 监听行=['TCP    127.0.0.1:18764        0.0.0.0:0              LISTENING       19832']
+- runtime.json：host=127.0.0.1，port=18771；netstat 监听行=['TCP    127.0.0.1:18771        0.0.0.0:0              LISTENING       3168']
 - 外呼静态扫描：hits=[]，URL 字面量上下文 [('https://cka.blctek.com:8443，', 'documentation_or_comment'), ('http://{shown}:{port}', 'templated_local_url'), ('http://{public}:{port}', 'templated_local_url')]；本地浏览器拉起=[{'file': 'app\\server\\yinzhan\\app.py', 'line': 112, 'text': 'threading.Timer(0.6, lambda: webbrowser.open(url)).start()'}]
 - 审计 INSERT 列：['ts', 'job_id', 'doc_name', 'doc_hash', 'fmt', 'counts', 'rule_pack', 'mode', 'out_hash', 'out_name', 'prev_sig', 'sig']；疑似原值列=[]
 - 依赖：requirements=['pillow', 'lxml', 'pymupdf', 'python-docx', 'openpyxl', 'rapidocr', 'rapidocr-onnxruntime', 'onnxruntime', 'opencv-python-headless', 'zxing-cpp', 'rasterio', 'pyproj', 'cryptography']；网络客户端依赖=无
@@ -117,11 +117,11 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 ### 5.2 真实 HTTP 主路径（上传 → 任务 → ready → 双导出 → 下载）
 
 - 样例：委托代理合同.pdf（2959 bytes）
-- 上传：status=200；任务：j_a78dd8b0；stage=ready
-- 实体类型：{'手机号': 1, '固定电话': 1, '案号': 1, '统一社会信用代码': 1, '律师事务所': 1, '金额': 2, '当事人/代理人': 2, '人名': 2, '机构名称': 1, '地址': 1, '身份证号': 1, '银行卡号': 1}
+- 上传：status=200；任务：j_a3b0da76；stage=ready
+- 实体类型：{'手机号': 1, '固定电话': 1, '案号': 1, '统一社会信用代码': 1, '地址': 1, '律师事务所': 1, '金额': 2, '当事人/代理人': 2, '人名': 2, '机构名称': 1, '身份证号': 1, '银行卡号': 1}
 - 预览：{'status': 200, 'kind': 'raster', 'pages': 2, 'blocks': 25, 'entities': 15}；渲染：{'status': 200, 'ctype': 'image/png', 'bytes': 92728, 'png_magic': True}
-- ai：status=200，bytes=7210，verify={'verified': True, 'residual': 0, 'checked': 15, 'visual_residual': 0, 'media': {'count': 0, 'confirmed': False}, 'issues': []}，下载 status=200，magic=%PDF-1.7，非空=True
-- human：status=200，bytes=2826，verify={'verified': True, 'residual': 0, 'checked': 15, 'visual_residual': 0, 'media': {'count': 0, 'confirmed': False}, 'issues': []}，下载 status=200，magic=%PDF-1.7，非空=True
+- ai：status=200，bytes=7203，verify={'verified': True, 'residual': 0, 'checked': 15, 'visual_residual': 0, 'media': {'count': 0, 'confirmed': False}, 'issues': []}，下载 status=200，magic=%PDF-1.7，非空=True
+- human：status=200，bytes=2825，verify={'verified': True, 'residual': 0, 'checked': 15, 'visual_residual': 0, 'media': {'count': 0, 'confirmed': False}, 'issues': []}，下载 status=200，magic=%PDF-1.7，非空=True
 - 审计：records=2，verify={'status': 200, 'total': 2, 'bad': 0, 'ok': True}
 - 框选/逐条确认：mark={'status': 200, 'added': 1, 'has_entity': True, 'accept_status': 200, 'status_after': 'accepted'}，accept-all={'status': 200, 'accepted': 0, 'total': 16}
 - **主路径结论：PASS**
@@ -147,7 +147,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 ## 8. 本次基线更新理由（人工填写）
 
-> 方案 A P0 第一波：底座+条码+财务+图像+贸易+前端+正射TIF（LOCAL_CS 中性化），红线全绿
+> 真实判决书漏识别修复：跨行案号/地址、标签姓名、竖排审判员、带空格金额；新增 joined_regex 检测器与 test_legal_detect（18项）
 
 ## 9. 基线更新记录（最近 10 次）
 
@@ -155,4 +155,5 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 |---|---|---|---|
 | 2026-10-19T23:54:51+0800 | fb90233 | False | 被批准的校验器修复：USCC 启用校验位，样例改用合法 USCC（91310000MA1FL1XX0G），非功能回归 |
 | 2026-10-20T00:18:11+0800 | fb90233 | False | 方案 A P0 第一波：底座+条码+财务+图像+贸易+前端+正射TIF（LOCAL_CS 中性化），红线全绿 |
+| 2026-10-20T11:17:16+0800 | e84b9d2 | True | 真实判决书漏识别修复：跨行案号/地址、标签姓名、竖排审判员、带空格金额；新增 joined_regex 检测器与 test_legal_detect（18项） |
 
