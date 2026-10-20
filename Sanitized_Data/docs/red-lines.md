@@ -26,27 +26,43 @@
 | F1 | PDF（文本层 + 扫描件）解析、换名、涂黑、真删除 | e2e 5 样例 + 关键实体最小数量 |
 | F2 | DOCX / XLSX / TXT 解析、值级替换、元数据清理 | e2e + 元数据断言 |
 | F3 | 图片 OCR（PNG/JPG/WEBP/BMP）、涂黑重编码、去 EXIF | e2e 名片样例 |
-| F4 | 正射 TIF：8 类地理标签剥离、sidecar 清理、多帧、导出后 Geo 复查 | e2e + 导出后 tag 断言 |
+| F4 | 正射 TIF：**真实地理参考残留 0**（LOCAL_CS 中性化结构按 D3 允许，可 GIS 打开；源 ModelPixelScale/Tiepoint/EPSG/GDAL_METADATA/RPC/ICC/EXIF 残留即 FAIL）、sidecar 清理、多帧、导出后复查 | e2e + 导出后 `real_geo_residual` 断言 |
 | F5 | 双出口（换名可还原 / 涂黑不可还原）+ 映射库 + rehydrate | e2e 双模式 + 还原链路单测 |
 | F6 | 印章/签署区/手写签名检测（PDF）与矩形涂黑通路 | e2e 委托代理合同 |
 | F7 | 规则包热加载、include、优先级、同值合并、同值扩散 | 规则包完整性断言 + e2e |
-| F8 | 框选补漏（rect 归一化）、逐条确认、预览渲染 | HTTP/预览断言（后续补 UI 冒烟） |
-| F9 | MCP 四个工具：sanitize_document / redact_text / check_support / list_rules | 回归中逐个调用 |
+| F8 | 框选补漏（rect 归一化）、逐条确认、预览渲染、**整图涂黑（rect=[0,0,1,1]）** | HTTP/预览断言（回归内置 API 级） |
+| F9 | MCP 四个工具：sanitize_document / redact_text / check_support / list_rules | 回归中逐个调用（含 stdio 协议） |
 | F10 | 站点 4 页面 + 图标 + 下载页/MCP 页可访问 | HTTP 冒烟（回归内置） |
 | F11 | 桌面版启动链路（`desktop/main.py`、打包脚本、安装包配置）不回退 | 语法/引用检查 + 构建前自检 |
 | F12 | 性能不倒退：OCR 页耗时、e2e 总时长不劣化超过阈值 | 基线软记录，超过 50% 报警 |
+| F13 | **PDF 隐藏数据默认剥离**（附件/批注/表单/JS/缩略图）+ `pipeline.verify` 拦截未清理 | `test_pdf_hidden.py` + 回归构造隐藏数据夹具（含 keep 不绕过文本残留复检） |
+| F14 | **图片 EXIF Orientation 转正**（解析/渲染/导出像素方向一致，导出无 EXIF） | 回归合成 Orientation=6 JPEG 夹具 |
+| F15 | **PIPL 补充规则 + 纯数值单元格**：`pipl-cn`（21 条）识别社交/快递/票号/IMEI 等；`numeric_cell` 识别 XLSX 纯数值金额并按数字写回 | `test_pipl_rules.py` + 回归 xlsx 数值夹具（openpyxl 断言单元格为数字） |
+| F16 | **表格表头列级检测**（`table-cn` 11 条，XLSX/DOCX 整列覆盖） | `test_table_column.py` + 回归 xlsx 列级覆盖夹具 |
+| F17 | **前端整图涂黑**按钮（后端 `/mark` rect=[0,0,1,1] → black 实体铺满页面） | 回归 API 级断言（black/coverage） |
+| F18 | 判决书类文本检测（跨行案号/地址、标签姓名、竖排审判员、带空格金额） | `test_legal_detect.py` |
 
-> 允许的"变化"：新增识别类型/更多实体（例如以后人脸、条码被检出）**不算破坏**；但"原有必须命中的变少 / 导出失败 / 残留>0 / 元数据回来了 / 服务外呼"一律算破坏。
+> 允许的"变化"：新增识别类型/更多实体（例如以后人脸、条码、PIPL/表格规则被检出）**不算破坏**；但"原有必须命中的变少 / 导出失败 / 残留>0 / 元数据或隐藏数据回来了 / 服务外呼"一律算破坏。
+> 新增实体必须逐条解释：预期覆盖增强视为合理新增（软提示）；无法解释的才按误报处理（需 owner 修规则）。
 
 ## 三、回归门禁流程（每次改动必须走）
 
 1. **开工前**：跑 `python -X utf8 app/tests/regression.py`，全绿才动代码（基线见 `app/tests/baseline/`）。
 2. **每个可感知改动后**：先跑对应模块单测，再跑完整 regression + e2e；红项必须修好或回滚，不得"带病继续"。
-3. **提交前**：`git status` 只包含预期文件；`git diff` 人工过一遍；不 push（按用户要求，等通知）。
+3. **收口/提交前（全套）**，按顺序：
+   1) 各域测试：`python -X utf8 app/tests/run_all.py --only barcodes,finance,trade,visual,legal,pipl,table,pdfhidden,tiff`；
+   2) e2e：`cd app/server && python -X utf8 ../tests/e2e.py`（必须 5/5、残留 0）；
+   3) 红线门禁：`python -X utf8 app/tests/regression.py`（必须退出码 0）；
+   4) 一条命令全套：`python -X utf8 app/tests/run_all.py`（当前 10 个套件，regression + 9 个功能域）；
+   5) `git status` 只包含预期文件；`git diff` 人工过一遍；不 push（按用户要求，等通知）。
 4. **新增规则/依赖**必须额外过：
    - 新规则在既有样例上的**误报检查**（对比基线，新增命中要逐条解释）；
    - 新依赖：离线 wheel 可用、许可证（免费/安全优先：MIT/BSD/Apache-2.0/PSF）、打包体积与 PyInstaller 收集验证；不引入需要运行时联网或许可证不清晰的组件。
-5. **CONTRACT 先行**：改数据结构/契约（`udm.py`、`registry.py`、`pipeline.py`）必须先更新 `app/server/CONTRACT.md`，再改实现。
+5. **新增能力必须有回归夹具**：PDF 隐藏数据、EXIF 朝向、表格列级/数值写回、整图涂黑等，由 `regression.py`
+   在临时目录构造**虚构**夹具真实跑通「解析→导出→verify」，不得只做静态检查。
+6. **CONTRACT 先行**：改数据结构/契约（`udm.py`、`registry.py`、`pipeline.py`）必须先更新 `app/server/CONTRACT.md`，再改实现。
+7. **基线更新纪律**：`--update-baseline --reason "..."` 仅在确认是"改进而非回归"、且全套绿后执行；
+   理由与差异写入 `app/tests/baseline/SNAPSHOT.md` §8/§9，并在交接说明；不得为让门禁变绿而重录。
 
 ## 四、本批（方案 A）扩展点设计约定
 
@@ -103,9 +119,45 @@
 - 语义（Verify 依赖）：`meta["geo_tags"]` 仅表示"成品里仍存在的真实地理参考"，中性化后必须为空；`meta["geo_neutralized"]=True` 标记已完成；LOCAL_CS 结构本身不算残留，真实 CRS/RPC/ICC/EXIF 残留才算。
 - 大图/位深/overview 走可选依赖 `rasterio`（BSD-3，内含 GDAL）/`pyproj`（MIT），**必须能在离线 wheel 下安装**；不装时降级为 Pillow 并给出明确 warning，不静默失败。
 
-## 五、变更记录
+### E6. PDF 隐藏数据剥离（P0 二波，Lead）
+
+- `pdf_parser` 解析时统计 `embedded_files` / `pdf_annotations` / `pdf_forms` / `pdf_js` 写入 `doc.meta`。
+- 导出默认**破坏性剥离**附件/批注/表单/JS/缩略图；`keep_pdf_hidden=True` 可显式保留。
+- `pipeline.verify` 对成品重解析后检查上述 4 个 meta 计数，非 0 且未显式 keep → 抛 `VerifyError` 阻断；
+  **keep 不能绕过文本残留复检**（隐藏数据里的敏感文本仍会被 residual 拦住）。
+- 回归：`test_pdf_hidden.py` + `regression.py` 构造含附件/批注/表单/JS 的虚构夹具，断言默认剥离与 verify 拦截。
+
+### E7. 图片 EXIF Orientation 转正（P0 二波）
+
+- `image_parser._apply_orientation`：parse / export / render 三处都先按 EXIF Orientation（3/6/8）转正像素。
+- 验收：解析后页面宽高为转正后的尺寸；render PNG、导出成品的像素尺寸一致；导出成品无 EXIF/ICC/XMP/GPS。
+- 回归：合成 Orientation=6 JPEG（存储 400×200 → 展示 200×400）夹具。
+
+### E8. 表格列级检测 + 纯数值单元格（P0 二波）
+
+- `table-cn`（11 条，表头列级，scope xlsx/docx）：按表头定位整列覆盖；`table_column` 检测器值形状守卫 + `exclude_validate` 让位。
+- `numeric_cell` 检测器（pipl/财务共用）：识别 XLSX 纯数值金额/账号/日期；导出时金额按**数字**写回（保留 number_format、公式可重算），账号按字符串写回。
+- 回归：虚构 xlsx 夹具断言表头列级覆盖 + openpyxl 读回单元格类型为数字；样例 `对账单.xlsx` 新增
+  「人名×1、表格账号列×1、金额（数值）×4」共 6 实体属**预期覆盖增强**（软提示，不算回归）。
+
+## 五、当前基线（2026-10-20 P0 二波收口）
+
+| 项 | 数值 |
+|---|---|
+| 基线文件 | `app/tests/baseline/baseline.json` + `SNAPSHOT.md`（版本化，`--update-baseline --reason` 重录） |
+| 代码状态 | HEAD `8bacbeb` + P0 二波未提交工作树（`engine_clean=false` 已如实记录） |
+| 规则包 | **8 个**（common/finance-cn/legal-cn/medical-cn/geo-cn/trade-cn/pipl-cn/table-cn），自有规则 **103 条** |
+| 编译规则数 | pdf/text 88、docx 99、xlsx 102、image/tiff 85、mesh 13 |
+| 5 个既有样例 | 实体 52 个（对账单 13→19 为预期新增），双导出 residual 全 0，元数据/隐藏数据全清 |
+| 红线门禁 | `regression.py` **177 项硬检查**全绿（+N 软提示）；退出码 0 |
+| 全套测试 | `run_all.py` **10 个套件**全绿：regression + barcodes/finance/trade/visual/legal/pipl/table/pdfhidden/tiff |
+| 已知不修 | 用户测试集 83 双人低头侧脸仍漏（Haar 上限，P1 YuNet）；身份证反面不触发 `id_document` |
+
+## 六、变更记录
 
 | 日期 | 变更 | 负责人 |
 |---|---|---|
 | 2026-10-19 | 本红线生效；方案 A 启动 | Lead |
 | 2026-10-20 | P0 第一波落地（底座/条码/财务/图像/贸易/前端/TIF），回归门禁 + 正式基线机制建立；keep 策略不再被判残留、MCP 映射落盘、USCC 校验启用、Office 内嵌媒体二次确认、仅清理导出、LOCAL_CS 中性化语义 | Lead + 5 域开发 + qa |
+| 2026-10-20 | 真实判决书漏识别修复（跨行案号/地址、标签姓名、竖排审判员、带空格金额）；新增 `joined_regex` 检测器与 `test_legal_detect.py`；基线规则 66→71 | Lead + qa |
+| 2026-10-20 | **P0 第二波（PIPL 收口）**：PDF 隐藏数据剥离 + verify 拦截、图片 EXIF Orientation 转正、`pipl-cn`(21)/`table-cn`(11) 规则包 + 校验器、`numeric_cell` 数值写回、10 条规则 scope 扩 image/tiff、前端整图涂黑；基线规则 71→103（8 包）、对账单 +6 实体（预期）、`regression.py` 177 项硬检查、`run_all.py` 10 套件全绿 | Lead + 6 域开发 + qa |

@@ -1,0 +1,22 @@
+{
+  "_note": "虚构数据；table_column 原型夹具：5 列 × 2 行 = 10 个期望实体。故意包含不匹配正则的值：身份证缺 1 位、手机号带空格、单位无公司后缀、金额为文本。",
+  "kind": "xlsx",
+  "sheet": "人员表",
+  "headers": ["姓名", "身份证号", "手机号", "单位", "工资"],
+  "rows": [
+    ["张伟", "310104198703124510", "13817264451", "上海市明理律师事务所", "12,000.00"],
+    ["欧阳娜娜", "31010419870312451", "138 1726 4451", "某单位", "8000元"]
+  ],
+  "expected": [
+    {"value": "张伟", "etype": "PERSON", "rule": "table.person"},
+    {"value": "欧阳娜娜", "etype": "PERSON", "rule": "table.person"},
+    {"value": "310104198703124510", "etype": "ID_CARD", "rule": "table.id_card"},
+    {"value": "31010419870312451", "etype": "ID_CARD", "rule": "table.id_card"},
+    {"value": "13817264451", "etype": "PHONE", "rule": "table.phone"},
+    {"value": "138 1726 4451", "etype": "PHONE", "rule": "table.phone"},
+    {"value": "上海市明理律师事务所", "etype": "ORG", "rule": "table.org"},
+    {"value": "某单位", "etype": "ORG", "rule": "table.org"},
+    {"value": "12,000.00", "etype": "AMOUNT", "rule": "table.amount"},
+    {"value": "8000元", "etype": "AMOUNT", "rule": "table.amount"}
+  ]
+}

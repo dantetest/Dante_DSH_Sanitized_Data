@@ -22,19 +22,20 @@ python -X utf8 app/tests/run_all.py
 [FAIL] 委托代理合同.pdf 关键实体不减少 - 案号 0<1
 [WARN] 新增规则 - +2 条（允许，不算回归）
 ...
-回归通过：132 项硬检查全绿（含 9 条软提示），耗时 38.5s
+回归通过：177 项硬检查全绿（含 2 条软提示），耗时 24.3s
 ```
 
 每次改动**前后都跑**：开工前确认全绿 → 改完再跑，红了立刻修/回滚。
 `app/tests/e2e.py` 仍保留作为最短冒烟；regression 会把它作为硬项跑一遍，并额外覆盖
-元数据、安全、契约、HTTP 主路径、MCP、桌面入口。
+元数据/隐藏数据、安全、契约、HTTP 主路径、MCP、桌面入口，以及 P0 二波新能力
+（PDF 隐藏数据、EXIF 朝向、表格列级/数值写回、整图涂黑）。
 
 ## 1. 硬 vs 软：什么算"破坏"
 
 | 类别 | 判定 |
 |---|---|
-| **硬（HARD）** | 原有必须命中的实体变少；解析/导出失败；`residual > 0`；元数据回来了；Geo tag 回来了；服务外呼；只监听范围扩大；审计记原值；规则包加载错误/id 冲突；解析器检测器缺失；静态站点/图标异常；HTTP 主路径失败；MCP 工具坏；映射库不可还原 → **FAIL，必须修** |
-| **软（SOFT）** | 新增识别类型/新增规则/多识别实体；性能波动（>50% 报警）；已知边界现状变化（Office 内嵌图仅告警、PDF 文本层不 OCR、`--no-ocr` 未接线、无实体不可导出等）→ **只提示，不算回归** |
+| **硬（HARD）** | 原有必须命中的实体变少；解析/导出失败；`residual > 0`；元数据回来了；**PDF 隐藏数据/EXIF 朝向/数值类型回退**；Geo tag 回来了；服务外呼；只监听范围扩大；审计记原值；规则包加载错误/id 冲突/既有规则被静默删除；解析器检测器缺失；静态站点/图标异常；HTTP 主路径失败；MCP 工具坏；映射库不可还原 → **FAIL，必须修** |
+| **软（SOFT）** | 新增识别类型/新增规则/多识别实体；性能波动（>50% 报警）；已知边界现状变化（Office 内嵌图仅告警、PDF 文本层不 OCR、`--no-ocr` 未接线、无实体不可导出等）；已知不修项（83 双人低头侧脸 Haar 上限、身份证反面不触发 id_document）→ **只提示，不算回归** |
 
 **新增识别/新增规则导致多出实体永远不算回归**；判断"少了"用基线里的
 `required.samples.*.required_types`（每样例"必须至少命中"的类型与最低数量）。
@@ -44,15 +45,16 @@ OCR 类样例（image/tiff）留 ±1 容差，避免同名 OCR 抖动误报。
 
 | 分组 | 硬项要点 |
 |---|---|
-| 基线自检 | schema、5 个样例文件在、HEAD 软提示 |
+| 基线自检 | schema、5 个样例文件在、HEAD/工作树/样例哈希软提示 |
 | 功能红线 · e2e | e2e 退出码 0、汇总 5/5、无失败行；耗时软报警 |
 | 功能红线 · 样例 | 5/5 解析、页数不回退、关键实体至少命中、双导出成功、residual=0、成品存在非空、PDF/Office 成品"独立复核"无原文残留、元数据清理（PDF author/XMP、DOCX core/company/缩略图、XLSX 属性、图片 EXIF、**TIF 无真实地理参考残留**/sidecar；LOCAL_CS 中性化结构按 D3 允许，见 SNAPSHOT §6） |
-| 安全红线 · 静态 | 无出站网络（`requests`/`urllib.request`/`http.client`/socket 外呼白名单=回环）、无调用上下文外部 URL、默认监听 127.0.0.1、PDF `apply_redactions`、图片重编码不带 EXIF/ICC（含临时夹具实测）、TIFF 剥离+复检、DOCX/XLSX 属性清理、审计 INSERT 无原值列 |
-| 契约完整性 · 规则/注册表 | 5 包仍在、load_errors=0、id 全局唯一/字段/scope/策略合法、已有规则不减少、各格式编译数不减少、插件/解析器/检测器不回退、替换器注册、OCR 可用性一致 |
-| 契约完整性 · 服务/主路径 | health 200/net=blocked、runtime host=127.0.0.1、netstat 监听行只有回环、`/api/packs`、4 页面+3 图标 200+MIME、CSRF 跨站写 403、上传→job→ready→双导出→下载（sha/size 一致/%PDF）、审计计数含类型且无原值、审计链 verify、预览、PNG 渲染、框选补漏（rect 归一化）、逐条确认、accept-all、映射库可解密还原 |
-| 契约完整性 · MCP | 4 工具齐全；list_rules / check_support / redact_text（不泄露合成原值）/ sanitize_document（residual=0）；MCP 存映射为软提示 |
+| 功能红线 · P0 二波新能力 | 构造**虚构**夹具真实跑通：PDF 隐藏数据（附件/批注/表单/JS）默认剥离 + verify 拦截未清理（keep 不绕过文本残留复检）；图片 EXIF Orientation=6 解析/渲染/导出转正且导出无 EXIF；表格列级覆盖 + 纯数值金额导出写回数字（openpyxl 断言）；已知不修项只做软记录 |
+| 安全红线 · 静态 | 无出站网络（`requests`/`urllib.request`/`http.client`/socket 外呼白名单=回环）、无调用上下文外部 URL、默认监听 127.0.0.1、requirements 无网络客户端依赖、PDF `apply_redactions`、图片重编码不带 EXIF/ICC（含临时夹具实测）、TIFF 剥离+复检、DOCX/XLSX 属性清理、审计 INSERT 无原值列 |
+| 契约完整性 · 规则/注册表 | 基线规则包仍在、load_errors=0、id 全局唯一/字段/scope/策略合法、已有规则不减少（迁移需白名单+替代规则）、各格式编译数不减少、**10 条规则 scope 已扩 image+tiff**、**pipl-cn(≥21)/table-cn(≥11) 完整且 id 唯一/命名空间正确**、插件/解析器/检测器不回退、替换器注册、OCR 可用性一致 |
+| 契约完整性 · 服务/主路径 | health 200/net=blocked、runtime host=127.0.0.1、netstat 监听行只有回环、`/api/packs`、4 页面+3 图标 200+MIME、CSRF 跨站写 403、上传→job→ready→双导出→下载（sha/size 一致/%PDF）、**verify.pdf_hidden 为空**、审计计数含类型且无原值、审计链 verify、预览、PNG 渲染、框选补漏（rect 归一化）、逐条确认、accept-all、**整图涂黑（rect=[0,0,1,1]→black/coverage≈1.0）**、映射库可解密还原 |
+| 契约完整性 · MCP | 4 工具齐全；stdio 协议端到端；list_rules / check_support / redact_text（不泄露合成原值）/ sanitize_document（residual=0）；MCP 存映射为软提示 |
 | 功能红线 · 桌面/构建 | 桌面入口/服务入口/MCP/rehydrate 语法 OK、spec/iss/前端资源仍在、`app.spec` 仍收集 web |
-| 软参考 | e2e/逐样例耗时、已知边界现状是否变化（变化只报告，不判回归） |
+| 软参考 | e2e/逐样例耗时、已知边界现状是否变化（变化只报告，不判回归）、已知不修项（83 双人低头侧脸 Haar 上限、身份证反面不触发 id_document） |
 
 ## 3. 如何新增检查
 
@@ -106,6 +108,12 @@ python -X utf8 app/tests/regression.py --update-baseline
 * `app/tests/baseline/SNAPSHOT.md` —— 人读摘要（硬/软断言、每样例最低命中、
   元数据矩阵、规则包、服务与安全、已知边界）。
 
+**当前基线（2026-10-20 P0 二波收口）**：8 个规则包 / 自有规则 103 条；5 个既有样例
+实体 52 个、双导出 residual 0；`regression.py` 177 项硬检查；`run_all.py` 10 套件全绿；
+对账单新增 6 实体（table 列级 2 + pipl numeric AMOUNT 4）已在 SNAPSHOT §3.3 说明为预期。
+基线在 `engine_clean=false` 的 P0 二波工作树上采集（SNAPSHOT 已标注），提交后如需干净
+HEAD 基线，再跑一次 `--update-baseline`。
+
 **什么时候可以重录**：确认是**改进**而不是回归（例如新增规则让实体变多、
 P0 修复了某条已知边界并同步调整软记录）。流程：
 
@@ -138,25 +146,29 @@ residual>0 / 元数据回来 / 外呼"在重录后依然会在新基线里体现
 
 ## 7. 全套测试怎么跑（regression + 各域自测）
 
-红线门禁之外，各功能域（条码/财务/贸易/图像/TIF）还有开发者自测。
-"本波收口/交付前"建议一条命令跑全套：
+红线门禁之外，各功能域（条码/财务/贸易/图像/判决书/PIPL/表格/TIF/PDF 隐藏数据）都有开发者自测。
+"本轮收口/交付前"建议一条命令跑全套：
 
 ```powershell
 python -X utf8 app/tests/run_all.py
 ```
 
-执行顺序、内容与预计耗时（单机 CPU，OCR 首次加载模型算在内）：
+执行顺序、内容与预计耗时（单机 CPU，OCR 首次加载模型算在内；本机实测 2026-10-20）：
 
-| # | 测试 | 内容 | 预计耗时 |
+| # | 测试 | 内容 | 实测耗时 |
 |---|---|---|---|
-| 1 | `regression.py` | **红线门禁（硬）**：功能/安全/契约/主路径 | 30–90s |
-| 2 | `test_barcodes.py` | 条码/二维码识别、不可再解码自检、样例零误报 | 10–30s |
-| 3 | `test_finance.py` | finance-cn v2 规则、校验器、金额一致性 | 10–20s |
-| 4 | `test_trade.py` | trade-cn 规则、贸易号码校验器、样例零误报 | 5–15s |
-| 5 | `test_visual.py` | 人脸/证件/车牌扫描器、样例零误报 | 10–30s |
-| 6 | `test_tiff.py` | 正射 TIF P0（大图/位深/坐标中性化，落盘后自动纳入） | 20–90s |
+| 1 | `regression.py` | **红线门禁（硬）**：功能/安全/契约/主路径/P0 二波新能力 | 25.7s |
+| 2 | `test_barcodes.py` | 条码/二维码识别、不可再解码自检、样例零误报 | 4.3s |
+| 3 | `test_finance.py` | finance-cn v2 规则、校验器、金额一致性 | 5.6s |
+| 4 | `test_trade.py` | trade-cn 规则、贸易号码校验器、样例零误报 | 5.4s |
+| 5 | `test_visual.py` | 人脸分块/整头/告警、车牌完整牌面、样例零误报 | 5.2s |
+| 6 | `test_legal_detect.py` | 判决书类文本检测（跨行案号/地址/标签姓名/带空格金额） | 1.6s |
+| 7 | `test_pipl_rules.py` | pipl-cn 规则 + XLSX 纯数值单元格（金额写回数字） | 5.6s |
+| 8 | `test_table_column.py` | table-cn 表头列级检测（xlsx/docx 整列覆盖） | 5.7s |
+| 9 | `test_pdf_hidden.py` | PDF 隐藏数据（附件/批注/表单/JS/缩略图）剥离与复检 | 3.1s |
+| 10 | `test_tiff.py` | 正射 TIF P0（大图/位深/坐标中性化） | 26.9s |
 
-合计约 **1.5–4 分钟**（并行开发/低配机器会更慢；耗时只做软参考，不影响判定）。
+合计约 **1.5–3 分钟**（并行开发/低配机器会更慢；耗时只做软参考，不影响判定）。
 
 常用参数：
 
@@ -181,9 +193,10 @@ python -X utf8 app/tests/run_all.py --keep --list       # 配合排查
 
 * `app/tests/e2e.py`：最短冒烟（5 样例 → 解析/检测/双导出/复检），开发时可以单独跑；
 * `app/tests/regression.py`：本文档描述的完整门禁，**交付/提交前必跑**；
-* `app/tests/test_*.py`：各功能域（条码/财务/贸易/视觉）开发者自己的单测，**不属于红线门禁**；
-  regression.py 不 import 它们（避免并行开发时互相卡），域内自测请各自跑；
+* `app/tests/test_*.py`：各功能域开发者自己的单测（条码/财务/贸易/视觉/判决书/PIPL/表格/PDF 隐藏数据/TIF），
+  **不属于红线门禁**；regression.py 不 import 它们（避免并行开发时互相卡），域内自测请各自跑；
   它们坏了不阻塞红线门禁，但对应功能域的交付自测由 owner 负责；
+* `app/tests/eval_real_media.py`：真实素材评测脚本（非门禁，按需手动跑）；
 * `app/tests/fixtures/`：各功能域测试夹具（二进制/文本），只做测试输入，不进产品；
 * `app/tests/make_samples.py`：重新生成 `samples/` 用；改样例后必须重录基线
   （`--update-baseline --reason ...`），并在说明里写原因。

@@ -4,12 +4,14 @@
 跑什么（按优先级）：
   1. ``regression.py``  —— 红线门禁（硬项失败=禁止提交）；必须第一个跑；
   2. 各功能域自测 —— ``test_barcodes.py`` / ``test_finance.py`` /
-     ``test_trade.py`` / ``test_visual.py``（存在 ``test_tiff.py`` 时也跑）。
+     ``test_trade.py`` / ``test_visual.py`` / ``test_legal_detect.py`` /
+     ``test_pipl_rules.py`` / ``test_table_column.py`` /
+     ``test_pdf_hidden.py`` / ``test_tiff.py``（存在才跑）。
 
 用法（Windows 控制台必须 -X utf8）：
 
     python -X utf8 app/tests/run_all.py                  # 全套
-    python -X utf8 app/tests/run_all.py --skip domain    # 只跑红线门禁
+    python -X utf8 app/tests/run_all.py --skip domain     # 只跑红线门禁
     python -X utf8 app/tests/run_all.py --only finance,trade
     python -X utf8 app/tests/run_all.py -v               # 透传各测试输出
     python -X utf8 app/tests/run_all.py --list           # 看将执行哪些
@@ -55,6 +57,12 @@ def _specs() -> list[dict]:
          "label": "图像域自测"},
         {"key": "legal", "file": TESTS / "test_legal_detect.py", "timeout": 300,
          "label": "判决书类文本检测回归（跨行案号/地址/标签姓名/带空格金额）"},
+        {"key": "pipl", "file": TESTS / "test_pipl_rules.py", "timeout": 600,
+         "label": "PIPL 补充规则 + XLSX 纯数值单元格自测"},
+        {"key": "table", "file": TESTS / "test_table_column.py", "timeout": 600,
+         "label": "表格表头列级检测（table-cn）自测"},
+        {"key": "pdfhidden", "file": TESTS / "test_pdf_hidden.py", "timeout": 600,
+         "label": "PDF 隐藏数据（附件/批注/表单/JS/缩略图）剥离自测"},
         {"key": "tiff", "file": TESTS / "test_tiff.py", "timeout": 900,
          "label": "正射 TIF 域自测（可选）"},
     ]

@@ -113,7 +113,20 @@ def build_fixtures() -> dict:
         "text_boxes": [{"text": "粤BD12345", "rect": (275, 445, 700, 545)}],
     }
 
-    # 3) 路牌照片（蓝底白字路名）——不得被当成车牌
+    # 3) 黄牌（黑字黄底），验证极性反转
+    img = _new_canvas(1200, 800, (208, 208, 198))
+    draw = ImageDraw.Draw(img)
+    plate = (300, 430, 720, 570)
+    draw.rectangle(plate, fill=(240, 200, 20))
+    _draw_text(draw, (330, 450), "京C88888", 70, (20, 20, 20))
+    path = root / "plate_yellow.png"
+    img.save(path)
+    out["plate_yellow"] = {
+        "path": path, "size": img.size, "plate_rect": plate,
+        "text_boxes": [{"text": "京C88888", "rect": (335, 455, 690, 550)}],
+    }
+
+    # 4) 路牌照片（蓝底白字路名）——不得被当成车牌
     img = _new_canvas(1200, 800, (190, 190, 186))
     draw = ImageDraw.Draw(img)
     draw.rectangle((260, 240, 960, 520), fill=(0, 80, 180))
@@ -315,10 +328,17 @@ class TestFaceLogic(unittest.TestCase):
         self._saved_override = visual_targets._FACE_CASCADES_OVERRIDE
         self._env_backup = {key: os.environ.get(key) for key in
                             ("YINZHAN_SCAN_FACE_PROFILE", "YINZHAN_SCAN_FACE",
-                             "YINZHAN_SCAN_FACE_MAX_SIDE")}
+                             "YINZHAN_SCAN_FACE_MAX_SIDE", "YINZHAN_SCAN_FACE_TILE",
+                             "YINZHAN_SCAN_FACE_TILE_CAP",
+                             "YINZHAN_SCAN_FACE_TILE_OVERLAP",
+                             "YINZHAN_SCAN_FACE_MIN_NEIGHBORS")}
         os.environ["YINZHAN_SCAN_FACE_PROFILE"] = "0"
         os.environ["YINZHAN_SCAN_FACE"] = "1"
-        os.environ.pop("YINZHAN_SCAN_FACE_MAX_SIDE", None)
+        os.environ["YINZHAN_SCAN_FACE_TILE"] = "0"      # 单位几何测试用整图单次
+        os.environ["YINZHAN_SCAN_FACE_MAX_SIDE"] = "800"
+        os.environ.pop("YINZHAN_SCAN_FACE_TILE_CAP", None)
+        os.environ.pop("YINZHAN_SCAN_FACE_TILE_OVERLAP", None)
+        os.environ.pop("YINZHAN_SCAN_FACE_MIN_NEIGHBORS", None)
 
     def tearDown(self):
         visual_targets._FACE_CASCADES_OVERRIDE = self._saved_override
@@ -346,8 +366,8 @@ class TestFaceLogic(unittest.TestCase):
         ctx = _ctx(800, 600)
         self.assertEqual(visual_targets._detect_faces(self._noise_image(), ctx), [])
 
-    def test_expand_12_percent(self):
-        # 关掉下采样（图长边 800 <= cap 800），验证外扩 12% 的纯几何逻辑
+    def test_head_expansion_asymmetric(self):
+        # 整头外扩：上 35% 脸高（发际线）、左右 25% 脸宽（耳廓）、下 15% 脸高（下颌）
         os.environ["YINZHAN_SCAN_FACE_MAX_SIDE"] = "800"
         fake = _FakeCascade([[(100, 100, 80, 80)]])
         visual_targets._FACE_CASCADES_OVERRIDE = [("frontal", fake, 0.92)]
@@ -355,16 +375,18 @@ class TestFaceLogic(unittest.TestCase):
         hits = visual_targets._detect_faces(self._noise_image(), ctx)
         self.assertEqual(len(hits), 1)
         rect = hits[0].rect
-        # 800x600 不缩放；框 (100,100,180,180) 外扩 12% → (90.4,90.4,189.6,189.6)
-        self.assertAlmostEqual(rect[0], 90.4, delta=0.8)
-        self.assertAlmostEqual(rect[1], 90.4, delta=0.8)
-        self.assertAlmostEqual(rect[2], 189.6, delta=0.8)
-        self.assertAlmostEqual(rect[3], 189.6, delta=0.8)
+        # (100,100,180,180) → 左-20/上-28/右+20/下+12 = (80,72,200,192)
+        self.assertAlmostEqual(rect[0], 80.0, delta=0.8)
+        self.assertAlmostEqual(rect[1], 72.0, delta=0.8)
+        self.assertAlmostEqual(rect[2], 200.0, delta=0.8)
+        self.assertAlmostEqual(rect[3], 192.0, delta=0.8)
         self.assertIn("engine=haar", hits[0].note)
+        self.assertIn("head", hits[0].note)
 
     def test_downscale_mapping(self):
-        # 3200x1600 长边缩到 1600（scale=0.5），假框在缩放图系返回 (100,100,80,80)
+        # 关掉分块，3200x1600 长边缩到 1600（scale=0.5）验证坐标映射 + 整头外扩
         os.environ["YINZHAN_SCAN_FACE_MAX_SIDE"] = "1600"
+        os.environ["YINZHAN_SCAN_FACE_TILE"] = "0"
         fake = _FakeCascade([[(100, 100, 80, 80)]])
         visual_targets._FACE_CASCADES_OVERRIDE = [("frontal", fake, 0.92)]
         image = self._noise_image(3200, 1600)
@@ -372,12 +394,57 @@ class TestFaceLogic(unittest.TestCase):
         hits = visual_targets._detect_faces(image, ctx)
         self.assertEqual(len(hits), 1)
         rect = hits[0].rect
-        # 原图系 (200,200,360,360) → 外扩 12% → (180.8,180.8,379.2,379.2)
-        self.assertAlmostEqual(rect[0], 180.8, delta=1.5)
-        self.assertAlmostEqual(rect[1], 180.8, delta=1.5)
-        self.assertAlmostEqual(rect[2], 379.2, delta=1.5)
-        self.assertAlmostEqual(rect[3], 379.2, delta=1.5)
+        # 原图脸框 (200,200,360,360) → 整头 (160,144,400,384)
+        self.assertAlmostEqual(rect[0], 160.0, delta=1.5)
+        self.assertAlmostEqual(rect[1], 144.0, delta=1.5)
+        self.assertAlmostEqual(rect[2], 400.0, delta=1.5)
+        self.assertAlmostEqual(rect[3], 384.0, delta=1.5)
         self.assertIn("scale=0.500", hits[0].note)
+
+    def test_face_tile_plan_grids(self):
+        # 小图单次；1600<长边≤4800 用 2×2；更大用 3×3
+        os.environ["YINZHAN_SCAN_FACE_TILE"] = "auto"
+        mode, plan = visual_targets._face_tile_plan(1200, 800)
+        self.assertTrue(mode.startswith("single"))
+        self.assertEqual(len(plan), 1)
+        mode, plan = visual_targets._face_tile_plan(3200, 2000)
+        self.assertTrue(mode.startswith("2x2"))
+        self.assertEqual(len(plan), 4)
+        mode, plan = visual_targets._face_tile_plan(6000, 4000)
+        self.assertTrue(mode.startswith("3x3"))
+        self.assertEqual(len(plan), 9)
+        # env 可强制退回整图
+        os.environ["YINZHAN_SCAN_FACE_TILE"] = "0"
+        mode, plan = visual_targets._face_tile_plan(6000, 4000)
+        self.assertTrue(mode.startswith("single"))
+        self.assertEqual(len(plan), 1)
+
+    def test_tile_mapping_and_downscale_warning(self):
+        # 3200x1600 → 2×2 块，每块 cap640（scale=0.4）；第 2 块里返回假框 →
+        # 映射回原图应为 (1850,250,2050,450)，整头外扩后 (1800,180,2100,480)
+        os.environ["YINZHAN_SCAN_FACE_TILE"] = "2"
+        os.environ["YINZHAN_SCAN_FACE_TILE_CAP"] = "640"
+        os.environ["YINZHAN_SCAN_FACE_TILE_OVERLAP"] = "0.0"
+        fake = _FakeCascade([[], [(100, 100, 80, 80)], [], []])
+        visual_targets._FACE_CASCADES_OVERRIDE = [("frontal", fake, 0.92)]
+        ctx = _ctx(3200, 1600)
+        hits = visual_targets._detect_faces(self._noise_image(3200, 1600), ctx)
+        self.assertEqual(len(hits), 1)
+        rect = hits[0].rect
+        self.assertAlmostEqual(rect[0], 1800.0, delta=2.0)
+        self.assertAlmostEqual(rect[1], 180.0, delta=2.0)
+        self.assertAlmostEqual(rect[2], 2100.0, delta=2.0)
+        self.assertAlmostEqual(rect[3], 480.0, delta=2.0)
+        self.assertIn("2x2", hits[0].note)
+        self.assertIn("照片较大，小脸可能漏检，请人工复核/整图涂黑", ctx.warnings)
+
+    def test_small_image_no_downscale_warning(self):
+        # 长边 ≤1600 的普通图片即使缩到 640 检测，也不应刷"照片较大"提示
+        fake = _FakeCascade([[(100, 100, 80, 80)]])
+        visual_targets._FACE_CASCADES_OVERRIDE = [("frontal", fake, 0.92)]
+        ctx = _ctx(800, 600)
+        visual_targets._detect_faces(self._noise_image(), ctx)
+        self.assertEqual([w for w in ctx.warnings if "照片较大" in w], [])
 
     def test_duplicate_faces_are_merged(self):
         fake = _FakeCascade([[(100, 100, 80, 80), (104, 104, 80, 80)]])
@@ -489,6 +556,22 @@ class TestIdDocument(unittest.TestCase):
 
 
 class TestPlate(unittest.TestCase):
+    def setUp(self):
+        self._env_backup = {key: os.environ.get(key) for key in
+                            ("YINZHAN_SCAN_PLATE_UNCONFIRMED",
+                             "YINZHAN_SCAN_PLATE_COLOR",
+                             "YINZHAN_SCAN_PLATE_MAX_SIDE")}
+        os.environ.pop("YINZHAN_SCAN_PLATE_UNCONFIRMED", None)
+        os.environ.pop("YINZHAN_SCAN_PLATE_COLOR", None)
+        os.environ.pop("YINZHAN_SCAN_PLATE_MAX_SIDE", None)
+
+    def tearDown(self):
+        for key, value in self._env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
     def _detect(self, name: str, text_boxes=None):
         fixture = FIXTURES[name]
         image = _image(fixture["path"])
@@ -505,12 +588,41 @@ class TestPlate(unittest.TestCase):
         self.assertEqual(hit.kind, "plate")
         self.assertGreaterEqual(hit.confidence, 0.9)
         self.assertIn("plate=沪A12345", hit.note)
+        self.assertIn("color+ocr", hit.note)
         # 命中框应覆盖物理车牌区域的大部分
         px0, py0, px1, py1 = FIXTURES["plate_blue"]["plate_rect"]
         ix = max(0.0, min(hit.rect[2], px1) - max(hit.rect[0], px0))
         iy = max(0.0, min(hit.rect[3], py1) - max(hit.rect[1], py0))
         inter = ix * iy
         self.assertGreater(inter / ((px1 - px0) * (py1 - py0)), 0.55)
+
+    def test_plate_color_rect_is_wider_than_ocr_box(self):
+        # 完整牌面（色块）应比 OCR 文本框更宽，能盖住整个牌照而不是只盖文字
+        hits = self._detect("plate_blue")
+        self.assertEqual(len(hits), 1)
+        hit_width = hits[0].rect[2] - hits[0].rect[0]
+        ocr_box = FIXTURES["plate_blue"]["text_boxes"][0]["rect"]
+        ocr_width = ocr_box[2] - ocr_box[0]
+        self.assertGreater(hit_width, ocr_width * 1.05)
+
+    def test_blue_plate_color_only_fallback(self):
+        # 没有 OCR 文本（车牌不可读）→ 颜色牌面回退，低置信 + unconfirmed 标注
+        hits = self._detect("plate_blue", [])
+        self.assertEqual(len(hits), 1, [h.note for h in hits])
+        hit = hits[0]
+        self.assertAlmostEqual(hit.confidence, 0.55, places=2)
+        self.assertIn("unconfirmed", hit.note)
+        self.assertIn("color/blue", hit.note)
+
+    def test_yellow_plate_black_text(self):
+        hits = self._detect("plate_yellow")
+        self.assertEqual(len(hits), 1, [h.note for h in hits])
+        self.assertIn("plate=京C88888", hits[0].note)
+        self.assertIn("yellow", hits[0].note)
+        # 黄牌黑字也要能纯颜色检出
+        fallback = self._detect("plate_yellow", [])
+        self.assertEqual(len(fallback), 1)
+        self.assertIn("color/yellow", fallback[0].note)
 
     def test_green_new_energy_plate(self):
         hits = self._detect("plate_green")
@@ -534,13 +646,8 @@ class TestPlate(unittest.TestCase):
                 self.assertEqual(len(hits), 1, f"{text} 未命中")
 
     def test_contract_numbers_are_not_plates(self):
-        boxes = [
-            {"text": "统一社会信用代码：91350100M000100Y43",
-             "rect": (75, 225, 800, 265)},
-            {"text": "身份证号码：310104198703124510", "rect": (75, 175, 700, 215)},
-            {"text": "案号：（2025）沪0104民初18732号", "rect": (75, 300, 700, 340)},
-        ]
-        hits = self._detect("plate_blue", boxes)
+        fixture = FIXTURES["contract_page"]
+        hits = self._detect("contract_page", fixture["text_boxes"])
         self.assertEqual(hits, [], [h.note for h in hits])
 
     def test_road_sign_not_plate(self):
@@ -550,14 +657,21 @@ class TestPlate(unittest.TestCase):
         boxes = fixture["text_boxes"]
         ctx = _ctx(width, height, boxes)
         self.assertEqual(visual_targets._detect_plates(image, ctx, boxes), [])
+        # 纯颜色候选（蓝底白字路牌）也应按字/比例门槛被拒绝
+        ctx2 = _ctx(width, height)
+        self.assertEqual(visual_targets._detect_plates(image, ctx2, []), [])
 
-    def test_color_candidate_unverified_off_by_default(self):
-        # 只有颜色候选、没有车牌文字 → 默认不开 unverified，不应命中
-        fixture = FIXTURES["roadsign"]
-        image = _image(fixture["path"])
-        ctx = _ctx(*fixture["size"])
-        hits = visual_targets._detect_plates(image, ctx, [])
-        self.assertEqual(hits, [])
+    def test_unconfirmed_can_be_disabled(self):
+        os.environ["YINZHAN_SCAN_PLATE_UNCONFIRMED"] = "0"
+        hits = self._detect("plate_blue", [])
+        self.assertEqual(hits, [], [h.note for h in hits])
+
+    def test_color_engine_can_be_disabled(self):
+        os.environ["YINZHAN_SCAN_PLATE_COLOR"] = "0"
+        # 关掉颜色后只剩 OCR 文本路径，框仍应在（但不含 color+ocr 标记）
+        hits = self._detect("plate_blue")
+        self.assertEqual(len(hits), 1, [h.note for h in hits])
+        self.assertNotIn("color+ocr", hits[0].note)
 
 
 class TestPublicAnalyze(unittest.TestCase):
@@ -592,6 +706,7 @@ class TestPublicAnalyze(unittest.TestCase):
         image = _image(fixture["path"])
         ctx = _ctx(*fixture["size"], fixture["text_boxes"])
         os.environ["YINZHAN_SCAN_FACE_MAX_SIDE"] = "1600"
+        os.environ["YINZHAN_SCAN_FACE_TILE"] = "0"
         fake = _FakeCascade([[(260, 300, 90, 90)]])
         saved = visual_targets._FACE_CASCADES_OVERRIDE
         visual_targets._FACE_CASCADES_OVERRIDE = [("frontal", fake, 0.92)]
@@ -600,6 +715,7 @@ class TestPublicAnalyze(unittest.TestCase):
         finally:
             visual_targets._FACE_CASCADES_OVERRIDE = saved
             os.environ.pop("YINZHAN_SCAN_FACE_MAX_SIDE", None)
+            os.environ.pop("YINZHAN_SCAN_FACE_TILE", None)
         kinds = [hit.kind for hit in hits]
         self.assertIn("id_document", kinds)
         self.assertNotIn("face", kinds)

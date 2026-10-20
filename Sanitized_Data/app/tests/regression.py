@@ -48,6 +48,18 @@ RULE_REMOVAL_ALLOWLIST: dict[str, dict] = {
     },
 }
 
+# ── P0 二波（PIPL 收口，2026-10-20）的明确契约 ─────────────────────────
+# 10 条原先 scope 缺 image/tiff 的规则必须补上（图片/TIF 也能识别）。
+SCOPE_EXPANDED_RULE_IDS = {
+    "cn.amount_cn", "cn.credit_line", "cn.iban", "cn.reg_capital",
+    "cn.bank_routing_no", "cn.pay_platform_id", "cn.lawyer_license",
+    "cn.legal_party", "cn.department", "cn.sensitive_diagnosis",
+}
+# 新增规则包的最小自有规则数（低于此视为删规则=回归）
+PACK_MIN_OWN_RULES = {"pipl-cn": 21, "table-cn": 11}
+# 新增规则包要求 id 命名空间（防止串包）
+PACK_ID_PREFIX = {"pipl-cn": "pipl.", "table-cn": "table."}
+
 
 # ══════════════════════════ 结果收集 ══════════════════════════
 class Gate:
@@ -560,6 +572,53 @@ def check_contract(gate: Gate, base: dict) -> dict:
     if extra_rules > 0:
         gate.soft("新增规则", f"+{extra_rules} 条（允许，不算回归）", changed=False)
 
+    # ── P0 二波规则契约（PIPL 收口，2026-10-20）──
+    from yinzhan import rules as _rules_mod
+    packs_cur = _rules_mod.load_packs()
+    id_scope: dict[str, list[str]] = {}
+    for pid, rs in packs_cur.items():
+        for r in rs:
+            if r.pack == pid:
+                id_scope[r.id] = list(r.scope)
+    missing_scope = [rid for rid in SCOPE_EXPANDED_RULE_IDS
+                     if rid not in id_scope
+                     or "image" not in id_scope[rid] or "tiff" not in id_scope[rid]]
+    gate.hard("10 条规则 scope 已扩到 image+tiff", not missing_scope,
+              f"缺 {missing_scope}" if missing_scope
+              else f"{len(SCOPE_EXPANDED_RULE_IDS)} 条全部含 image,tiff")
+    bad_packs = []
+    for pid, min_own in PACK_MIN_OWN_RULES.items():
+        cp = cur["packs"].get(pid)
+        if not cp:
+            bad_packs.append(f"{pid} 缺失")
+            continue
+        if int(cp.get("own_count") or 0) < min_own:
+            bad_packs.append(f"{pid} 自有 {cp.get('own_count')}<{min_own}")
+        prefix = PACK_ID_PREFIX.get(pid, "")
+        own_ids = cp.get("rule_ids") or []
+        bad_ids = [rid for rid in own_ids if prefix and not rid.startswith(prefix)]
+        if bad_ids:
+            bad_packs.append(f"{pid} 命名空间不符 {bad_ids[:3]}")
+        if len(own_ids) != len(set(own_ids)):
+            bad_packs.append(f"{pid} 内部 id 重复")
+    gate.hard("pipl-cn / table-cn 规则包完整且 id 唯一", not bad_packs,
+              "；".join(bad_packs) if bad_packs else
+              "、".join(f"{k}={cur['packs'][k]['own_count']} 条"
+                       for k in PACK_MIN_OWN_RULES))
+    base_compiled = brules.get("compiled_by_fmt") or {}
+    # scope 必须真的生效：10 条规则要出现在 image/tiff 的编译结果里
+    # （不依赖"比旧基线增加"，重录基线后依然有效）
+    compiled_image = {r.id for r in _rules_mod.compile_rules(packs_cur, "image")}
+    compiled_tiff = {r.id for r in _rules_mod.compile_rules(packs_cur, "tiff")}
+    not_compiled = [rid for rid in SCOPE_EXPANDED_RULE_IDS
+                    if rid not in compiled_image or rid not in compiled_tiff]
+    gate.hard("10 条规则已编译进 image/tiff 规则集", not not_compiled,
+              f"未生效 {not_compiled}" if not_compiled else
+              f"image/tiff 编译数 "
+              f"{len(compiled_image)}/{len(compiled_tiff)}"
+              f"（基线 {base_compiled.get('image')}/"
+              f"{base_compiled.get('tiff')}）")
+
     # 注册表
     reg = qa.capture_registry()
     breg = base.get("registry") or {}
@@ -682,6 +741,21 @@ def check_http(gate: Gate, base: dict) -> dict:
               _fmt_val(mk))
     gate.hard("accept-all 可用", (mp.get("accept_all") or {}).get("status") == 200,
               _fmt_val(mp.get("accept_all")))
+    # 整图涂黑（前端「整图涂黑」按钮的后端契约）：rect=[0,0,1,1] → black 实体铺满页面
+    mf = mp.get("mark_full") or {}
+    gate.hard("整图涂黑（rect=[0,0,1,1] 生成 black 实体）",
+              mf.get("added") == 1 and mf.get("has_entity") is True
+              and mf.get("black") is True and float(mf.get("coverage") or 0) >= 0.95,
+              _fmt_val(mf))
+    # PDF 隐藏数据剥离：主路径成品 verify 必须报告 pdf_hidden 为空
+    hidden_bad = []
+    for mode in ("ai", "human"):
+        ex = (mp.get("exports") or {}).get(mode) or {}
+        ph = (ex.get("verify") or {}).get("pdf_hidden")
+        if ph:
+            hidden_bad.append(f"{mode}:{ph}")
+    gate.hard("主路径 PDF 隐藏数据已剥离（verify pdf_hidden 为空）",
+              not hidden_bad, _fmt_val(hidden_bad) if hidden_bad else "pdf_hidden={}")
     gate.hard("主路径有实体命中",
               (mp.get("job_entities") or {}).get("total", 0) > 0,
               _fmt_val((mp.get("job_entities") or {}).get("types")))
@@ -700,6 +774,30 @@ def check_http(gate: Gate, base: dict) -> dict:
     cli = qa.rehydrate_cli_test(jid) if jid else {"ok": False, "err": "无 job_id"}
     gate.hard("rehydrate.py 命令行还原链路", cli.get("ok") is True, _fmt_val(cli))
     return {"http": http, "rehydrate": reh, "rehydrate_cli": cli, "ok": True}
+
+
+# ══════════════════════════ 5.5 P0 二波新能力（PDF 隐藏数据 / EXIF 朝向 / 表格数值） ══════════════════════════
+def check_new_capabilities(gate: Gate) -> None:
+    """P0 二波（PIPL 收口）新增能力的硬断言：用虚构夹具真实跑通导出/复检链路。"""
+    gate.set_current("功能红线 · P0 二波新能力")
+    gate.group("功能红线 · P0 二波新能力")
+    # 1) PDF 隐藏数据：附件/批注/表单/JS 默认剥离 + verify 拦截未清理
+    pdf_hidden = qa.pdf_hidden_fixture_test()
+    gate.hard("PDF 隐藏数据默认剥离（附件/批注/表单/JS）",
+              pdf_hidden.get("ok") is True, _fmt_val(pdf_hidden))
+    # 2) 图片 EXIF Orientation=6：解析/渲染/导出转正且导出无 EXIF
+    orient = qa.exif_orientation_fixture_test()
+    gate.hard("图片 EXIF Orientation 转正（解析/渲染/导出）",
+              orient.get("ok") is True, _fmt_val(orient))
+    # 3) 表格：表头列级覆盖 + 纯数值金额导出写回数字
+    table = qa.table_numeric_fixture_test()
+    gate.hard("表格列级覆盖 + 数值金额写回数字（openpyxl 断言）",
+              table.get("ok") is True, _fmt_val(table))
+    # 已知不修的边界只做软记录（不判回归，也不为它们改引擎）
+    limits = qa.capture_known_limits()
+    gaps = limits.get("known_gaps_not_fixed") or {}
+    for key, text in gaps.items():
+        gate.soft(f"已知不修：{key}", text)
 
 
 # ══════════════════════════ 6. MCP 工具（F9） ══════════════════════════
@@ -977,6 +1075,12 @@ def run_checks() -> int:
         contract = check_contract(gate, base)
     except Exception:
         gate.hard("规则/注册表检查异常", False, traceback.format_exc(limit=2))
+
+    # 4.5 P0 二波新能力（PDF 隐藏数据 / EXIF 朝向 / 表格数值）
+    try:
+        check_new_capabilities(gate)
+    except Exception:
+        gate.hard("P0 二波新能力检查异常", False, traceback.format_exc(limit=2))
 
     # 5 HTTP 服务 + 主路径
     http_bundle: dict = {}

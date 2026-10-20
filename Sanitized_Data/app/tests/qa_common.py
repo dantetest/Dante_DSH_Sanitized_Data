@@ -1196,6 +1196,41 @@ def _capture_http_once(port: int) -> dict:
             mp["accept_all"] = {"status": rac["status"],
                                 "accepted": acb.get("accepted"),
                                 "total": acb.get("total")}
+            # 整图涂黑（前端按钮的后端契约）：rect=[0,0,1,1] 必须生成 black 实体；
+            # 预览接口带 black/boxes，用它做 API 级断言（不依赖浏览器）
+            rf = http_json(base + f"/api/jobs/{jid}/mark", "POST",
+                           {"page": 0, "rect": [0, 0, 1, 1], "etype": "OTHER",
+                            "propagate": False})
+            try:
+                fb = json.loads(rf["body"] or b"{}")
+            except Exception:
+                fb = {}
+            fid = (fb.get("entity") or {}).get("id")
+            mf = {"status": rf["status"], "added": fb.get("added"),
+                  "has_entity": bool(fid)}
+            rp2 = http_json(base + f"/api/jobs/{jid}/preview/0?mode=orig",
+                            timeout=60)
+            try:
+                pv2 = json.loads(rp2["body"] or b"{}")
+            except Exception:
+                pv2 = {}
+            page_w = float(pv2.get("width") or 0)
+            page_h = float(pv2.get("height") or 0)
+            found = next((x for x in (pv2.get("entities") or [])
+                          if x.get("id") == fid), None)
+            boxes = (found or {}).get("boxes") or []
+            cover = 0.0
+            if boxes and page_w > 0 and page_h > 0:
+                x0 = min(float(b[0]) for b in boxes)
+                y0 = min(float(b[1]) for b in boxes)
+                x1 = max(float(b[2]) for b in boxes)
+                y1 = max(float(b[3]) for b in boxes)
+                cover = round(((x1 - x0) * (y1 - y0)) / (page_w * page_h), 3)
+            mf.update({"preview_status": rp2["status"],
+                       "black": bool((found or {}).get("black")),
+                       "coverage": cover,
+                       "page": [page_w, page_h], "boxes": boxes[:4]})
+            mp["mark_full"] = mf
         except Exception as exc:  # noqa: BLE001
             mp["mark"] = {"error": f"{type(exc).__name__}: {exc}"}
         exp = mp["exports"]
@@ -1375,6 +1410,332 @@ def mcp_stdio_test(timeout: int = 180) -> dict:
             "responses": len(parsed)}
 
 
+# ════════════════════════ P0 二波新能力夹具（PDF 隐藏数据 / EXIF 朝向 / 表格数值） ════════════════════════
+NEW_FIXTURE_DIRNAME = "p0_wave2"
+
+
+def _new_fixture_dir() -> Path:
+    ensure_ready()
+    d = WORK / NEW_FIXTURE_DIRNAME
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _raw_pdf_blob(path: Path) -> bytes:
+    """成品所有 xref 对象 + 解压流的拼接，用于隐藏数据 marker 残留扫描。"""
+    import fitz
+    chunks: list[bytes] = []
+    with fitz.open(str(path)) as pdf:
+        for xref in range(1, pdf.xref_length()):
+            try:
+                chunks.append((pdf.xref_object(xref, compressed=False) or "")
+                              .encode("utf-8", "replace"))
+            except Exception:
+                pass
+            try:
+                stream = pdf.xref_stream(xref)
+            except Exception:
+                stream = None
+            if stream:
+                chunks.append(stream)
+    return b"\n".join(chunks)
+
+
+def pdf_hidden_fixture_test() -> dict:
+    """PDF 隐藏数据（附件/批注/表单/JS）：默认剥离 + verify 拦截未清理。"""
+    ensure_ready()
+    try:
+        import fitz
+        from yinzhan import pipeline, registry
+        from yinzhan.jobs import _load_rules
+        from yinzhan.ocr import get_ocr
+        from yinzhan.udm import ParseContext, VerifyError
+
+        registry.load_plugins()
+        d = _new_fixture_dir()
+        src = d / "hidden.pdf"
+        body_phone = "13800138000"
+        att_phone, annot_phone, widget_phone = ("13900139000", "13700137000",
+                                                "13500135000")
+        marks = {"attach": "QA-ATTACH-MARK-91f", "annot": "QA-ANNOT-MARK-72c",
+                 "widget": "QA-WIDGET-MARK-53b", "js": "QA-JS-MARK-34a"}
+        doc = fitz.open()
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((72, 90), "委托方：张三", fontsize=12)
+        page.insert_text((72, 112), f"手机号 {body_phone}，日期 2026-10-20",
+                         fontsize=12)
+        doc.embfile_add("secret.txt",
+                        f"{marks['attach']} {att_phone}".encode("utf-8"),
+                        filename="secret.txt")
+        note = page.add_text_annot((100, 200),
+                                   f"{marks['annot']} 批注 {annot_phone}")
+        note.update()
+        widget = fitz.Widget()
+        widget.field_name = "phone"
+        widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+        widget.field_value = f"{marks['widget']} {widget_phone}"
+        widget.rect = fitz.Rect(100, 400, 360, 428)
+        widget.text_fontsize = 10
+        page.add_widget(widget)
+        js_xref = doc.get_new_xref()
+        doc.update_object(js_xref, f"<< /S /JavaScript /JS ({marks['js']}) >>")
+        doc.xref_set_key(doc.pdf_catalog(), "OpenAction", f"{js_xref} 0 R")
+        doc.save(str(src), garbage=4, deflate=True)
+        doc.close()
+
+        parser = registry.find_parser(src)
+        if parser is None:
+            return {"ok": False, "err": "没有 PDF 解析器"}
+        ctx = ParseContext(ocr=get_ocr(), workdir=str(d / "work"))
+        parsed = parser.parse(src, ctx)
+        meta = parsed.meta or {}
+        stats = {k: meta.get(k) for k in ("embedded_files", "pdf_annotations",
+                                          "pdf_forms", "pdf_js")}
+        parse_ok = (int(stats.get("embedded_files") or 0) >= 1
+                    and int(stats.get("pdf_annotations") or 0) >= 1
+                    and int(stats.get("pdf_forms") or 0) >= 1
+                    and bool(stats.get("pdf_js")))
+        rules, _pack, _idx = _load_rules("pdf")
+        det = pipeline.detect(parsed, rules, "standard")
+        pipeline.decide(det.entities, det.rules, pipeline.Session())
+        out = d / "hidden_ai.pdf"
+        pipeline.export(parsed, parser, det.entities, out, {"mode": "ai"})
+        ver = pipeline.verify(out, det.entities, parser, ctx)
+        with fitz.open(str(out)) as pdf:
+            out_stats = {
+                "embedded_files": int(pdf.embfile_count()),
+                "embedded_file_names": list(pdf.embfile_names() or []),
+                "pdf_annotations": sum(len(list(pg.annots() or [])) for pg in pdf),
+                "pdf_forms": sum(len(list(pg.widgets() or [])) for pg in pdf),
+            }
+        blob = _raw_pdf_blob(out).decode("utf-8", "replace")
+        markers_left = [m for m in marks.values() if m in blob]
+        pii_left = [v for v in (att_phone, annot_phone, widget_phone)
+                    if v in blob]
+        strip_ok = (out_stats["embedded_files"] == 0
+                    and out_stats["embedded_file_names"] == []
+                    and out_stats["pdf_annotations"] == 0
+                    and out_stats["pdf_forms"] == 0
+                    and not markers_left and not pii_left)
+        # keep_pdf_hidden：默认导出选项下 verify 必须拦截（同一阻断机制）；
+        # 另用"无 PII 的隐藏内容"验证显式 keep 放行（keep 不能绕过文本残留复检，
+        # 敏感隐藏内容即使 keep 也仍会被 residual 拦住 —— 见 test_pdf_hidden）。
+        kept = d / "hidden_keep.pdf"
+        pipeline.export(parsed, parser, det.entities, kept,
+                        {"mode": "ai", "keep_pdf_hidden": True})
+        intercepted, intercept_msg = False, ""
+        try:
+            pipeline.verify(kept, det.entities, parser, ctx)
+        except VerifyError as ve:
+            intercept_msg = str(ve)
+            intercepted = "隐藏数据" in intercept_msg
+        # 非敏感隐藏内容：只 marker 无 PII → keep 导出 + 显式放行应通过
+        plain = d / "hidden_plain.pdf"
+        pdoc = fitz.open()
+        ppage = pdoc.new_page(width=400, height=300)
+        ppage.insert_text((60, 90), "内部资料，无个人信息", fontsize=12)
+        pdoc.embfile_add("notes.txt", b"QA-PLAIN-ATTACH-MARK-11a",
+                         filename="notes.txt")
+        pannot = ppage.add_text_annot((80, 150), "QA-PLAIN-ANNOT-MARK-22b 请核对")
+        pannot.update()
+        pdoc.save(str(plain), garbage=4, deflate=True)
+        pdoc.close()
+        keep_passes = False
+        if parser is not None:
+            pparsed = parser.parse(plain, ctx)
+            prules, _p2, _i2 = _load_rules("pdf")
+            pdet = pipeline.detect(pparsed, prules, "standard")
+            pipeline.decide(pdet.entities, pdet.rules, pipeline.Session())
+            pout = d / "hidden_plain_keep.pdf"
+            pipeline.export(pparsed, parser, pdet.entities, pout,
+                            {"mode": "ai", "keep_pdf_hidden": True})
+            try:
+                pv = pipeline.verify(pout, pdet.entities, parser, ctx,
+                                     options={"keep_pdf_hidden": True})
+                keep_passes = pv.get("verified") is True
+            except Exception:
+                keep_passes = False
+        ok = bool(parse_ok and strip_ok and ver.get("residual") == 0
+                  and intercepted and keep_passes)
+        return {"ok": ok,
+                "detail": {"parse_stats": stats, "parse_ok": parse_ok,
+                           "strip_ok": strip_ok, "out_stats": out_stats,
+                           "markers_left": markers_left, "pii_left": pii_left,
+                           "residual": ver.get("residual"),
+                           "verify_intercepted": intercepted,
+                           "intercept_msg": intercept_msg[:120],
+                           "keep_option_passes": keep_passes}}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+def exif_orientation_fixture_test() -> dict:
+    """图片 EXIF Orientation=6：解析/渲染/导出均转正，且导出无 EXIF。"""
+    ensure_ready()
+    try:
+        from io import BytesIO
+        from PIL import Image, ImageDraw
+        from yinzhan import pipeline, registry
+        from yinzhan.ocr import get_ocr
+        from yinzhan.udm import Decision, Entity, ParseContext, Span
+
+        registry.load_plugins()
+        d = _new_fixture_dir()
+        src = d / "orientation6.jpg"
+        img = Image.new("RGB", (400, 200), (245, 245, 245))
+        ImageDraw.Draw(img).text((30, 80), "QA ORIENT", fill=(20, 20, 20))
+        exif = Image.Exif()
+        exif[274] = 6          # 顺时针 90°：存储 400x200 → 展示 200x400
+        img.save(str(src), exif=exif.tobytes(), quality=92)
+        parser = registry.find_parser(src)
+        if parser is None:
+            return {"ok": False, "err": "没有图片解析器"}
+        ctx = ParseContext(ocr=get_ocr(), workdir=str(d / "work"))
+        doc = parser.parse(src, ctx)
+        page = doc.pages[0]
+        parsed_dims = (round(page.width), round(page.height))
+        dims_ok = abs(page.width - 200) <= 2 and abs(page.height - 400) <= 2
+        png = parser.render(doc, 0, "orig") or b""
+        render_dims = None
+        if png:
+            with Image.open(BytesIO(png)) as im:
+                render_dims = im.size
+        render_ok = render_dims == (200, 400)
+        ent = Entity(id=Entity.new_id(), etype="OTHER", label="测试遮盖", value="",
+                     spans=[Span(rect=(0.1, 0.1, 0.6, 0.6), page=0)],
+                     level="L2", confidence=1.0, status="accepted",
+                     decision=Decision(strategy="black", black=True))
+        out = d / "orientation6_out.jpg"
+        pipeline.export(doc, parser, [ent], out, {"mode": "ai"})
+        om = image_meta(out)
+        with Image.open(out) as im:
+            export_dims = im.size
+        exif_clean = not om["info_keys"] and om["exif_entries"] == 0
+        export_dims_ok = export_dims == (200, 400)
+        ok = bool(dims_ok and render_ok and exif_clean and export_dims_ok)
+        return {"ok": ok,
+                "detail": {"parsed_dims": parsed_dims, "dims_ok": dims_ok,
+                           "render_dims": render_dims, "render_ok": render_ok,
+                           "export_dims": export_dims,
+                           "export_dims_ok": export_dims_ok,
+                           "exif_clean": exif_clean,
+                           "export_meta": om}}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+def table_numeric_fixture_test() -> dict:
+    """表格：表头列级覆盖 + 纯数值金额导出后单元格类型为数字。"""
+    ensure_ready()
+    try:
+        from openpyxl import Workbook, load_workbook
+        from yinzhan import pipeline, registry
+        from yinzhan.detectors import numeric_det
+        from yinzhan.jobs import _load_rules
+        from yinzhan.ocr import get_ocr
+        from yinzhan.udm import ParseContext
+
+        registry.load_plugins()
+        d = _new_fixture_dir()
+        src = d / "table_amounts.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "工资表"
+        ws.append(["姓名", "身份证号", "手机号", "金额"])
+        ws.append(["张三", "11010519491231002X", "13800138000", 1234.56])
+        ws.append(["李四", "310104198703124510", "13900139000", 2345.67])
+        ws.append(["合计", "", "", 3580.23])
+        wb.save(str(src))
+        wb.close()
+
+        parser = registry.find_parser(src)
+        ctx = ParseContext(ocr=get_ocr(), workdir=str(d / "work"))
+        doc = parser.parse(src, ctx)
+        rules, _p, _i = _load_rules("xlsx")
+        det = pipeline.detect(doc, rules, "standard")
+        pipeline.decide(det.entities, det.rules, pipeline.Session())
+        table_ents = [e for e in det.entities if e.origin == "table"]
+        numeric_ents = [e for e in det.entities if e.origin == "numeric_cell"]
+        numeric_amounts = [e for e in numeric_ents if e.etype == "AMOUNT"]
+        # 表头列级覆盖：按"单元格是否被实体 span 覆盖"断言（同值合并后
+        # table 实体可能与 regex 实体合并，不能只看 origin/label）。
+        cell_block: dict[str, str] = {}
+        for page in doc.pages:
+            for b in page.blocks:
+                ref = getattr(b, "ref", None) or {}
+                cell = ref.get("cell")
+                if cell and getattr(b, "text", ""):
+                    cell_block[str(cell)] = b.id
+        covered: dict[str, list[dict]] = {}
+        for e in det.entities:
+            for s in e.spans:
+                if s.block_id:
+                    covered.setdefault(s.block_id, []).append(
+                        {"etype": e.etype, "origin": e.origin,
+                         "start": s.start, "end": s.end})
+        # 姓名/证件/手机 三列各 2 个数据单元格必须被覆盖，且类型正确
+        expect_cells = {
+            "A2": {"PERSON"}, "A3": {"PERSON"},
+            "B2": {"ID_CARD"}, "B3": {"ID_CARD"},
+            "C2": {"PHONE"}, "C3": {"PHONE"},
+        }
+        missing_cells, wrong_types = [], []
+        for cell, etypes in expect_cells.items():
+            bid = cell_block.get(cell)
+            hit = covered.get(bid or "", [])
+            if not hit:
+                missing_cells.append(cell)
+                continue
+            if not any(h["etype"] in etypes for h in hit):
+                wrong_types.append(f"{cell}:{[h['etype'] for h in hit]}")
+        table_provenance = len(table_ents)
+        table_cover_ok = (not missing_cells and not wrong_types
+                          and table_provenance >= 1)
+        out = d / "table_amounts_ai.xlsx"
+        pipeline.export(doc, parser, det.entities, out, {"mode": "ai"})
+        ver = pipeline.verify(out, det.entities, parser, ctx)
+        wb2 = load_workbook(str(out))
+        ws2 = wb2.active
+        writes = []
+        for e in numeric_amounts:
+            meta = numeric_det.get_numeric_meta(e.id) or {}
+            coord = meta.get("cell") or meta.get("coordinate")
+            sheet = meta.get("sheet") or ws2.title
+            repl = e.decision.replacement if e.decision else None
+            if not coord or repl is None:
+                continue
+            try:
+                cell = wb2[sheet][coord]
+                expected = float(str(repl).replace(",", "").replace("，", "").strip())
+            except Exception:
+                continue
+            v = cell.value
+            writes.append({
+                "cell": coord, "type": type(v).__name__,
+                "value_ok": (isinstance(v, (int, float))
+                             and not isinstance(v, bool)
+                             and abs(float(v) - expected) < 1e-6),
+                "format_kept": (not meta.get("number_format")
+                                or cell.number_format == meta.get("number_format")),
+            })
+        wb2.close()
+        numeric_ok = (len(writes) >= 2
+                      and all(w["value_ok"] and w["format_kept"] for w in writes))
+        ok = bool(table_cover_ok and numeric_ok and ver.get("residual") == 0)
+        return {"ok": ok,
+                "detail": {"table_entities": len(table_ents),
+                           "table_provenance": table_provenance,
+                           "missing_cells": missing_cells,
+                           "wrong_types": wrong_types,
+                           "numeric_entities": len(numeric_ents),
+                           "numeric_amounts": len(numeric_amounts),
+                           "writes": writes, "residual": ver.get("residual"),
+                           "table_cover_ok": table_cover_ok,
+                           "numeric_ok": numeric_ok}}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
 # ════════════════════════ 已知边界软记录 ════════════════════════
 def capture_known_limits() -> dict:
     ensure_ready()
@@ -1401,8 +1762,36 @@ def capture_known_limits() -> dict:
                 break
     georef_src = read(SERVER / "yinzhan" / "georef.py")
     tiff_local_mode = LOCAL_CRS_MARKER in georef_src.lower()
+    image_src = read(SERVER / "yinzhan" / "parsers" / "image_parser.py")
+    appjs_src = read(REPO / "app" / "web" / "app.js")
+    hidden_keys = [k for k in ("embedded_files", "pdf_annotations",
+                               "pdf_forms", "pdf_js") if k in pdf_src]
     return {
         "_note": "以下为现状快照，只做软记录；后续 P0 允许改变，不得当成硬断言。",
+        "pdf_hidden_strip": {
+            "meta_keys": hidden_keys,
+            "default": "strip（导出默认剥离附件/批注/表单/JS/缩略图）",
+            "keep_option": "keep_pdf_hidden" if "keep_pdf_hidden" in pdf_src else "",
+            "verify_intercepts": "HIDDEN_META_KEYS" in read(
+                SERVER / "yinzhan" / "pipeline.py")
+            or "pdf_hidden" in read(SERVER / "yinzhan" / "pipeline.py"),
+        },
+        "image_exif_orientation": {
+            "applied": "_apply_orientation" in image_src,
+            "exif_transpose": "exif_transpose" in image_src,
+        },
+        "frontend_full_image_black": {
+            "backend_mark_normalized_rect": True,
+            "frontend_button": ("整图" in appjs_src
+                                or "fullBlack" in appjs_src
+                                or "rect: [0, 0, 1, 1]" in appjs_src
+                                or "rect:[0,0,1,1]" in appjs_src),
+        },
+        "known_gaps_not_fixed": {
+            "side_face_low_head_miss": "用户测试集 83 双人低头侧脸仍漏（Haar 模型上限，"
+                                       "已写 docs/impl/visual.md，P1 YuNet 建议；本轮不修）",
+            "id_card_back_no_id_document": "身份证反面不触发 id_document（已知，本轮不修）",
+        },
         "pdf_text_layer_pages_skipped_ocr": {
             "min_text_chars": int(m.group(1)) if m else None,
             "ocr_only_when_text_short": "MIN_TEXT_CHARS" in pdf_src,
@@ -1645,6 +2034,15 @@ def write_snapshot(base: dict, path: Path) -> None:
     A("> 说明：DOCX/XLSX 的部分时间戳（created/modified）由 python-docx/openpyxl "
       "重保存时保留，属现状软记录；身份字段（作者/公司/标题等）必须清零，源值不得残留。")
     A("")
+    A("### 3.3 本轮新增实体（人工确认，非误报）")
+    A("")
+    A("- `对账单.xlsx`：13 → 19 实体，+6 均为预期新增 —— **table-cn 列级 2**"
+      "（客户名称列补 1 个人名、账号列整列覆盖 +1 个「表格账号列」）"
+      " + **pipl numeric_cell 4**（纯数值金额列写回 4 个「金额（数值）」AMOUNT）。")
+    A("- 其余 4 个样例实体类型/数量与上一基线完全一致（无减少、无新增）。")
+    A("- 定性：这是新规则包的**预期覆盖增强**，不是误报；回归仍按"
+      "「原有必须命中的不变少」判定，新增实体只做软提示。")
+    A("")
     A("## 4. 规则包基线（HARD）")
     A("")
     A("| 包 | 名称 | 版本 | include | 自有规则 | 含 include 总数 |")
@@ -1725,6 +2123,18 @@ def write_snapshot(base: dict, path: Path) -> None:
     A(f"- `--no-ocr` 启动参数是否接线：{kl.get('no_ocr_flag_wired')}（False=现状未接线）")
     A(f"- 无实体时不可导出（仅清理场景受限）：{kl.get('export_requires_entities')}")
     A(f"- MCP 路径是否保存映射（S6）：{kl.get('mcp_saves_mapping')}（False=现状缺口，后续修复不算回归）")
+    A(f"- PDF 隐藏数据（附件/批注/表单/JS）：默认剥离（meta 键 "
+      f"{kl.get('pdf_hidden_strip', {}).get('meta_keys')}），"
+      f"verify 拦截未清理={kl.get('pdf_hidden_strip', {}).get('verify_intercepts')}，"
+      f"保留开关={kl.get('pdf_hidden_strip', {}).get('keep_option')}")
+    A(f"- 图片 EXIF Orientation 转正：{kl.get('image_exif_orientation')}")
+    A(f"- 前端整图涂黑（rect=[0,0,1,1] → black 实体）："
+      f"{kl.get('frontend_full_image_black')}")
+    gaps = kl.get("known_gaps_not_fixed") or {}
+    if gaps:
+        A("- **已知不修（本轮确认，不当作回归）**：")
+        for k, v in gaps.items():
+            A(f"  - `{k}`：{v}")
     A("- **正射 TIF 中性化（D3 已批准）**：成品物理上仍保留 LOCAL_CS 本地任意 CRS 的 "
       "GeoTIFF 结构标签（34264/34735/34737，GIS 可打开）。红线是"
       "**没有真实世界坐标**：源 ModelPixelScale / ModelTiepoint / EPSG / "

@@ -1,0 +1,19 @@
+{
+  "_note": "虚构数据；table_column docx 夹具：4 列 × 2 行 = 8 个期望实体。",
+  "kind": "docx",
+  "headers": ["姓名", "联系电话", "单位", "邮箱"],
+  "rows": [
+    ["李强", "021-62889017", "某某贸易有限公司", "liqiang@example.com"],
+    ["王小梅", "13611223344", "某单位", "wxm@example.org"]
+  ],
+  "expected": [
+    {"value": "李强", "etype": "PERSON", "rule": "table.person"},
+    {"value": "王小梅", "etype": "PERSON", "rule": "table.person"},
+    {"value": "021-62889017", "etype": "PHONE", "rule": "table.phone"},
+    {"value": "13611223344", "etype": "PHONE", "rule": "table.phone"},
+    {"value": "某某贸易有限公司", "etype": "ORG", "rule": "table.org"},
+    {"value": "某单位", "etype": "ORG", "rule": "table.org"},
+    {"value": "liqiang@example.com", "etype": "EMAIL", "rule": "table.email"},
+    {"value": "wxm@example.org", "etype": "EMAIL", "rule": "table.email"}
+  ]
+}
