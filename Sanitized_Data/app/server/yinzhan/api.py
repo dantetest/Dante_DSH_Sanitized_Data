@@ -157,9 +157,10 @@ def create_job(ctx):
     else:
         raise ApiError("缺少 upload_id 或 path")
     job = MANAGER.create(path, strictness=strictness, pack_ids=packs,
-                         id_card_mode=id_card_mode)
+                         id_card_mode=id_card_mode,
+                         time_blur=bool(body.get("time_blur")))
     return {"job_id": job.id, "name": job.name, "fmt": job.fmt,
-            "id_card_mode": job.id_card_mode}
+            "id_card_mode": job.id_card_mode, "time_blur": job.time_blur}
 
 
 @route("GET", r"/api/jobs")
@@ -205,6 +206,12 @@ def accept_all(ctx, jid):
 def cancel_job(ctx, jid):
     """扫描件 OCR 很慢，用户必须能中途喊停。"""
     return MANAGER.cancel(jid)
+
+
+@route("POST", r"/api/jobs/(?P<jid>[^/]+)/minor-strict")
+def minor_strict(ctx, jid):
+    """P1-A：未成年人严格模式（人工确认后启用）。"""
+    return MANAGER.minor_strict(jid)
 
 
 @route("POST", r"/api/jobs/(?P<jid>[^/]+)/export")

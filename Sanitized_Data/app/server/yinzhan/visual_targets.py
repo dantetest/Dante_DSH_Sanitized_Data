@@ -34,8 +34,11 @@ P0 范围
   不可读时回退低置信候选（note 标 unconfirmed），返回比 OCR 框更宽的整块牌面。
 - ``road_sign`` / ``door_address``：**P1 预留**，当前恒返回空（只注册 kind，
   不产生误报）；实现计划见 docs/impl/visual.md。
-- ``road_sign`` / ``door_address``：**P1 预留**，当前恒返回空（只注册 kind，
-  不产生误报）；实现计划见 docs/impl/visual.md。
+- ``chat_avatar`` / ``chat_name`` / ``chat_group`` / ``chat_time`` / ``chat_input``：
+  聊天截图**逐项**识别（P1-A）。用 OCR 文本框 + 布局线索（状态栏时间、顶部标题、
+  左右头像列、气泡排布、底部输入条）保守判定聊天截图（≥3 条信号 + ≥3 条左右
+  消息行），只返回逐项框、不整屏黑；note 带 ``chat=1;role=...``。
+  PDF/文档页（``fmt`` 非 image）直接跳过；无 OCR 或自定义皮肤宁少报不误报。
 
 测试钩子：``_FACE_CASCADES_OVERRIDE`` 仅供 ``app/tests/test_visual.py`` 注入
 假的级联对象，生产代码不要设置。
@@ -73,6 +76,11 @@ KINDS: tuple[str, ...] = (
     "plate",
     "road_sign",
     "door_address",
+    "chat_avatar",
+    "chat_name",
+    "chat_group",
+    "chat_time",
+    "chat_input",
 )
 
 SCANNER_NAME = "visual_targets"
@@ -1588,6 +1596,437 @@ def _detect_plates(rgb: np.ndarray, ctx: ScanContext,
     ]
 
 
+# ────────────────────────────── 聊天截图逐项识别（P1-A） ──────────────────────────────
+
+#: 聊天截图逐项命中 kind（与 Lead 的 jobs._VISUAL_SPEC 对齐，由 Lead 接）
+CHAT_KINDS: tuple[str, ...] = (
+    "chat_avatar", "chat_name", "chat_group", "chat_time", "chat_input",
+)
+
+_CHAT_TIME_RE = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)")
+_CHAT_DATE_RE = re.compile(
+    r"(?:前天|昨天|今天|星期[一二三四五六日天]|"
+    r"\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日)")
+_CHAT_INPUT_WORDS = ("发送", "按住", "说话", "表情", "语音", "聊天信息")
+
+
+def _chat_text_matches_time(text: str) -> bool:
+    value = _norm_text(text)
+    return bool(value) and bool(_CHAT_TIME_RE.search(value))
+
+
+def _chat_text_matches_date(text: str) -> bool:
+    value = _norm_text(text)
+    return bool(value) and bool(_CHAT_DATE_RE.search(value))
+
+
+def _chat_color_distance(a, b) -> float:
+    return float(np.linalg.norm(np.asarray(a, dtype=np.float32)
+                                - np.asarray(b, dtype=np.float32)))
+
+
+def _chat_page_background(rgb: np.ndarray):
+    """取页面左右边距（避开顶部状态栏/底部输入条）的中位色作为聊天背景估计。"""
+    try:
+        height, width = int(rgb.shape[0]), int(rgb.shape[1])
+        if height < 8 or width < 8:
+            return (255.0, 255.0, 255.0), 0.0
+        y0 = max(0, int(0.10 * height))
+        y1 = max(y0 + 1, int(0.90 * height))
+        strip = max(1, int(0.01 * width))
+        samples = np.concatenate([
+            rgb[y0:y1, 0:strip, :].reshape(-1, 3),
+            rgb[y0:y1, width - strip:width, :].reshape(-1, 3),
+        ]).astype(np.float32)
+        return tuple(np.median(samples, axis=0)), float(samples.std())
+    except Exception:
+        return (255.0, 255.0, 255.0), 0.0
+
+
+def _chat_cluster_rows(text_boxes: Sequence[tuple[str, Box]],
+                       width: int, height: int) -> tuple[list[dict], float]:
+    """把 OCR 文本框按纵向聚成「消息行」，并返回中位字高。"""
+    items = []
+    heights = []
+    for text, rect in text_boxes:
+        value = _norm_text(text)
+        if not value or len(value) > 80:
+            continue
+        x0, y0, x1, y1 = _clamp_box(rect, float(width), float(height))
+        if x1 - x0 < 4 or y1 - y0 < 4:
+            continue
+        items.append({"text": value, "rect": (x0, y0, x1, y1),
+                      "cy": (y0 + y1) / 2.0})
+        heights.append(y1 - y0)
+    if len(items) < 3:
+        return [], 0.0
+    median_h = float(np.median(heights))
+    items.sort(key=lambda item: item["cy"])
+    rows: list[dict] = []
+    for item in items:
+        placed = False
+        for row in reversed(rows):
+            overlap = (min(row["rect"][3], item["rect"][3])
+                       - max(row["rect"][1], item["rect"][1]))
+            if overlap >= min(median_h * 0.35,
+                              (item["rect"][3] - item["rect"][1]) * 0.5):
+                row["texts"].append(item["text"])
+                row["rect"] = (min(row["rect"][0], item["rect"][0]),
+                               min(row["rect"][1], item["rect"][1]),
+                               max(row["rect"][2], item["rect"][2]),
+                               max(row["rect"][3], item["rect"][3]))
+                row["cy"] = (row["rect"][1] + row["rect"][3]) / 2.0
+                placed = True
+                break
+        if not placed:
+            rows.append({"rect": item["rect"], "texts": [item["text"]],
+                         "cy": item["cy"]})
+    # 行过滤：排除状态栏/标题/输入条，以及表格那种整宽长行
+    message_rows: list[dict] = []
+    for row in rows:
+        x0, y0, x1, y1 = row["rect"]
+        row_w = x1 - x0
+        row_h = y1 - y0
+        if not (0.085 * height <= row["cy"] <= 0.90 * height):
+            continue
+        if row_w > 0.78 * width or row_h > 0.20 * height:
+            continue
+        if row_w < 0.03 * width:
+            continue
+        cx = (x0 + x1) / 2.0
+        if cx < 0.48 * width:
+            side = "left"
+        elif cx > 0.52 * width:
+            side = "right"
+        else:
+            continue
+        row["side"] = side
+        row["row_w"] = row_w
+        message_rows.append(row)
+    return message_rows, median_h
+
+
+def _chat_has_alternation(rows: Sequence[dict]) -> bool:
+    transitions = 0
+    for prev, cur in zip(rows, rows[1:]):
+        if prev["side"] != cur["side"]:
+            transitions += 1
+    left = sum(1 for row in rows if row["side"] == "left")
+    right = sum(1 for row in rows if row["side"] == "right")
+    return left >= 1 and right >= 1 and (transitions >= 1 or (left >= 2 and right >= 2))
+
+
+def _chat_detect_avatars(rgb: np.ndarray, rows: Sequence[dict],
+                         width: int, height: int) -> list[Box]:
+    """在左右边距内找与消息行纵向对齐的彩色/高方差小方块（头像）。"""
+    if cv2 is None or not rows:
+        return []
+    try:
+        height_i, width_i = int(height), int(width)
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        rgb_f = rgb.astype(np.int16)
+        maximum = rgb_f.max(axis=2)
+        minimum = rgb_f.min(axis=2)
+        saturation = maximum - minimum
+        bg, _bg_std = _chat_page_background(rgb)
+        color_dist = np.linalg.norm(rgb_f - np.asarray(bg, dtype=np.int16),
+                                    axis=2)
+        mask = ((saturation > 45) | (color_dist > 55)).astype(np.uint8)
+        margin_right = min(width_i, int(round(width * 0.18)))
+        margin_left = margin_right
+        keep = np.zeros_like(mask)
+        keep[:, :margin_left] = mask[:, :margin_left]
+        keep[:, width_i - margin_right:] = mask[:, width_i - margin_right:]
+        keep[int(0.10 * height_i):int(0.90 * height_i), :] = keep[
+            int(0.10 * height_i):int(0.90 * height_i), :]
+        keep[:int(0.10 * height_i), :] = 0
+        keep[int(0.90 * height_i):, :] = 0
+        keep = cv2.morphologyEx(keep, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(
+            keep, 8)
+    except Exception:
+        return []
+    median_row_h = float(np.median([row["rect"][3] - row["rect"][1]
+                                    for row in rows])) if rows else 20.0
+    min_side = max(12.0, 0.025 * min(width, height))
+    max_side = max(min_side + 4.0, 0.16 * width)
+    boxes: list[Box] = []
+    for index in range(1, count):
+        x, y, bw, bh, area = (int(v) for v in stats[index][:5])
+        side = (bw + bh) / 2.0
+        if not (min_side <= side <= max_side):
+            continue
+        if not (0.55 <= bw / float(max(1, bh)) <= 1.80):
+            continue
+        center_x = x + bw / 2.0
+        # 头像必须贴着屏幕左/右边缘（排除气泡边缘被误当头像）
+        if not (center_x <= 0.10 * width or center_x >= 0.90 * width):
+            continue
+        fill = area / float(max(1, bw * bh))
+        if fill < 0.35:
+            continue
+        cy = y + bh / 2.0
+        near_row = any(abs(cy - row["cy"]) <= max(median_row_h * 2.2,
+                                                  0.04 * height)
+                       for row in rows)
+        if not near_row:
+            continue
+        try:
+            patch = rgb[max(0, y):min(height_i, y + bh),
+                        max(0, x):min(width_i, x + bw)]
+            patch_gray = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY)
+            if float(patch_gray.std()) < 5.0 and float(
+                    patch.reshape(-1, 3).std(axis=0).max()) < 10.0:
+                continue
+        except Exception:
+            continue
+        boxes.append((max(0.0, x - 3.0), max(0.0, y - 3.0),
+                      min(float(width), x + bw + 3.0),
+                      min(float(height), y + bh + 3.0)))
+    # 去重
+    kept: list[Box] = []
+    for box in sorted(boxes, key=lambda b: -(b[2] - b[0]) * (b[3] - b[1])):
+        if any(_iou(box, prev) > 0.35 for prev in kept):
+            continue
+        kept.append(box)
+    return kept
+
+
+def _chat_bubble_rows(rgb: np.ndarray, rows: Sequence[dict],
+                      width: int, height: int) -> list[dict]:
+    """判断消息行是否被「气泡底色」包裹（主色占多数且与页面背景有对比）。"""
+    bg, _std = _chat_page_background(rgb)
+    out: list[dict] = []
+    for row in rows:
+        x0, y0, x1, y1 = row["rect"]
+        pad_x = max(5, int((y1 - y0) * 1.2))
+        pad_y = max(3, int((y1 - y0) * 0.5))
+        cx0 = max(0, int(x0 - pad_x)); cy0 = max(0, int(y0 - pad_y))
+        cx1 = min(int(width), int(x1 + pad_x)); cy1 = min(int(height),
+                                                          int(y1 + pad_y))
+        if cx1 - cx0 < 8 or cy1 - cy0 < 6:
+            continue
+        patch = rgb[cy0:cy1, cx0:cx1]
+        try:
+            quantized = (patch.reshape(-1, 3) // 24).astype(np.int32)
+            codes = quantized[:, 0] * 121 + quantized[:, 1] * 11 + quantized[:, 2]
+            values, counts = np.unique(codes, return_counts=True)
+            dominant = values[int(np.argmax(counts))]
+            frac = float(counts.max()) / float(len(codes))
+            dom_rgb = (
+                (dominant // 121) * 24 + 12,
+                ((dominant // 11) % 11) * 24 + 12,
+                (dominant % 11) * 24 + 12,
+            )
+        except Exception:
+            continue
+        if frac < 0.42:
+            continue
+        if _chat_color_distance(dom_rgb, bg) < 14.0:
+            continue
+        out.append(row)
+    return out
+
+
+def _chat_detect_input(rgb: np.ndarray, text_boxes: Sequence[tuple[str, Box]],
+                       width: int, height: int) -> Box | None:
+    """底部输入条：关键词文本 + 底部整行低方差条带。"""
+    if cv2 is None:
+        return None
+    height_i, width_i = int(height), int(width)
+    bottom_band = int(0.84 * height_i)
+    keyword_boxes: list[Box] = []
+    for text, rect in text_boxes:
+        value = _norm_text(text)
+        if not value or not any(word in value for word in _CHAT_INPUT_WORDS):
+            continue
+        if rect[1] >= 0.85 * height:
+            keyword_boxes.append(_clamp_box(rect, float(width), float(height)))
+    run = None
+    try:
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        run_start = None
+        for y in range(bottom_band, height_i):
+            row_std = float(gray[y].std())
+            if row_std < 14.0:
+                if run_start is None:
+                    run_start = y
+            else:
+                if run_start is not None and y - run_start >= max(
+                        6, int(0.012 * height_i)):
+                    run = (run_start, y)
+                run_start = None
+        if run_start is not None and height_i - run_start >= max(
+                6, int(0.012 * height_i)):
+            run = (run_start, height_i)
+    except Exception:
+        run = None
+    candidates = []
+    if keyword_boxes:
+        y0 = min(box[1] for box in keyword_boxes) - 0.012 * height
+        candidates.append((max(0.82 * height, y0), float(height)))
+    if run is not None:
+        candidates.append((float(run[0]), float(height)))
+    for y0, y1 in candidates:
+        y0 = max(0.80 * height, min(y0, height))
+        if (y1 - y0) < 0.025 * height:
+            continue
+        if (y1 - y0) > 0.22 * height:
+            continue
+        return (0.0, float(y0), float(width), float(y1))
+    return None
+
+
+def _detect_chat(rgb: np.ndarray, ctx: ScanContext,
+                 text_boxes: Sequence[tuple[str, Box]]) -> list[ScanHit]:
+    """识别手机聊天截图并返回逐项可涂区域（不整屏黑）。
+
+    保守判定：至少 3 条布局信号 + ≥3 条左右消息行 + 左右都有 + 有头像/气泡。
+    只在 fmt 缺省或 fmt=image 时启用（PDF/文档页直接跳过）。
+    """
+    if not text_boxes or cv2 is None:
+        return []
+    options = getattr(ctx, "options", None) or {}
+    fmt = str(options.get("fmt") or "").strip().lower()
+    if fmt and fmt != "image":
+        return []
+    try:
+        height, width = int(rgb.shape[0]), int(rgb.shape[1])
+    except Exception:
+        return []
+    if width < 120 or height < 120:
+        return []
+    block_count = len(text_boxes)
+    if not (5 <= block_count <= 160):
+        return []
+    ratio = width / float(height)
+    if not (0.18 <= ratio <= 4.5):
+        return []
+    rows, median_h = _chat_cluster_rows(text_boxes, width, height)
+    if len(rows) < 3 or not _chat_has_alternation(rows):
+        return []
+    # 长文本/整宽行占多数 → 表格/文档，不是聊天
+    long_texts = sum(1 for text, _rect in text_boxes
+                     if len(_norm_text(text)) > 60)
+    if long_texts > max(1, block_count // 3):
+        return []
+
+    top_band = 0.09 * height
+    title_candidates = []
+    status_time_boxes: list[Box] = []
+    for text, rect in text_boxes:
+        value = _norm_text(text)
+        if not value:
+            continue
+        x0, y0, x1, y1 = rect
+        cx = (x0 + x1) / 2.0
+        cy = (y0 + y1) / 2.0
+        if y1 <= top_band + 4 and _chat_text_matches_time(value):
+            status_time_boxes.append(rect)
+        if (0.015 * height <= cy <= 0.105 * height
+                and abs(cx - 0.5 * width) <= 0.22 * width
+                and len(value) <= 20
+                and not _chat_text_matches_time(value)):
+            title_candidates.append((abs(cx - 0.5 * width), value, rect))
+    title = min(title_candidates, key=lambda item: item[0]) if title_candidates else None
+    avatars = _chat_detect_avatars(rgb, rows, width, height)
+    bubble_rows = _chat_bubble_rows(rgb, rows, width, height)
+    input_box = _chat_detect_input(rgb, text_boxes, width, height)
+
+    signals = {
+        "status_time": bool(status_time_boxes),
+        "title": title is not None,
+        "avatars": len(avatars) >= 1,
+        "bubbles": len(bubble_rows) >= 2,
+        "input": input_box is not None,
+    }
+    score = sum(1 for value in signals.values() if value)
+    # 保守门槛：≥3 条布局信号 + 左右消息行 + 至少 1 个头像。
+    # 气泡色块在浅色/自定义主题下可能因背景对比不足识别不到（实测浅色聊天图
+    # 真实 OCR 下 avatars/rows 都成立但 bubbles=[]），此时允许用「底部输入条」
+    # 兜底，避免整类浅色聊天截图漏检；仍要求头像 + 行交替，防普通截图误报。
+    if score < 3 or not signals["avatars"]:
+        return []
+    if not signals["bubbles"] and not signals["input"]:
+        return []
+
+    hits: list[ScanHit] = []
+    page_area = float(width) * float(height) or 1.0
+
+    def _emit(kind: str, box: Box, conf: float, note: str) -> None:
+        rect = _clamp_box(_expand_box(box, 0.02, float(width), float(height)),
+                          float(width), float(height))
+        area = max(0.0, rect[2] - rect[0]) * max(0.0, rect[3] - rect[1])
+        if area <= 0 or area > page_area * 0.35:      # 聊天逐项框，绝不能是整屏
+            return
+        hits.append(ScanHit(kind=kind, rect=rect, confidence=round(conf, 3),
+                            note=f"engine=layout;chat=1;{note}"))
+
+    # 头像
+    for box in avatars:
+        side = "left" if (box[0] + box[2]) / 2.0 < width * 0.5 else "right"
+        _emit("chat_avatar", box, 0.72, f"role=avatar;side={side}")
+
+    # 顶部标题：单聊=联系人昵称，群聊=群名称
+    group_cue = False
+    if title is not None:
+        title_text = title[1]
+        group_cue = ("群" in title_text
+                     or bool(re.search(r"[（(]\d+[）)]", title_text))
+                     or "成员" in title_text or "公告" in title_text)
+        _emit("chat_group" if group_cue else "chat_name",
+              title[2], 0.82,
+              "role=group;src=title" if group_cue else "role=name;src=title")
+
+    # 群聊里的发送者昵称：左气泡行上方的小字
+    if group_cue:
+        left_rows = [row for row in rows if row["side"] == "left"]
+        for row in left_rows:
+            row_top = row["rect"][1]
+            for text, rect in text_boxes:
+                value = _norm_text(text)
+                if not value or len(value) > 12:
+                    continue
+                if _chat_text_matches_time(value) or _chat_text_matches_date(value):
+                    continue
+                cy = (rect[1] + rect[3]) / 2.0
+                if not (row_top - max(median_h * 2.6, 0.05 * height) <= cy
+                        < row_top):
+                    continue
+                if abs(rect[0] - row["rect"][0]) > 0.10 * width:
+                    continue
+                _emit("chat_name", rect, 0.70, "role=name;src=sender")
+                break
+
+    # 时间：状态栏时间 + 居中消息时间戳/日期
+    for rect in status_time_boxes[:2]:
+        _emit("chat_time", rect, 0.78, "role=time;src=status")
+    for text, rect in text_boxes:
+        value = _norm_text(text)
+        if not value:
+            continue
+        cx = (rect[0] + rect[2]) / 2.0
+        cy = (rect[1] + rect[3]) / 2.0
+        if not (0.085 * height <= cy <= 0.90 * height):
+            continue
+        if abs(cx - 0.5 * width) <= 0.16 * width and (
+                _chat_text_matches_time(value) or _chat_text_matches_date(value)):
+            _emit("chat_time", rect, 0.75, "role=time;src=msg")
+
+    # 底部输入条整块
+    if input_box is not None:
+        _emit("chat_input", input_box, 0.75, "role=input;src=bar")
+
+    # 同类去重
+    deduped: list[ScanHit] = []
+    for hit in hits:
+        if any(hit.kind == prev.kind and _iou(hit.rect, prev.rect) > 0.45
+               for prev in deduped):
+            continue
+        deduped.append(hit)
+    return deduped
+
+
 # ────────────────────────────── 路牌 / 门址（P1 预留） ──────────────────────────────
 
 def _detect_road_sign(rgb: np.ndarray, ctx: ScanContext,
@@ -1650,6 +2089,12 @@ def scan(image_rgb: Any, ctx: ScanContext) -> list[ScanHit]:
         text_boxes = []
         ctx.warnings.append("visual_targets: OCR 文本框不可读")
 
+    if text_boxes and _env_bool("YINZHAN_SCAN_CHAT", True):
+        try:
+            hits.extend(_detect_chat(image_rgb, ctx, text_boxes))
+        except Exception as exc:      # 单类失败不能带崩其它目标
+            ctx.warnings.append(f"visual_targets:chat 失败：{exc}")
+
     if text_boxes and _env_bool("YINZHAN_SCAN_ID_DOC", True):
         try:
             hits.extend(_detect_id_document(image_rgb, ctx, text_boxes))
@@ -1701,6 +2146,7 @@ mediascan.register_scanner(SCANNER_NAME, scan, kinds=KINDS, priority=60)
 __all__ = [
     "KINDS", "SCANNER_NAME", "scan", "iter_text_boxes",
     "_detect_faces", "_detect_id_document", "_detect_plates",
+    "_detect_chat", "CHAT_KINDS",
     "_detect_road_sign", "_detect_door_address",
     "_detect_id_card_front", "_detect_id_card_back", "_detect_id_card_fallback",
     "_ID_FIELD_TEMPLATES", "_ID_BACK_FIELD_TEMPLATES",

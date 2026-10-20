@@ -42,12 +42,17 @@ const TYPE_CN = {
   ID_PHOTO: '证件头像', ID_NAME: '证件姓名', ID_NUMBER: '证件号码', ID_ADDRESS: '证件住址',
   // 身份证反面（A 方案扩展）：只遮签发机关 + 有效期限，国徽/标题保留
   ID_AUTHORITY: '证件签发机关', ID_VALIDITY: '证件有效期',
+  // P1-A 聊天 / 招牌类（图片扫描器）
+  CHAT_AVATAR: '聊天头像', CHAT_NAME: '聊天昵称', CHAT_GROUP: '群名称',
+  CHAT_TIME: '聊天时间', CHAT_INPUT: '输入框',
+  SHOP_SIGN: '店招/门头', ORG_PLAQUE: '单位铭牌',
   OTHER: '其他敏感',
 };
 const TYPE_ORDER = [
   'PERSON', 'ID_CARD', 'ADDRESS', 'PHONE', 'ORG', 'CASE_NO', 'AMOUNT', 'BANK', 'LICENSE', 'EMAIL', 'DATE', 'IP',
   'FACE', 'ID_DOCUMENT', 'ID_PHOTO', 'ID_NAME', 'ID_NUMBER', 'ID_ADDRESS', 'ID_AUTHORITY', 'ID_VALIDITY',
-  'PLATE', 'ROAD_SIGN', 'DOOR_ADDRESS',
+  'CHAT_AVATAR', 'CHAT_NAME', 'CHAT_GROUP', 'CHAT_TIME', 'CHAT_INPUT',
+  'PLATE', 'ROAD_SIGN', 'DOOR_ADDRESS', 'SHOP_SIGN', 'ORG_PLAQUE',
   'SEAL', 'SIGNATURE', 'SIG_BLOCK', 'HANDWRITING', 'QRCODE', 'BARCODE',
   'OTHER',
 ];
@@ -63,6 +68,10 @@ const TYPE_COLOR = {
   ID_PHOTO: '#8E4A3C', ID_NAME: '#5A4A3F', ID_NUMBER: '#2F4F66', ID_ADDRESS: '#7A6A4A',
   // 身份证反面两字段（A 方案扩展）
   ID_AUTHORITY: '#46604A', ID_VALIDITY: '#5C4A6B',
+  // P1-A 聊天类（同族 muted 色）与招牌/铭牌类（与路牌/门牌同组）
+  CHAT_AVATAR: '#7A5A6B', CHAT_NAME: '#6B5A7A', CHAT_GROUP: '#5A4A6B',
+  CHAT_TIME: '#4A6B62', CHAT_INPUT: '#7A6A5A',
+  SHOP_SIGN: '#8A5A2F', ORG_PLAQUE: '#5A6B5A',
   OTHER: '#8C8272',
 };
 const STRICT_CN = { loose: '宽松', standard: '标准', strict: '最严' };
@@ -154,6 +163,9 @@ const state = {
   jobId: null,
   strictness: 'standard',
   idCardMode: 'fields',
+  timeBlur: false,
+  minorDismissedJobs: new Set(),
+  bannerBusy: false,
   mode: 'sur',
   selectMode: false,
   busy: false,
@@ -342,6 +354,179 @@ function setIdCardMode(value) {
   }
 }
 
+/* ─────────────── 精确时间模糊化（P1-A，投放台开关） ───────────────
+   只影响任务创建（POST /api/jobs 的 time_blur，默认 false）；已创建的任务不自动
+   重跑。文案：仅影响精确时刻（如 14:32:05），日期/业务时间是否保留由后端按策略。 */
+function buildTimeBlurBlock(compact) {
+  const wrap = mk('div', 'blurset' + (compact ? ' compact' : ''));
+  const label = mk('label', 'blurline');
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.id = compact ? 'timeBlurHead' : 'timeBlurToggle';
+  box.checked = !!state.timeBlur;
+  box.setAttribute('aria-label', compact ? '精确时间模糊化' : '精确时间模糊化（默认关）');
+  box.addEventListener('change', () => setTimeBlur(box.checked));
+  label.appendChild(box);
+  label.appendChild(mk('span', 'blur-title', compact ? '时间模糊' : '精确时间模糊化（默认关）'));
+  wrap.appendChild(label);
+  if (compact) {
+    ui.timeBlurJobHint = mk('span', 'blur-job', '');
+    wrap.appendChild(ui.timeBlurJobHint);
+  } else {
+    wrap.appendChild(mk('div', 'blur-hint',
+      '仅影响精确时刻（如 14:32:05）；日期/业务时间是否保留由后端按策略。'));
+  }
+  return wrap;
+}
+function mountTimeBlur() {
+  const dropWrap = ui.dropzone && ui.dropzone.closest ? ui.dropzone.closest('.drop-wrap') : null;
+  if (dropWrap && !dropWrap.querySelector('.blurset')) {
+    const block = buildTimeBlurBlock(false);
+    const idBlock = dropWrap.querySelector('.idmode');
+    if (idBlock && idBlock.parentNode === dropWrap) idBlock.insertAdjacentElement('afterend', block);
+    else dropWrap.appendChild(block);
+    ui.timeBlurDrop = block;
+  }
+  const strict = ui.strictSel && ui.strictSel.closest ? ui.strictSel.closest('.strict') : null;
+  if (strict && strict.parentNode && !strict.parentNode.querySelector('.blurset.compact')) {
+    const block = buildTimeBlurBlock(true);
+    strict.parentNode.insertBefore(block, strict);
+    ui.timeBlurHead = block;
+  }
+  syncTimeBlurUI();
+}
+function syncTimeBlurUI() {
+  $$('.blurset input[type="checkbox"]').forEach((box) => { box.checked = !!state.timeBlur; });
+  if (ui.timeBlurJobHint) {
+    const job = state.jobId && state.job;
+    ui.timeBlurJobHint.textContent = job ? ('本次任务：' + (job.time_blur ? '开' : '关')) : '';
+    ui.timeBlurJobHint.title = '改动开关只影响下一次投放';
+  }
+}
+function setTimeBlur(on) {
+  const next = on === true;
+  if (next === state.timeBlur) return;
+  state.timeBlur = next;
+  syncTimeBlurUI();
+  if (state.jobId) {
+    toast('精确时间模糊化已' + (next ? '开启' : '关闭') +
+      '。已识别的任务不会重跑，重新投放文件后生效。', null, 7000);
+  }
+}
+
+/* ─────────────── 安全提示条：未成年人 / 组合识别风险（P1-A） ───────────────
+   数据来自 job 快照：minor_detected / minor_strict / combination_risk。
+   未成年人：<14 岁时提示启用「严格模式（整卡 + 全部涂黑）」→ POST /minor-strict；
+   组合风险：≥2 类准标识符时黄色提示 + 复用「整图涂黑」按钮。 */
+function ensureSafetyBanners() {
+  if (ui.safetyBanners) return ui.safetyBanners;
+  const screen = document.getElementById('screen-console');
+  if (!screen) return null;
+  const wrap = mk('div', 'safety-banners');
+  wrap.id = 'safetyBanners';
+
+  const minor = mk('div', 'alertbar minor');
+  minor.id = 'minorBanner';
+  ui.minorText = mk('span', 'ab-text', '');
+  minor.appendChild(ui.minorText);
+  ui.minorAct = mk('button', 'ab-btn', '启用严格模式（整卡+全部涂黑）');
+  ui.minorAct.type = 'button';
+  ui.minorAct.addEventListener('click', enableMinorStrict);
+  minor.appendChild(ui.minorAct);
+  ui.minorClose = mk('button', 'ab-close', '本次不启用');
+  ui.minorClose.type = 'button';
+  ui.minorClose.title = '本次会话先收起这条提示（不会启用严格模式）';
+  ui.minorClose.addEventListener('click', () => {
+    if (state.jobId) state.minorDismissedJobs.add(state.jobId);
+    renderSafetyBanners();
+  });
+  minor.appendChild(ui.minorClose);
+
+  const risk = mk('div', 'alertbar risk');
+  risk.id = 'riskBanner';
+  ui.riskText = mk('span', 'ab-text', '');
+  risk.appendChild(ui.riskText);
+  ui.riskAct = mk('button', 'ab-btn ghosty', '整图涂黑');
+  ui.riskAct.type = 'button';
+  ui.riskAct.addEventListener('click', onCombinationWholePage);
+  risk.appendChild(ui.riskAct);
+
+  wrap.appendChild(minor);
+  wrap.appendChild(risk);
+  const head = screen.querySelector('.console-head');
+  if (head && head.parentNode === screen) head.insertAdjacentElement('afterend', wrap);
+  else screen.insertBefore(wrap, screen.firstChild);
+  ui.safetyBanners = wrap;
+  ui.minorBanner = minor;
+  ui.riskBanner = risk;
+  renderSafetyBanners();
+  return wrap;
+}
+function riskCategoryLabel(value) {
+  const key = String(value == null ? '' : value);
+  return TYPE_CN[key] || key;
+}
+function renderSafetyBanners() {
+  if (!ui.safetyBanners || !ui.minorBanner || !ui.riskBanner) return;
+  const job = state.job;
+  // 未成年人提示（未启用 + 未被本次会话收起）
+  const minorFlag = !!(state.jobId && job && job.minor_detected);
+  const strictOn = !!(job && job.minor_strict);
+  const dismissed = !!(state.jobId && state.minorDismissedJobs.has(state.jobId));
+  const showMinor = minorFlag && !dismissed;
+  ui.minorBanner.hidden = !showMinor;
+  if (showMinor) {
+    ui.minorBanner.classList.toggle('on', strictOn);
+    ui.minorText.textContent = strictOn
+      ? '已启用未成年人严格模式（整卡 + 全部涂黑）。'
+      : '检测到未满14周岁信息，建议启用未成年人严格模式。';
+    ui.minorAct.textContent = strictOn ? '已启用' : '启用严格模式（整卡+全部涂黑）';
+    ui.minorAct.disabled = strictOn;
+    ui.minorClose.hidden = strictOn;
+  }
+  // 组合识别风险（≥2 类准标识符）
+  const cr = job && job.combination_risk;
+  const cats = (cr && Array.isArray(cr.categories) ? cr.categories : [])
+    .map(riskCategoryLabel).filter((x) => x);
+  const showRisk = !!(state.jobId && cr && cats.length >= 2);
+  ui.riskBanner.hidden = !showRisk;
+  if (showRisk) {
+    ui.riskText.textContent = '本媒体同时包含 ' + cats.join(' / ') +
+      ' 类准标识符，存在组合识别风险。';
+  }
+}
+async function enableMinorStrict() {
+  if (!state.jobId || state.bannerBusy) return;
+  state.bannerBusy = true;
+  const btn = ui.minorAct;
+  const old = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '正在启用…'; }
+  try {
+    const res = await api('/api/jobs/' + jobPath() + '/minor-strict', { method: 'POST' });
+    if (state.job) {
+      state.job.minor_strict = true;
+      if (res && res.minor_detected != null) state.job.minor_detected = !!res.minor_detected;
+      if (res && res.minor_strict != null) state.job.minor_strict = !!res.minor_strict;
+    }
+    toast('已启用未成年人严格模式：整卡与全部内容都会涂黑。');
+    await refreshLive();
+  } catch (err) {
+    toast((err && err.human) || '没能启用严格模式，请再试一次。');
+  } finally {
+    state.bannerBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+    renderSafetyBanners();
+  }
+}
+function onCombinationWholePage() {
+  if (!state.jobId || state.busy) return;
+  if (!wholePageAvailable()) {
+    toast('这个文件是文字排版格式，整图涂黑用不上；请用「框选补漏」标出要隐去的文字。');
+    return;
+  }
+  onWholePageClick();
+}
+
 /* ─────────────── ① 投放台 ─────────────── */
 function bindDropzone() {
   const openPicker = () => ui.fileInput.click();
@@ -409,6 +594,7 @@ async function startFlow(file) {
   logScan('本机处理，文件不出这台机器。');
   logScan('证件脱敏：' + ID_MODE_CN[normalizeIdCardMode(state.idCardMode)] +
     '（' + ID_MODE_DESC[normalizeIdCardMode(state.idCardMode)] + '）');
+  logScan('精确时间模糊化：' + (state.timeBlur ? '开（仅精确时刻）' : '关（默认，保留原始时刻）'));
   try {
     setScanStage('正在接收文件…');
     const headers = { 'X-Filename': encodeURIComponent(file.name || ''), 'Content-Type': file.type || 'application/octet-stream' };
@@ -433,6 +619,7 @@ async function createJob() {
       upload_id: state.uploadId,
       strictness: state.strictness,
       id_card_mode: idCardMode,
+      time_blur: state.timeBlur === true,
     }),
   });
   if (!res || !res.job_id) throw new AppError('bad_response', '本机没有给出任务编号，请重新投一次。');
@@ -718,6 +905,8 @@ function updateConsoleHead() {
   ui.docName.textContent = state.fileName || (state.job && state.job.name) || '未命名文件';
   syncWholePageButton();
   syncIdCardModeUI();
+  syncTimeBlurUI();
+  renderSafetyBanners();
 }
 function updatePager() {
   ui.pageLabel.textContent = (state.page + 1) + ' / ' + state.pages;
@@ -1936,6 +2125,8 @@ function init() {
   cacheDom();
   mountWholePageButton();
   mountIdCardMode();
+  mountTimeBlur();
+  ensureSafetyBanners();
   state.cardTpl = { ai: ui.cardAi.innerHTML, human: ui.cardHuman.innerHTML };
   state.docNo = makeDocNo();
   ui.docNo.textContent = state.docNo;

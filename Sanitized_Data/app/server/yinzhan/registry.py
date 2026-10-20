@@ -113,7 +113,7 @@ _PLUGIN_FALLBACK = {
 # 顶层扫描器模块：导入即向 mediascan 注册（人脸/码类等页面图像目标）。
 # 不放在 parsers/detectors 包内，是因为它们不属于「解析器/文本检测器」，
 # 而是供解析器调用的图像扫描扩展。
-_SCANNER_MODULES = ("yinzhan.barcodes", "yinzhan.visual_targets")
+_SCANNER_MODULES = ("yinzhan.barcodes", "yinzhan.visual_targets", "yinzhan.sign_targets")
 
 
 def load_plugins() -> list[str]:

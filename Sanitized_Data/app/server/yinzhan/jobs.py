@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import shutil
 import threading
 import time
 import traceback
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from . import audit, pipeline, registry, vault
@@ -86,6 +88,12 @@ class Job:
     strictness: str = "standard"
     # 证件脱敏档位：fields=只遮头像/姓名/身份证号/住址（默认）；whole=整卡涂黑
     id_card_mode: str = "fields"
+    # 精确时间模糊化（P1-A，默认关）：只把「日期+时刻」里的时刻替换成时段，日期保留
+    time_blur: bool = False
+    # 未成年人（<14 由身份证生日推断）：只提示，人工确认后走 minor-strict
+    minor_detected: bool = False
+    minor_strict: bool = False
+    combination_risk: dict = field(default_factory=dict)
     pack_ids: list[str] | None = None
     stage: str = "queued"          # queued|parsing|detecting|ready|exporting|done|error
     progress: float = 0.0
@@ -141,6 +149,10 @@ class Job:
                 "pack": self.pack_label,
                 "strictness": self.strictness,
                 "id_card_mode": self.id_card_mode,
+                "time_blur": self.time_blur,
+                "minor_detected": self.minor_detected,
+                "minor_strict": self.minor_strict,
+                "combination_risk": self.combination_risk,
                 "exports": {k: {kk: vv for kk, vv in v.items() if kk != "bytes"}
                             for k, v in self.exports.items()},
             }
@@ -155,7 +167,8 @@ class JobManager:
     # ── 创建 ──
     def create(self, path: Path, strictness: str = "standard",
                pack_ids: list[str] | None = None,
-               id_card_mode: str = "fields") -> Job:
+               id_card_mode: str = "fields",
+               time_blur: bool = False) -> Job:
         parser = registry.find_parser(path)
         if parser is None:
             raise YinzhanError(f"暂不支持这种文件：{path.suffix or '无扩展名'}")
@@ -164,7 +177,7 @@ class JobManager:
         job = Job(
             id=job_id, name=_display_name(path.name), path=str(path),
             fmt=parser.format_id, strictness=strictness, pack_ids=pack_ids,
-            id_card_mode=mode, parser=parser,
+            id_card_mode=mode, time_blur=bool(time_blur), parser=parser,
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -291,6 +304,32 @@ class JobManager:
             if low_conf:
                 job.entities.extend(low_conf)
 
+            # P1-A：精确时间模糊化（默认关）、未成年人推断、组合风险提示
+            try:
+                if job.time_blur:
+                    _apply_time_blur(job)
+            except Exception as exc:
+                job.warnings.append(f"精确时间模糊化跳过：{exc}")
+            try:
+                minor_age = _find_minor_age(doc)
+                if minor_age is not None:
+                    job.minor_detected = True
+                    job.warnings.append(
+                        "检测到未满十四周岁信息（由身份证号生日推断），"
+                        "建议启用「未成年人严格模式」（证件整卡+全部涂黑）")
+            except Exception as exc:
+                job.warnings.append(f"未成年人推断跳过：{exc}")
+            try:
+                job.combination_risk = _combination_risk(job)
+                if job.combination_risk:
+                    cats = "、".join(job.combination_risk["categories"])
+                    job.warnings.append(
+                        f"组合可识别风险：本媒体同时包含 {cats} 等 "
+                        f"{len(job.combination_risk['categories'])} 类准标识符，"
+                        "建议对场景照片整图涂黑或人工复核")
+            except Exception as exc:
+                job.warnings.append(f"组合风险统计跳过：{exc}")
+
             job.progress = 1.0
             job.note = ""
             job.stage = "ready"
@@ -309,6 +348,41 @@ class JobManager:
             job.cancel_flag = True
             job.note = "正在停止…"
         return {"job_id": job.id, "cancelling": True}
+
+    def minor_strict(self, job_id: str) -> dict:
+        """P1-A：未成年人严格模式（人工确认后）：证件整卡 + 全部实体强制涂黑。"""
+        job = self.get(job_id)
+        with job.lock:
+            if job.doc is None or job.stage not in ("ready", "exporting"):
+                raise YinzhanError("任务还没准备好")
+            if not job.minor_detected:
+                raise YinzhanError("未检测到未满十四周岁信息，不能启用未成年人严格模式")
+            job.minor_strict = True
+            job.id_card_mode = "whole"
+            # 清掉旧的视觉证件字段/整卡实体，统一改为整卡；文字 ID_CARD 保留并强制涂黑
+            job.entities = [
+                e for e in job.entities
+                if not (e.origin == "visual" and e.etype in _ID_VISUAL_ETYPES)
+            ]
+            for vm in (getattr(job.doc, "visual_marks", None) or []):
+                if getattr(vm, "kind", "") == "id_document":
+                    job.entities.append(Entity(
+                        id=Entity.new_id(), etype="ID_DOCUMENT", label="证件", value="",
+                        spans=[Span(rect=vm.rect, page=getattr(vm, "page", 0))],
+                        level="L3", confidence=getattr(vm, "confidence", 0.9),
+                        origin="visual", status="accepted",
+                        decision=Decision(strategy="black", black=True, replacement=None),
+                    ))
+            # 严格模式不可换名还原：全部实体强制涂黑
+            for entity in job.entities:
+                if entity.status == "rejected":
+                    continue
+                entity.status = "accepted"
+                entity.decision = Decision(strategy="black", black=True, replacement=None)
+            job._preview_dirty = True
+            job.warnings.append(
+                "已启用未成年人严格模式：证件整卡涂黑 + 全部实体强制涂黑（不可换名还原）")
+            return job.snapshot()
 
     @staticmethod
     def _tick(job: Job, stop: threading.Event) -> None:
@@ -585,6 +659,10 @@ _TYPE_LABEL = {
     "ID_NUMBER": "证件号码", "ID_ADDRESS": "证件住址",
     "ID_AUTHORITY": "证件签发机关", "ID_VALIDITY": "证件有效期",
     "ROAD_SIGN": "路牌", "DOOR_ADDRESS": "门牌/门址",
+    "SHOP_SIGN": "店招/门头", "ORG_PLAQUE": "单位铭牌",
+    "CHAT_AVATAR": "聊天头像", "CHAT_NAME": "聊天昵称",
+    "CHAT_GROUP": "群名称", "CHAT_TIME": "聊天时间",
+    "CHAT_INPUT": "聊天输入框",
     "QRCODE": "二维码", "BARCODE": "条形码",
 }
 
@@ -608,6 +686,14 @@ _VISUAL_SPEC = {
     "plate":       ("PLATE", "车牌", "pending", "L2"),
     "road_sign":   ("ROAD_SIGN", "路牌", "pending", "L2"),
     "door_address": ("DOOR_ADDRESS", "门牌/门址", "pending", "L2"),
+    "shop_sign":   ("SHOP_SIGN", "店招/门头", "pending", "L2"),
+    "org_plaque":  ("ORG_PLAQUE", "单位铭牌", "pending", "L2"),
+    # 聊天截图逐项（P1-A）：头像/昵称/群名/时间/输入框
+    "chat_avatar": ("CHAT_AVATAR", "聊天头像", "accepted", "L3"),
+    "chat_name":   ("CHAT_NAME", "聊天昵称", "accepted", "L3"),
+    "chat_group":  ("CHAT_GROUP", "群名称", "accepted", "L3"),
+    "chat_time":   ("CHAT_TIME", "聊天时间", "accepted", "L2"),
+    "chat_input":  ("CHAT_INPUT", "聊天输入框", "accepted", "L3"),
     "qrcode":      ("QRCODE", "二维码", "accepted", "L3"),
     "barcode":     ("BARCODE", "条形码", "accepted", "L2"),
 }
@@ -651,6 +737,132 @@ def _low_confidence_entities(doc: Document, entities: list[Entity]) -> list[Enti
 
 _ID_FIELD_KINDS = frozenset({"id_photo", "id_name", "id_number", "id_address",
                              "id_authority", "id_validity"})
+
+# 精确时间：只认「完整日期 + 时刻」，只模糊时刻；日期保留（P1-A，默认关）
+_TIME_BLUR_RE = re.compile(
+    r"(?<!\d)(?P<date>(?:19|20)\d{2}\s*[年./-]\s*\d{1,2}\s*[月./-]\s*\d{1,2}\s*日?)"
+    r"[ ,，]*(?P<time>(?:[上下]午\s*)?\d{1,2}\s*[:：]\s*\d{2}(?::\d{2})?)(?!\d)")
+# 身份证号（18 位）用于未成年人推断；校验函数在解析时动态导入
+_ID18_RE = re.compile(
+    r"(?<!\d)[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])"
+    r"(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?!\d)")
+
+_ID_ETYPES = frozenset({
+    "ID_CARD", "ID_DOCUMENT", "ID_PHOTO", "ID_NAME", "ID_NUMBER",
+    "ID_ADDRESS", "ID_AUTHORITY", "ID_VALIDITY",
+})
+# 严格模式只替换「视觉证件框」，文字类 ID_CARD 实体必须保留（强制涂黑）
+_ID_VISUAL_ETYPES = frozenset({
+    "ID_DOCUMENT", "ID_PHOTO", "ID_NAME", "ID_NUMBER",
+    "ID_ADDRESS", "ID_AUTHORITY", "ID_VALIDITY",
+})
+
+
+def _time_period(text: str) -> str:
+    """把具体时刻替换成时段；保留上午/下午前缀语义。"""
+    if "上午" in text:
+        return "上午"
+    if "下午" in text:
+        return "下午"
+    if "晚上" in text:
+        return "晚上"
+    match = re.search(r"\d{1,2}", text)
+    try:
+        hour = int(match.group(0)) if match else 12
+    except ValueError:
+        hour = 12
+    if hour < 6:
+        return "凌晨"
+    if hour < 12:
+        return "上午"
+    if hour < 14:
+        return "中午"
+    if hour < 18:
+        return "下午"
+    return "晚上"
+
+
+def _apply_time_blur(job: "Job") -> None:
+    """P1-A：把「日期+时刻」里的时刻替换成时段，日期保留。"""
+    doc = job.doc
+    if doc is None or not job.time_blur:
+        return
+    added = 0
+    seen: set[tuple[str, int, int]] = set()
+    for page in doc.pages:
+        for block in page.blocks:
+            text = block.text or ""
+            if not text:
+                continue
+            for match in _TIME_BLUR_RE.finditer(text):
+                start, end = match.span("time")
+                key = (block.id, start, end)
+                if key in seen:
+                    continue
+                seen.add(key)
+                raw = match.group("time").strip()
+                replacement = _time_period(raw)
+                job.entities.append(Entity(
+                    id=Entity.new_id(), etype="TIME", label="精确时间",
+                    value=raw, spans=[Span(block_id=block.id, start=start, end=end)],
+                    level="L2", confidence=0.9, origin="rule", status="accepted",
+                    decision=Decision(strategy="surrogate", replacement=replacement),
+                ))
+                added += 1
+    if added:
+        job.warnings.append(f"精确时间模糊化 {added} 处（日期保留，仅时刻→时段）")
+
+
+def _find_minor_age(doc: Document) -> int | None:
+    """P1-A：从文档里的身份证号推断年龄，只返回 <14 的年龄（不做人脸年龄估计）。"""
+    try:
+        from .detectors.regex_det import cn_id_checksum
+    except Exception:
+        return None
+    today = date.today()
+    for page in doc.pages:
+        for block in page.blocks:
+            for match in _ID18_RE.finditer(block.text or ""):
+                value = match.group(0)
+                try:
+                    if not cn_id_checksum(value):
+                        continue
+                    birth = date(int(value[6:10]), int(value[10:12]), int(value[12:14]))
+                except Exception:
+                    continue
+                age = today.year - birth.year - (
+                    (today.month, today.day) < (birth.month, birth.day))
+                if 0 <= age < 14:
+                    return age
+    return None
+
+
+_COMBINATION_CATEGORIES: dict[str, str] = {
+    "ADDRESS": "位置", "DOOR_ADDRESS": "位置",
+    "ID_CARD": "证件", "ID_DOCUMENT": "证件", "ID_PHOTO": "证件",
+    "ID_NAME": "证件", "ID_NUMBER": "证件", "ID_ADDRESS": "证件",
+    "ID_AUTHORITY": "证件", "ID_VALIDITY": "证件",
+    "FACE": "人脸",
+    "PLATE": "车辆",
+    "PERSON": "联系人", "PHONE": "联系人", "EMAIL": "联系人",
+    "SOCIAL_ID": "联系人", "CHAT_NAME": "联系人", "CHAT_AVATAR": "联系人",
+    "TIME": "时间", "CHAT_TIME": "时间",
+}
+
+
+def _combination_risk(job: "Job") -> dict:
+    """P1-A：统计准标识符类别；≥2 类提示组合可识别风险（只提示，不自动改）。"""
+    cats: set[str] = set()
+    for entity in job.entities:
+        if entity.status == "rejected":
+            continue
+        cat = _COMBINATION_CATEGORIES.get(entity.etype)
+        if cat:
+            cats.add(cat)
+    if len(cats) >= 2:
+        return {"level": "high" if len(cats) >= 3 else "medium",
+                "categories": sorted(cats)}
+    return {}
 
 
 def _drop_text_entities_in_id_cards(job: "Job", doc: Document) -> None:

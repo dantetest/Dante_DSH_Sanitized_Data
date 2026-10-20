@@ -462,7 +462,8 @@ class ImageParser(registry.Parser):
                 text_boxes = [{"text": b.text, "rect": b.bbox}
                               for b in page.blocks if b.bbox]
                 marks, scan_warns = mediascan.analyze(
-                    rgb, page=0, dpi=0.0, options={"text_boxes": text_boxes})
+                    rgb, page=0, dpi=0.0,
+                    options={"text_boxes": text_boxes, "fmt": "image"})
                 doc.visual_marks.extend(mediascan.to_visual_marks(marks))
                 doc.warnings.extend(scan_warns)
         except Exception as exc:      # 扩展扫描失败不能带崩主流程

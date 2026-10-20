@@ -280,7 +280,7 @@ def _scan_marks(image_rgb: Image.Image | np.ndarray, page_index: int,
         if 0 <= page_index < len(doc.pages):
             text_boxes = [{"text": b.text, "rect": b.bbox}
                           for b in doc.pages[page_index].blocks if b.bbox]
-        options: dict[str, Any] = {"text_boxes": text_boxes}
+        options: dict[str, Any] = {"text_boxes": text_boxes, "fmt": "tiff"}
         if scale and abs(scale - 1.0) > 1e-9:
             options["downsampled"] = True
             options["preview_scale"] = float(scale)

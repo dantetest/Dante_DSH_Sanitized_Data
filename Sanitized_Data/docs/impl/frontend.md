@@ -428,4 +428,88 @@
 - **二维码等其它实体**：反面样例上的二维码仍按原逻辑自动涂黑（检测器行为，本轮不涉及）。
 - **回归门禁现状**：本轮 `regression.py` 为 **193/195 硬检查通过**；2 项红是 **qa 旧断言过期**——`app/tests/regression.py:864-868` 仍按「反面 fields 档不遮字段、只提示切整卡」的旧行为断言，与用户新批准的 A 方案扩展（反面遮签发机关/有效期）相反；实测返回值 `{"ID_AUTHORITY": 1, "ID_VALIDITY": 1}` 恰好证明新行为已生效。需 qa 更新该断言与基线（regression.py / qa_common.py / baseline.json / SNAPSHOT.md / README 的 known_gaps 文案）后复跑；前端本身已按新需求通过 CDP 实测与 `node --check`。
 
+---
+
+# 第五轮（P1-A）：聊天/招牌类型展示 + 未成年人提示 + 组合风险 + 时间模糊开关
+
+> 状态：已实现 · 2026-10-20 · 负责人：designer-icon（task-29）
+> 背景：P1-A 三块新能力——①聊天截图/招牌类新实体类型；②未成年人（<14）严格模式提示；③≥2 类准标识符的组合识别风险提示；④精确时间模糊化开关。
+> 代码：`app/web/app.js`、`app/web/style.css`、`docs/impl/frontend.md`；HTML/后端/规则未改；未 push。
+
+## 11.1 改动点
+
+| 位置 | 改动 |
+|---|---|
+| `TYPE_CN / TYPE_ORDER / TYPE_COLOR` | 新增 `CHAT_AVATAR 聊天头像 / CHAT_NAME 聊天昵称 / CHAT_GROUP 群名称 / CHAT_TIME 聊天时间 / CHAT_INPUT 输入框`（聊天同组 muted 色，排在证件字段后）、`SHOP_SIGN 店招/门头 / ORG_PLAQUE 单位铭牌`（与路牌/门牌同组）；未知类型仍兜底「其他敏感」 |
+| 投放台「精确时间模糊化」开关 | 动态挂在证件脱敏档位下方（原生 checkbox，键盘 Space 可切换），默认关；文案「仅影响精确时刻（如 14:32:05）；日期/业务时间是否保留由后端按策略」 |
+| 对照台头部紧凑开关 | `时间模糊 [checkbox] 本次任务：开/关`（来自 `job.time_blur` 快照）；任务创建后改动只 toast「…已识别的任务不会重跑，重新投放文件后生效」，不自动重跑 |
+| `createJob()` | `POST /api/jobs` body 增加 `time_blur: state.timeBlur === true`（默认 false）；扫描页日志显示当前档位 |
+| 安全提示条 `safety-banners` | 动态插在对照台头部之下（不改 HTML），两条可独立显示/隐藏：①未成年人（红系）；②组合风险（黄系） |
+| 未成年人提示 | 快照 `minor_detected=true` 时显示：「检测到未满14周岁信息，建议启用未成年人严格模式」+「启用严格模式（整卡+全部涂黑）」+「本次不启用」；点击按钮 `POST /api/jobs/{id}/minor-strict`，成功后 `refreshLive()`，提示变「已启用未成年人严格模式（整卡 + 全部涂黑）」且按钮禁用；未启用时可关闭（按 jobId 仅本次会话记住）；`minor_strict=true` 后后端会把 `id_card_mode` 切 whole，头部「本次任务」自动跟随 |
+| 组合风险提示 | 快照 `combination_risk.categories` ≥2 类时显示黄条：「本媒体同时包含 位置 / 联系人 类准标识符，存在组合识别风险。」+「整图涂黑」按钮（复用现有整页涂黑确认与 `/mark` 流程；文字排版格式会提示改用框选补漏） |
+| `style.css` | `.blurset`（投放台完整版/对照台紧凑版）、`.safety-banners` / `.alertbar.minor`（红）/ `.alertbar.risk`（黄）/ `.ab-btn` / `.ab-close`，沿用纸面+朱红/琥珀配色 |
+
+## 11.2 契约（均来自 Lead 后端实现）
+
+```jsonc
+// POST /api/jobs body（前端新增字段）
+{"upload_id":"u_…","strictness":"standard","id_card_mode":"fields","time_blur":false}
+// → {"job_id":"j_…","id_card_mode":"fields","time_blur":false}
+
+// GET /api/jobs/{id} 快照新增
+{"time_blur": false,
+ "minor_detected": false,            // <14 岁时 true（后端由身份证号生日推断）
+ "minor_strict": false,              // 人工启用严格模式后 true
+ "combination_risk": {"level":"medium","categories":["位置","联系人"]}}  // ≥2 类才有；类别已是中文
+
+// POST /api/jobs/{id}/minor-strict → 200 任务快照
+//   minor_strict=true 且 id_card_mode="whole"（证件整卡 + 全部实体强制涂黑；不可换名）
+```
+
+- 前端按快照字段渲染，不推断、不伪造；后端未返回时提示条自然隐藏（向后兼容）。
+- 组合风险类别做 `TYPE_CN` 兜底映射：后端给中文直接用，给 etype 代码也能显示中文。
+
+## 11.3 实测（真实 HTTP + CDP 驱动真实 Edge，30 项断言 ALL PASS）
+
+环境：临时数据目录 + `python run.py --port 18765 --no-browser`；Edge 155 headless + CDP。测试夹具：`samples/名片.png`（组合风险）、自造 `minor_sample.docx`（含合法校验位的 2015 年出生身份证号 → 后端推断 11 岁）、`app/tests/fixtures/signs/sign_shop.png`、`sign_org.png`。
+
+| 断言 | 实测 |
+|---|---|
+| 投放台开关 | 存在、默认关、位于证件档位下方；说明含「仅影响精确时刻」；键盘 Space 开/关同步 |
+| POST body | 默认 `time_blur:false`；任务创建后开开关 → 仅提示重新投放（0 次新请求）；重投后 body `time_blur:true`，快照回显头部「本次任务：开」 |
+| 组合风险（真实） | 名片快照 `combination_risk={level:medium,categories:[位置,联系人]}` → 黄条显示「本媒体同时包含 位置 / 联系人 类准标识符，存在组合识别风险。」+「整图涂黑」按钮；点击 → 复用整页确认 → 真实 `/mark` 生成整图黑实体 |
+| 未成年人（真实） | `minor_sample.docx` 快照 `minor_detected=true` → 红条提示 + 「启用严格模式（整卡+全部涂黑）」；点击真实 `POST /minor-strict` → toast「已启用未成年人严格模式」→ 提示条变「已启用未成年人严格模式（整卡 + 全部涂黑）」、按钮禁用；快照 `minor_strict=true`、`id_card_mode=whole`；头部「本次任务：整卡涂黑」跟随 |
+| 关闭提示 | 另一份未成年 DOCX：点「本次不启用」→ 提示隐藏；再次 `updateConsoleHead()` 不复发（按 jobId 记住本次会话） |
+| 新类型（真实） | `sign_shop.png` → 清单「店招/门头×1」（不兜底）；`sign_org.png` → 「单位铭牌×1」（另有机构名称×1） |
+| 新类型（映射/清单） | CHAT_* / SHOP_SIGN / ORG_PLAQUE 中文名齐全、进入 TYPE_ORDER、各有 muted 分组色；注入 8 组实体 → 分组头依次「聊天头像/聊天昵称/群名称/聊天时间/输入框/店招/门头/单位铭牌/其他敏感」，待确认行保留，无英文 etype 泄漏 |
+| 页面 | `/`、`/download`、`/mcp`、`/console` 全部加载，全程 0 JS 异常；`node --check app/web/app.js` exit 0 |
+
+截图（`%TEMP%\yz_p1a_test\`）：`ui_p1a_drop.png`（时间模糊开关）、`ui_p1a_risk.png`（组合风险黄条 + 整图涂黑按钮 + 头部紧凑开关）、`ui_p1a_minor.png`（未成年提示条 + 组合风险同屏）、`ui_p1a_minor_on.png`（严格模式已启用态）、`ui_p1a_types.png`（新类型清单分组）。
+
+## 11.4 手动测试步骤
+
+1. 起服务打开 `/console`：投放台应看到「精确时间模糊化（默认关）」开关与说明。
+2. 拖入 `samples/名片.png`：对照台顶部应出现黄色「组合识别风险」提示（位置/联系人）；点「整图涂黑」→ 确认后右侧清单出现整图脱敏。
+3. 回投放台打开「精确时间模糊化」→ 重新投同一张：`POST /api/jobs` body 带 `time_blur:true`，头部「本次任务：开」。
+4. 拖入含未成年身份证号的 DOCX：顶部出现红色「检测到未满14周岁信息…」提示；点「启用严格模式（整卡+全部涂黑）」→ 提示变已启用、证件档位跟随为整卡；导出涂黑版验证。
+5. 再拖一份未成年样例：点「本次不启用」→ 提示收起且本任务内不再出现。
+6. 拖入 `app/tests/fixtures/signs/sign_shop.png` / `sign_org.png`：清单分别显示「店招/门头」「单位铭牌」。
+7. 键盘：Tab 到时间模糊 checkbox 按 Space；Tab 到提示条按钮按 Enter 均可操作。
+
+## 11.5 红线 / 兼容与风险
+
+- **无外呼 / 无 CDN / 无第三方库 / 无新依赖**；只调同源 `/api/*`；提示条文本为前端固定文案 + 后端快照字段，无 HTML 注入。
+- **向后兼容**：后端未返回 `time_blur/minor_detected/minor_strict/combination_risk` 时：开关默认关、提示条不渲染、请求 body 多一个 `time_blur:false`（后端忽略未知字段即可）。旧任务/旧数据不受影响。
+- **不自动重跑**：时间模糊开关按需求只影响下一次投放；未成年人严格模式是显式按钮，点击才改任务（后端会重算实体并置整卡）。
+- **`minor-strict` 失败路径**：后端不允许时（未检出未满14岁）返回 400，前端 toast 后端人话消息，不改变现状。
+- **组合风险等级**：前端只用 `categories` 展示，`level` 仅作潜在样式扩展（当前黄条不区分 medium/high）；不去重、不推断类别。
+- **提示条布局**：对照台头部下方新增两条可折叠区域，占约一行高；`#screen-console` 为 flex column，正文区域 `flex:1` 自适应，1360×860 实测无溢出。
+- **会话级关闭**：未成年人提示的「本次不启用」只记录在当前页面的 session（jobId 集合），刷新后重新出现——符合「本次会话」语义。
+- **回归门禁**：见 §11.6（本轮实测结论）。
+
+## 11.6 回归门禁（本轮实测）
+
+`python -X utf8 app/tests/regression.py` 实测：**202 项硬检查全绿（含 3 条软提示），EXIT=0，耗时 105.65s**，脚本结论「红线未破，可以继续开发/提交。」（本轮回归尚未包含 P1-A 专属断言，qa 后续可补；前端 P1-A 行为已由 §11.3 CDP 30 项断言覆盖）。
+
+
 

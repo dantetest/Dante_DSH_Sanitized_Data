@@ -1,0 +1,62 @@
+{
+ "generator": "app/tests/fixtures/signs/generate_signs.py",
+ "note": "全部虚构文本；图为合成夹具，仅用于 sign_targets 自测。",
+ "watermark": "虚构样例·仅供数据隐站测试",
+ "cases": [
+  {
+   "file": "sign_door.png",
+   "kind": "door_address",
+   "roi": [
+    120,
+    120,
+    780,
+    420
+   ]
+  },
+  {
+   "file": "sign_road.png",
+   "kind": "road_sign",
+   "roi": [
+    16,
+    16,
+    1183,
+    503
+   ]
+  },
+  {
+   "file": "sign_shop.png",
+   "kind": "shop_sign",
+   "roi": [
+    80,
+    100,
+    1020,
+    470
+   ]
+  },
+  {
+   "file": "sign_org.png",
+   "kind": "org_plaque",
+   "roi": [
+    90,
+    220,
+    910,
+    470
+   ]
+  },
+  {
+   "file": "neg_scenery.png",
+   "kind": null,
+   "roi": null
+  },
+  {
+   "file": "neg_document.png",
+   "kind": null,
+   "roi": null
+  },
+  {
+   "file": "neg_card.png",
+   "kind": null,
+   "roi": null
+  }
+ ]
+}

@@ -522,6 +522,14 @@ _RECT_ETYPE_KIND = {
     "PLATE": "plate",
     "ROAD_SIGN": "road_sign",
     "DOOR_ADDRESS": "door_address",
+    "SHOP_SIGN": "shop_sign",
+    "ORG_PLAQUE": "org_plaque",
+    # 聊天截图逐项（P1-A）
+    "CHAT_AVATAR": "chat_avatar",
+    "CHAT_NAME": "chat_name",
+    "CHAT_GROUP": "chat_group",
+    "CHAT_TIME": "chat_time",
+    "CHAT_INPUT": "chat_input",
     "QRCODE": "qrcode",
     "BARCODE": "barcode",
 }

@@ -268,6 +268,9 @@ def build_fixtures() -> dict:
     # 11) 身份证正面字段级夹具：0/90/180/270 四向 + 无脸回退
     _add_id_field_fixtures(root, out)
 
+    # 12) 聊天截图夹具（单聊/群聊/深色/横向/长截图）+ 发票截图负样本
+    _add_chat_fixtures(root, out)
+
     return out
 
 
@@ -386,6 +389,177 @@ def _add_id_field_fixtures(root: Path, out: dict) -> None:
     _emit("idback_fallback", fallback_img, fallback_boxes, None,
           fallback_values, [], rotations=(0,))
 
+
+def _add_chat_fixtures(root: Path, out: dict) -> None:
+    """生成虚构微信式聊天截图夹具（单聊/群聊/深色/横向/长截图）与发票负样本。"""
+    light = {
+        "bg": (232, 232, 232), "bar": (246, 246, 246),
+        "bubble_left": (252, 252, 252), "bubble_right": (149, 236, 105),
+        "text": (24, 24, 24), "muted": (130, 130, 130),
+        "input": (246, 246, 246), "send": (7, 193, 96),
+        "avatars": ((66, 133, 244), (233, 128, 118), (255, 186, 66), (120, 90, 200)),
+    }
+    dark = {
+        "bg": (26, 26, 28), "bar": (36, 36, 38),
+        "bubble_left": (52, 52, 55), "bubble_right": (38, 120, 62),
+        "text": (230, 230, 230), "muted": (145, 145, 145),
+        "input": (38, 38, 40), "send": (7, 193, 96),
+        "avatars": ((70, 130, 210), (200, 90, 110), (220, 170, 60), (110, 90, 190)),
+    }
+
+    def _text(draw, xy, text, size, fill):
+        font = _font(size)
+        _draw_text(draw, xy, text, size, fill)
+        return tuple(float(v) for v in draw.textbbox(xy, text, font=font))
+
+    def _render(path_name, width, height, title, messages, palette,
+                group=False, time_separator=None):
+        img = _new_canvas(width, height, palette["bg"])
+        draw = ImageDraw.Draw(img)
+        boxes = []
+        status_h = int(0.045 * height) if height >= 600 else int(0.07 * height)
+        nav_h = int(0.055 * height) if height >= 600 else int(0.10 * height)
+        draw.rectangle((0, 0, width, status_h), fill=palette["bar"])
+        draw.rectangle((0, status_h, width, status_h + nav_h), fill=palette["bar"])
+        boxes.append({"text": "9:41", "rect": _text(
+            draw, (int(0.03 * width), int(0.006 * height)), "9:41",
+            max(12, int(0.017 * height)), palette["text"])})
+        title_size = max(14, int(0.020 * height))
+        title_bbox = _text(draw, (0, 0), title, title_size, palette["text"])
+        tw = title_bbox[2] - title_bbox[0]
+        th = title_bbox[3] - title_bbox[1]
+        tx = int((width - tw) / 2)
+        ty = int(status_h + (nav_h - th) / 2)
+        img.paste(img.crop((0, 0, 0, 0))) if False else None
+        boxes.append({"text": title, "rect": _text(
+            draw, (tx, ty), title, title_size, palette["text"])})
+        top = status_h + nav_h + int(0.02 * height)
+        bottom = height - int(0.09 * height)
+        avatar = max(26, int(0.060 * width))
+        gap = max(8, int(0.012 * width))
+        rows = max(1, len(messages))
+        available = max(1, bottom - top - avatar)
+        step = available / float(rows)
+        time_y = None
+        for index, (side, text) in enumerate(messages):
+            row_cy = top + avatar / 2 + index * step
+            color = palette["avatars"][index % len(palette["avatars"])]
+            if side == "left":
+                ax = int(0.02 * width)
+                ay = int(row_cy - avatar / 2)
+                draw.rectangle((ax, ay, ax + avatar, ay + avatar), fill=color)
+                draw.ellipse((ax + avatar * 0.25, ay + avatar * 0.25,
+                              ax + avatar * 0.75, ay + avatar * 0.75),
+                             fill=(30, 30, 30))
+                bubble_x = ax + avatar + gap
+                align = "left"
+            else:
+                ax = width - int(0.02 * width) - avatar
+                ay = int(row_cy - avatar / 2)
+                draw.rectangle((ax, ay, ax + avatar, ay + avatar), fill=color)
+                draw.ellipse((ax + avatar * 0.25, ay + avatar * 0.25,
+                              ax + avatar * 0.75, ay + avatar * 0.75),
+                             fill=(30, 30, 30))
+                bubble_x = ax - gap
+                align = "right"
+            text_size = max(12, int(0.019 * height))
+            font = _font(text_size)
+            tb = draw.textbbox((0, 0), text, font=font)
+            tw2, th2 = tb[2] - tb[0], tb[3] - tb[1]
+            pad_x, pad_y = max(8, int(0.010 * width)), max(6, int(0.008 * height))
+            if align == "left":
+                bx0 = bubble_x
+                bx1 = bx0 + tw2 + pad_x * 2
+            else:
+                bx1 = bubble_x
+                bx0 = bx1 - tw2 - pad_x * 2
+            by0 = int(row_cy - (th2 + pad_y * 2) / 2)
+            by1 = by0 + th2 + pad_y * 2
+            draw.rounded_rectangle((bx0, by0, bx1, by1), radius=10,
+                                   fill=palette["bubble_left"] if side == "left"
+                                   else palette["bubble_right"])
+            boxes.append({"text": text, "rect": _text(
+                draw, (bx0 + pad_x, by0 + pad_y), text, text_size,
+                palette["text"])})
+            if group and side == "left":
+                sender = ("李四" if index % 2 == 0 else "王五")
+                sender_bbox = _text(
+                    draw, (bx0, by0 - int(0.018 * height)), sender,
+                    max(10, int(0.013 * height)), palette["muted"])
+                boxes.append({"text": sender, "rect": sender_bbox})
+            if time_separator is not None and index == 1:
+                time_y = top + avatar / 2 + index * step - step * 0.45
+                sep_bbox = _text(
+                    draw, (0, 0), time_separator,
+                    max(10, int(0.013 * height)), palette["muted"])
+                sw = sep_bbox[2] - sep_bbox[0]
+                boxes.append({"text": time_separator, "rect": _text(
+                    draw, (int((width - sw) / 2), int(time_y)),
+                    time_separator, max(10, int(0.013 * height)),
+                    palette["muted"])})
+        input_h = height - bottom
+        draw.rectangle((0, bottom, width, height), fill=palette["input"])
+        draw.rectangle((0, bottom, width, bottom + 2), fill=palette["muted"])
+        send_size = max(12, int(0.020 * height))
+        send_bbox = _text(draw, (0, 0), "发送", send_size, palette["text"])
+        sw = send_bbox[2] - send_bbox[0]
+        boxes.append({"text": "发送", "rect": _text(
+            draw, (width - sw - int(0.04 * width),
+                   bottom + int(0.02 * height)),
+            "发送", send_size, palette["text"])})
+        path = root / f"{path_name}.png"
+        img.save(path)
+        out[path_name] = {"path": path, "size": img.size, "text_boxes": boxes}
+
+    _render("chat_single", 720, 1280, "张三",
+            [("left", "你好，在吗？"), ("right", "在的，怎么了"),
+             ("left", "明天十点开会"), ("right", "好的，收到")],
+            light, time_separator="昨天 12:00")
+    _render("chat_group", 720, 1280, "产品讨论群(5)",
+            [("left", "方案我看过了"), ("left", "我下午改"),
+             ("right", "好的谢谢"), ("left", "明天同步"), ("right", "收到")],
+            light, group=True, time_separator="12:30")
+    _render("chat_dark", 720, 1280, "张三",
+            [("left", "晚上有空吗？"), ("right", "有的，几点"),
+             ("left", "八点老地方"), ("right", "好")],
+            dark, time_separator="昨天 20:15")
+    _render("chat_landscape", 1280, 720, "张三",
+            [("left", "文件发你了"), ("right", "收到谢谢"),
+             ("left", "有疑问叫我")], light)
+    _render("chat_long", 600, 2200, "张三",
+            [("left", "第一件事"), ("right", "收到"),
+             ("left", "第二件事"), ("right", "明白"),
+             ("left", "第三件事"), ("right", "好的"),
+             ("left", "第四件事"), ("right", "没问题"),
+             ("left", "先这样")], light, time_separator="昨天 09:30")
+
+    # 发票截图负样本：表格整行、无头像/气泡/输入条（不得判成聊天）
+    width, height = 1000, 1400
+    img = _new_canvas(width, height, (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    boxes = []
+    boxes.append({"text": "电子发票（普通发票）", "rect": _text(
+        draw, (330, 60), "电子发票（普通发票）", 30, (20, 20, 20))})
+    info_rows = [
+        ("发票代码 011002000411", "发票号码 12345678"),
+        ("开票日期 2026年01月14日", "校验码 12345 67890"),
+        ("购买方名称：西藏大唐科技发展有限公司", "统一社会信用代码 91540000XXXX"),
+        ("货物或应税劳务名称", "金额 税额"),
+        ("技术服务费", "1000.00 60.00"),
+        ("价税合计（大写）壹仟零陆拾元整", "（小写）￥1060.00"),
+    ]
+    for index, (left_text, right_text) in enumerate(info_rows):
+        y = 140 + index * 150
+        boxes.append({"text": left_text, "rect": _text(
+            draw, (80, y), left_text, 22, (30, 30, 30))})
+        boxes.append({"text": right_text, "rect": _text(
+            draw, (560, y), right_text, 22, (30, 30, 30))})
+        draw.line((60, y + 50, width - 60, y + 50), fill=(120, 120, 120), width=2)
+    draw.rectangle((700, 1080, 900, 1280), outline=(30, 30, 30), width=3)
+    path = root / "invoice_screenshot.png"
+    img.save(path)
+    out["invoice_screenshot"] = {
+        "path": path, "size": img.size, "text_boxes": boxes}
 
 
 # ────────────────────────────── 测试用假级联 ──────────────────────────────
@@ -508,6 +682,8 @@ class TestRegistration(unittest.TestCase):
         self.assertIn("id_authority", visual_targets.KINDS)
         self.assertIn("id_validity", visual_targets.KINDS)
         self.assertIn("plate", visual_targets.KINDS)
+        for kind in visual_targets.CHAT_KINDS:
+            self.assertIn(kind, visual_targets.KINDS)
 
     def test_no_cv2_still_importable(self):
         # 模块顶层对 cv2 缺失有兜底（这里只断言常量/接口存在，不真的卸载 cv2）
@@ -905,6 +1081,105 @@ class TestIdCardFields(unittest.TestCase):
                          ["id_document", "id_photo"])
 
 
+class TestChatScreenshot(unittest.TestCase):
+    """聊天截图逐项识别：单聊/群聊/深色/横向/长截图 + 负样本 0 误报。"""
+
+    def _detect(self, name: str, fmt: str | None = "image"):
+        fixture = FIXTURES[name]
+        image = _image(fixture["path"])
+        width, height = fixture["size"]
+        options = {}
+        if fmt is not None:
+            options["fmt"] = fmt
+        ctx = _ctx(width, height, fixture["text_boxes"], options)
+        boxes = visual_targets.iter_text_boxes(ctx)
+        return visual_targets._detect_chat(image, ctx, boxes)
+
+    def _assert_item_boxes(self, name: str, hits) -> None:
+        width, height = FIXTURES[name]["size"]
+        page_area = float(width) * float(height)
+        for hit in hits:
+            self.assertIn("chat=1", hit.note)
+            x0, y0, x1, y1 = hit.rect
+            self.assertTrue(0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height,
+                            f"{hit.kind} 框越界: {hit.rect}")
+            area = (x1 - x0) * (y1 - y0)
+            self.assertLess(area, page_area * 0.35,
+                            f"{hit.kind} 框过大（疑似整屏）: {hit.rect}")
+
+    def test_single_chat_items(self):
+        hits = self._detect("chat_single")
+        kinds = {hit.kind for hit in hits}
+        self.assertTrue(
+            {"chat_avatar", "chat_name", "chat_time", "chat_input"} <= kinds,
+            kinds)
+        self.assertNotIn("chat_group", kinds)
+        self._assert_item_boxes("chat_single", hits)
+        avatars = [hit for hit in hits if hit.kind == "chat_avatar"]
+        self.assertGreaterEqual(len(avatars), 2)
+        sides = {hit.note.rsplit("side=", 1)[-1] for hit in avatars}
+        self.assertEqual(sides, {"left", "right"})
+        self.assertTrue(any("role=name" in hit.note for hit in hits
+                            if hit.kind == "chat_name"))
+
+    def test_group_chat_items(self):
+        hits = self._detect("chat_group")
+        kinds = {hit.kind for hit in hits}
+        self.assertTrue({"chat_group", "chat_avatar", "chat_input"} <= kinds, kinds)
+        self._assert_item_boxes("chat_group", hits)
+        senders = [hit for hit in hits if hit.kind == "chat_name"
+                   and "src=sender" in hit.note]
+        self.assertGreaterEqual(len(senders), 1, [h.note for h in hits])
+
+    def test_dark_mode_items(self):
+        hits = self._detect("chat_dark")
+        kinds = {hit.kind for hit in hits}
+        self.assertTrue({"chat_avatar", "chat_name", "chat_time",
+                         "chat_input"} <= kinds, kinds)
+        self._assert_item_boxes("chat_dark", hits)
+
+    def test_landscape_screenshot_items(self):
+        hits = self._detect("chat_landscape")
+        kinds = {hit.kind for hit in hits}
+        self.assertTrue({"chat_avatar", "chat_name", "chat_input"} <= kinds, kinds)
+        self._assert_item_boxes("chat_landscape", hits)
+
+    def test_long_screenshot_items(self):
+        hits = self._detect("chat_long")
+        kinds = {hit.kind for hit in hits}
+        self.assertTrue({"chat_avatar", "chat_name", "chat_time",
+                         "chat_input"} <= kinds, kinds)
+        self._assert_item_boxes("chat_long", hits)
+        self.assertGreaterEqual(
+            sum(1 for hit in hits if hit.kind == "chat_avatar"), 3)
+
+    def test_fmt_gate_skips_pdf(self):
+        self.assertEqual(self._detect("chat_single", fmt="pdf"), [])
+
+    def test_negative_fixtures_no_chat_hits(self):
+        for name in ("invoice_screenshot", "contract_page", "blank_page",
+                     "business_mention"):
+            with self.subTest(fixture=name):
+                hits = self._detect(name)
+                self.assertEqual(hits, [], f"{name} 误判聊天截图: "
+                                            f"{[(h.kind, h.note) for h in hits]}")
+
+    def test_scan_integration(self):
+        fixture = FIXTURES["chat_single"]
+        image = _image(fixture["path"])
+        marks, _warnings = mediascan.analyze(
+            image, page=0, dpi=0.0,
+            options={"text_boxes": fixture["text_boxes"], "fmt": "image"})
+        chat_kinds = {m["kind"] for m in marks if m["kind"].startswith("chat_")}
+        self.assertTrue({"chat_avatar", "chat_name", "chat_time", "chat_input"}
+                        <= chat_kinds, chat_kinds)
+        invoice = FIXTURES["invoice_screenshot"]
+        marks, _warnings = mediascan.analyze(
+            _image(invoice["path"]), page=0, dpi=0.0,
+            options={"text_boxes": invoice["text_boxes"], "fmt": "image"})
+        self.assertEqual([m for m in marks if m["kind"].startswith("chat_")], [])
+
+
 class TestPlate(unittest.TestCase):
     def setUp(self):
         self._env_backup = {key: os.environ.get(key) for key in
@@ -1080,7 +1355,8 @@ class TestSamplesNegative(unittest.TestCase):
             image, page=0, dpi=0.0,
             options={"text_boxes": text_boxes or []})
         ours = [m for m in marks
-                if m["kind"] in ("face", "plate", "id_document")]
+                if m["kind"] in ("face", "plate", "id_document")
+                or m["kind"].startswith("chat_")]
         return marks, ours, warnings
 
     def test_business_card_no_visual_entities(self):

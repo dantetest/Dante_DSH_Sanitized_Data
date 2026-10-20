@@ -463,3 +463,86 @@ engine=ocr;doc=id_card;side=back;fields=0;fallback=1;orient=0  # 读不出两行
 - Lead 需在 jobs/pipeline 接新 kind：`_VISUAL_SPEC` 已加 `id_authority`/`id_validity`
   （etype ID_AUTHORITY/ID_VALIDITY），fields 模式保留这两个 kind、whole 模式用 id_document；
   `pipeline._RECT_ETYPE_KIND` 需补映射以纳入 verify 残留比对。
+
+---
+
+## 12 聊天截图逐项脱敏（P1-A，2026-10-20 已实现）
+
+用户选择「逐项处理」：识别手机聊天截图后只涂头像/昵称/群名/时间/输入框，
+**不整屏黑**。仅改本模块（jobs/registry/pipeline 由 Lead 接）。
+
+### 12.1 新 kind / note 格式
+
+| kind | 含义 | note 示例 |
+|---|---|---|
+| `chat_avatar` | 左右边距头像（每侧每个头像一条） | `engine=layout;chat=1;role=avatar;side=left` |
+| `chat_name` | 联系人昵称（单聊标题）/ 群聊发送者昵称 | `engine=layout;chat=1;role=name;src=title` / `src=sender` |
+| `chat_group` | 群名称（含「群」/「(5)」/成员/公告等线索） | `engine=layout;chat=1;role=group;src=title` |
+| `chat_time` | 状态栏时间 + 居中消息时间戳/日期 | `engine=layout;chat=1;role=time;src=status` / `src=msg` |
+| `chat_input` | 底部输入条整块（输入框/表情/发送按钮） | `engine=layout;chat=1;role=input;src=bar` |
+
+所有 note 统一带 `chat=1`，便于 jobs 审计与门控；逐项框面积上限 35% 页面（不会整屏）。
+
+### 12.2 判定条件（保守，宁少报不误报）
+
+仅当 `fmt` 缺省或 `fmt=image` 时启用（PDF/文档页直接跳过）；OCR 文本框数 5~160、
+图像长宽比 0.18~4.5。硬前提：
+
+1. 纵向聚类出 **≥3 条消息行**（行宽 ≤78% 页宽、行高 ≤20% 页高，排除表格整行）；
+2. 消息行 **左右都有**，且左右交替 ≥1 次（或左右各 ≥2 条）；
+3. 长文本（>60 字）不超过文本块 1/3（排除合同/正文）。
+
+再算 5 条布局信号，**≥3 条**才判聊天截图（且头像/气泡必须命中）：
+
+| 信号 | 做法 |
+|---|---|
+| 状态栏时间 | 顶部 9% 区域内匹配 `H:MM` 时间格式的 OCR 文本 |
+| 顶部标题栏 | 顶部 1.5%~10.5% 区域、水平居中、≤20 字的文本 |
+| 左右头像列 | 左右 10% 边距内的高饱和/与背景色差大的小方块，正方形比例 0.55~1.8，且与消息行纵向对齐 |
+| 消息气泡 | 消息行外扩区域的**主色占多数**（≥42%）且与页面左/右边距背景色差 ≥14（区分白底/绿底/深色气泡） |
+| 底部输入条 | 底部 16% 区域出现「发送/按住/说话/表情/语音」等文本，或整行低方差条带 |
+
+**误报边界**：普通照片、名片、发票/合同 PDF、纯白页不返回 chat hit；发票截图那种
+整行表格会被「行宽 ≤78%」滤掉，且气泡主色与背景对比不足 → 不判聊天。
+
+### 12.3 逐项框
+
+- `chat_avatar`：头像块外扩 3px，按左右侧分别返回（同侧多个头像各一条）；
+- `chat_name`/`chat_group`：顶部标题（单聊=联系人、群聊=群名）；群聊额外把左气泡
+  上方的小字发送者昵称按 `chat_name;src=sender` 返回；
+- `chat_time`：状态栏时间 + 消息区居中时间/日期（时间戳、昨天/前天/星期/日期）；
+- `chat_input`：底部输入条整块（宽度整屏、高度 ≤22% 页高）。
+- 同类框 IoU>0.45 去重；空图/无 OCR 直接返回空。
+
+### 12.4 测试与实测
+
+合成夹具（虚构，`app/tests/test_visual.py` `_add_chat_fixtures`）：
+单聊 720×1280、群聊 720×1280、深色模式 720×1280、横向 1280×720、
+长截图 600×2200、发票截图负样本 1000×1400。实测：
+
+| 夹具 | 返回 kinds（条数） | 检测耗时 |
+|---|---|---|
+| chat_single | avatar×4, name×1, time×2, input×1 | 147ms |
+| chat_group | avatar×5, group×1, name×3（发送者）, time×2, input×1 | 138ms |
+| chat_dark | avatar×4, name×1, time×2, input×1 | 152ms |
+| chat_landscape | avatar×3, name×1, time×1, input×1 | 117ms |
+| chat_long | avatar×9, name×1, time×2, input×1 | 188ms |
+| invoice_screenshot | 0（负样本） | 0ms |
+
+用户测试集（只读，未复制/提交；全部 `chat_hits=0`）：
+- 91/92 号发票截图（1129×843、OCR 53/54 块）：聊天检测 154/258ms，**0 误报**；
+- 39/82/83/84/85 号照片（OCR 1~8 块）：0 误报、检测 0ms；
+- 用户测试集内没有聊天截图样本，聊天正样本为合成夹具。
+
+门禁：`test_visual.py` **56/56 通过**；e2e **5/5、残留 0**；regression **203 项硬检查全绿**。
+
+### 12.5 限制与集成
+
+- **必须有 OCR 文本框**：无 OCR/自定义皮肤/无文本截图会漏（宁少报不误报）。
+- 目前按微信式布局（顶部状态栏+标题、左右气泡+头像、底部输入条）判定；
+  WhatsApp/Slack 等皮肤或折叠屏特殊布局可能漏/偏。
+- 深色模式已覆盖（气泡/背景对比自适应）；横向与长截图已覆盖。
+- 输入条识别依赖底部均匀条带或「发送/按住/说话」等文案；纯图标输入条可能漏。
+- Lead 需接：`jobs._VISUAL_SPEC` 加 5 个 chat kind 的 etype/label/status；
+  `pipeline._RECT_ETYPE_KIND` 补映射以纳入 verify 残留比对；解析器把 `fmt`
+  放进 `ctx.options`（`fmt=image` 才启用聊天判定，PDF/TIFF 文本页可跳过）。

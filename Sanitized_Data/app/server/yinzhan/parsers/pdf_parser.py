@@ -623,7 +623,7 @@ def _collect_visual(page: fitz.Page, blocks: list[Block], page_index: int,
                         })
                 marks, scan_warns = mediascan.analyze(
                     scan_arr, page=page_index, dpi=float(scan_dpi),
-                    options={"text_boxes": scan_boxes})
+                    options={"text_boxes": scan_boxes, "fmt": "pdf"})
                 doc.visual_marks.extend(mediascan.to_visual_marks(
                     marks, scale=72.0 / scan_dpi, page=page_index))
                 doc.warnings.extend(scan_warns)
