@@ -53,6 +53,7 @@ OCR 类样例（image/tiff）留 ±1 容差，避免同名 OCR 抖动误报。
 | 功能红线 · 身份证 A 方案 | 合成虚构证件 + 引擎 test hook 注入确定性命中，真跑 jobs→导出→verify：**API 默认 fields / 非法值回退 fields / whole 原样**；fields 正面四字段实体（ID_PHOTO/ID_NAME/ID_NUMBER/ID_ADDRESS）且**无 ID_DOCUMENT**，human 导出四区域已遮盖、**性别/民族/出生行未遮**（像素+几何重叠双断言）、residual=0；fields 反面实体 ID_AUTHORITY×1+ID_VALIDITY×1 且无 ID_DOCUMENT，human 两行已遮盖、国徽/标题保留、residual=0；whole 档（正/反）含 ID_DOCUMENT、整页黑覆盖率≈100%、residual=0；无脸正面/两行读不出的反面 fields 均回退整卡+提示 |
 | 功能红线 · P1-A 第一波 | 真跑 jobs→导出→verify：聊天合成图 5 类布局均出 CHAT_* 且 human 对应区域黑覆盖、发票/名片负样本 0；招牌合成图 4 kind 均出实体且 human 遮盖；未成年人虚构 <14 身份证号 → `minor_detected=true`、`POST /minor-strict` 后 `minor_strict=true/id_card_mode=whole/全实体 black`、未检出 400；`time_blur` 默认 false，开启后 TIME 实体替换为时段且日期保留；组合风险 categories 含位置/联系人/时间 |
 | 功能红线 · P1-B 第一波 | 真跑 jobs→导出→verify：**Office** 内嵌图片计数/隐藏对象计数；默认导出只对隐藏对象返回 `media_confirmation_required`（文案=隐藏对象），确认后图片自动脱敏（重扫 0 命中/verify 通过）、正常图字节不变、strict 后 hidden=0/无命中图空白、audit `counts.office_media`；**CSV/TSV** 列级+多级/合并表头值覆盖、导出行/列/分隔符不变、residual=0、无表头 0 命中；**PDF** 文本层敏感内嵌图产 EMBEDDED_IMAGE 且 human 黑覆盖≥90%、重解析 0 条 embedded_image，正常配图/纯文本/小图 0 新增 |
+| 功能红线 · P1.5 | 真跑 jobs→导出→verify：**Office** 内嵌文字 PII 图 → `text_hits>0/text_images_redacted>=1`、成品重扫文字 0 命中/审计 `text_*`、预算跳过 warning、`YINZHAN_OFFICE_TEXT_OCR=0` 只做视觉脱敏；**PDF** text_sensitive.pdf → EMBEDDED_IMAGE（note text=N）+ human 黑覆盖≥90%/重解析 0/verify，开关=0 不产 mark；**6 类证件** jobs → ID_DOCUMENT label（工作证/居住证/港澳通行证/台胞证/外国人永居证/银行卡）且整卡黑、银行卡面积<0.90、发票/合同 0 新增；**护照号** near 命中 PASSPORT+surrogate 假值、无 near/法人不误报；**CSV/TSV** GBK/utf-8-sig/UTF-16/GBK+CRLF 编码/BOM/换行保留+未知回退警告 |
 | 安全红线 · 静态 | 无出站网络（`requests`/`urllib.request`/`http.client`/socket 外呼白名单=回环）、无调用上下文外部 URL、默认监听 127.0.0.1、requirements 无网络客户端依赖、PDF `apply_redactions`、图片重编码不带 EXIF/ICC（含临时夹具实测）、TIFF 剥离+复检、DOCX/XLSX 属性清理、审计 INSERT 无原值列 |
 | 契约完整性 · 规则/注册表 | 基线规则包仍在、load_errors=0、id 全局唯一/字段/scope/策略合法、已有规则不减少（迁移需白名单+替代规则）、各格式编译数不减少、**10 条规则 scope 已扩 image+tiff**、**pipl-cn(≥21)/table-cn(≥11) 完整且 id 唯一/命名空间正确**、插件/解析器/检测器不回退、替换器注册、OCR 可用性一致 |
 | 契约完整性 · 服务/主路径 | health 200/net=blocked、runtime host=127.0.0.1、netstat 监听行只有回环、`/api/packs`、4 页面+3 图标 200+MIME、CSRF 跨站写 403、上传→job→ready→双导出→下载（sha/size 一致/%PDF）、**verify.pdf_hidden 为空**、审计计数含类型且无原值、审计链 verify、预览、PNG 渲染、框选补漏（rect 归一化）、逐条确认、accept-all、**整图涂黑（rect=[0,0,1,1]→black/coverage≈1.0）**、映射库可解密还原 |
@@ -112,8 +113,8 @@ python -X utf8 app/tests/regression.py --update-baseline
 * `app/tests/baseline/SNAPSHOT.md` —— 人读摘要（硬/软断言、每样例最低命中、
   元数据矩阵、规则包、服务与安全、已知边界）。
 
-**当前基线（2026-10-20 P1-B 收口）**：8 个规则包 / 自有规则 103 条；5 个既有样例
-实体 52 个、双导出 residual 0（本轮无聊天/招牌/证件样例，功能基线数值不变）；`regression.py` **229 项检查全绿（硬项失败 0）**；
+**当前基线（2026-10-20 P1.5 收口）**：8 个规则包 / 自有规则 104 条；5 个既有样例
+实体 52 个、双导出 residual 0（本轮无聊天/招牌/证件样例，功能基线数值不变）；`regression.py` **241 项检查全绿（硬项失败 0）**；
 `run_all.py` **11 套件**全绿（新增 signs）；身份证 A 方案（fields 默认/whole 可选；正面 4 字段 + 反面 2 字段）、
 P1-A（聊天逐项/招牌/未成年/时间模糊/组合风险）已记录到 SNAPSHOT §6。
 基线在 `engine_clean=false` 的 P1-A 工作树上采集（SNAPSHOT 已标注），提交后如需干净
@@ -171,9 +172,9 @@ python -X utf8 app/tests/run_all.py
 | 7 | `test_pipl_rules.py` | pipl-cn 规则 + XLSX 纯数值单元格（金额写回数字） | 5.6s |
 | 8 | `test_table_column.py` | table-cn 表头列级检测（xlsx/docx 整列覆盖） | 5.7s |
 | 9 | `test_pdf_hidden.py` | PDF 隐藏数据（附件/批注/表单/JS/缩略图）剥离与复检 | 3.1s |
-| 10 | `test_office_media.py` | P1-B Office 内嵌图自动脱敏/隐藏对象/strict | 15.4s |
-| 11 | `test_csv_table.py` | P1-B CSV/TSV 列语义与多级表头 | 6.0s |
-| 12 | `test_pdf_embedded.py` | P1-B PDF 文本层内嵌图检测/涂黑 | 8.0s |
+| 10 | `test_office_media.py` | P1-B Office 内嵌图自动脱敏/隐藏对象/strict；P1.5 文字 OCR | 42.7s |
+| 11 | `test_csv_table.py` | P1-B CSV/TSV 列语义与多级表头；P1.5 编码保留 | 6.0s |
+| 12 | `test_pdf_embedded.py` | P1-B PDF 内嵌图；P1.5 文字图检测/涂黑 | 10.7s |
 | 13 | `test_tiff.py` | 正射 TIF P0（大图/位深/坐标中性化） | 26.9s |
 
 合计约 **1.5–3 分钟**（并行开发/低配机器会更慢；耗时只做软参考，不影响判定）。

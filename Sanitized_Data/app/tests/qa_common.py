@@ -2775,6 +2775,422 @@ def pdf_embedded_chain_test() -> dict:
         return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
 
 
+# ════════════════════════ P1.5（内嵌图文字 OCR / 证件类型 / CSV 编码 / 护照号） ════════════════════════
+def _p15_ctx():
+    from yinzhan.ocr import get_ocr
+    from yinzhan.udm import ParseContext
+    return ParseContext(ocr=get_ocr(), workdir=str(WORK))
+
+
+def _p15_job(path: Path):
+    from yinzhan.jobs import MANAGER
+    job = MANAGER.create(Path(path))
+    _wait_job_inproc(job)
+    return job
+
+
+def _p15_media_marks(path: Path) -> int:
+    """重扫 zip 内图片的视觉/码类命中数（test_office_media 的 helper）。"""
+    import test_office_media as tom
+    marks = 0
+    for part in tom._zip_media_parts(path):
+        try:
+            marks += len(tom._scan_marks(tom._part_bytes(path, part)))
+        except Exception:
+            continue
+    return marks
+
+
+def office_text_ocr_chain_test() -> dict:
+    """P1.5：Office 内嵌图片文字 OCR 自动脱敏 / 预算跳过 / 开关关闭时仍做视觉脱敏。"""
+    ensure_ready()
+    try:
+        import test_office_media as tom
+        from yinzhan import audit, registry
+        from yinzhan.jobs import MANAGER
+
+        registry.load_plugins()
+
+        def _extra(job) -> dict:
+            doc = getattr(job, "doc", None)
+            return dict(((getattr(doc, "extra", None) or {}).get("office_media") or {}))
+
+        old = os.environ.get("YINZHAN_OFFICE_TEXT_OCR")
+        res: dict = {}
+        try:
+            os.environ["YINZHAN_OFFICE_TEXT_OCR"] = "1"
+            src = tom.Fixtures.docx_text()
+            job = _p15_job(src)
+            e = _extra(job)
+            on = {"stage": job.stage,
+                  "text_hits": int(e.get("text_hits") or 0),
+                  "text_images_redacted": int(e.get("text_images_redacted") or 0),
+                  "image_count": int(e.get("image_count") or 0)}
+            rec = MANAGER.export(job.id, "human")
+            out = Path(rec["out"])
+            e = _extra(job)          # 文字 OCR 统计在导出阶段写入 doc.extra
+            on["text_hits"] = int(e.get("text_hits") or 0)
+            on["text_images_redacted"] = int(e.get("text_images_redacted") or 0)
+            on["text_verify_hits"] = int(e.get("text_verify_hits") or 0)
+            on["image_count"] = int(e.get("image_count") or 0)
+            re_doc = registry.find_parser(out).parse(out, _p15_ctx())
+            ee = dict(((re_doc.extra or {}).get("office_media") or {}))
+            on.update({"verify": rec.get("verify"),
+                       "out_text_hits": int(ee.get("text_hits") or 0)})
+            src_parts = tom._zip_media_parts(src)
+            out_parts = tom._zip_media_parts(out)
+            changed = unchanged = 0
+            for part in src_parts:
+                if part not in out_parts:
+                    continue
+                try:
+                    same = tom._part_bytes(src, part) == tom._part_bytes(out, part)
+                except Exception:
+                    continue
+                changed += 0 if same else 1
+                unchanged += 1 if same else 0
+            on.update({"changed_media": changed, "unchanged_media": unchanged})
+            # 预算跳过：max_images=0 时不处理文字，但不应崩溃
+            os.environ["YINZHAN_OFFICE_TEXT_MAX_IMAGES"] = "0"
+            jb = _p15_job(tom.Fixtures.docx_text())
+            eb = _extra(jb)
+            budget = {"text_hits": int(eb.get("text_hits") or 0),
+                      "warnings": [w for w in (getattr(jb.doc, "warnings", None) or [])
+                                   if "文字" in str(w) or "预算" in str(w)][:4]}
+            os.environ.pop("YINZHAN_OFFICE_TEXT_MAX_IMAGES", None)
+            # 开关关闭：文字不处理，但视觉/码类仍脱敏
+            os.environ["YINZHAN_OFFICE_TEXT_OCR"] = "0"
+            j2 = _p15_job(tom.Fixtures.docx_qr_text())
+            e2 = _extra(j2)
+            off = {"stage": j2.stage,
+                   "text_hits": int(e2.get("text_hits") or 0),
+                   "image_count": int(e2.get("image_count") or 0)}
+            rec2 = MANAGER.export(j2.id, "human")
+            out2 = Path(rec2["out"])
+            off.update({"visual_rescan": _p15_media_marks(out2),
+                        "verify": rec2.get("verify")})
+            res.update({"on": on, "budget": budget, "off": off})
+        finally:
+            os.environ.pop("YINZHAN_OFFICE_TEXT_MAX_IMAGES", None)
+            if old is None:
+                os.environ.pop("YINZHAN_OFFICE_TEXT_OCR", None)
+            else:
+                os.environ["YINZHAN_OFFICE_TEXT_OCR"] = old
+        audit_text = None
+        try:
+            for record in audit.recent(40):
+                c = (record.get("counts") or {}).get("office_media")
+                if isinstance(c, dict) and "text_hits" in c:
+                    audit_text = c
+                    break
+        except Exception:
+            audit_text = None
+        res["audit_text"] = audit_text
+        on = res.get("on") or {}
+        off = res.get("off") or {}
+        bg = res.get("budget") or {}
+        ok = bool(on.get("text_hits", 0) >= 1
+                  and on.get("text_images_redacted", 0) >= 1
+                  and on.get("text_verify_hits") == 0
+                  and on.get("out_text_hits") == 0
+                  and on.get("changed_media", 0) >= 1
+                  and on.get("unchanged_media", 0) >= 1
+                  and (on.get("verify") or {}).get("verified") is True
+                  and bg.get("text_hits") == 0 and bg.get("warnings")
+                  and off.get("text_hits") == 0
+                  and off.get("visual_rescan") == 0
+                  and (off.get("verify") or {}).get("verified") is True
+                  and audit_text is not None)
+        return {"ok": ok, **res}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+def pdf_embedded_text_chain_test() -> dict:
+    """P1.5：PDF 文本层内嵌「纯文字图」→ EMBEDDED_IMAGE(note text=N) → 涂黑/复检/开关。"""
+    ensure_ready()
+    try:
+        import test_pdf_embedded as tpe
+        from yinzhan import registry
+        from yinzhan.jobs import MANAGER
+        from yinzhan.udm import ParseContext
+
+        registry.load_plugins()
+        path = TESTS / "fixtures" / "pdf_embedded" / "text_sensitive.pdf"
+        if not path.is_file():
+            return {"ok": False, "err": "text_sensitive.pdf 缺失"}
+        old = os.environ.get("YINZHAN_PDF_EMBEDDED_TEXT_OCR")
+        res: dict = {}
+        try:
+            os.environ.pop("YINZHAN_PDF_EMBEDDED_TEXT_OCR", None)
+            job = _p15_job(path)
+            marks = [m for m in (getattr(job.doc, "visual_marks", None) or [])
+                     if getattr(m, "kind", "") == "embedded_image"]
+            text_counts = [int(mm.group(1)) for m in marks
+                           for mm in [re.search(r"text=(\d+)", str(m.note or ""))]
+                           if mm]
+            emb = [e for e in job.entities if e.etype == "EMBEDDED_IMAGE"]
+            exp = MANAGER.export(job.id, "human")
+            out = Path(exp["out"])
+            ratios = []
+            for e in emb:
+                for sp in e.spans:
+                    if sp.rect:
+                        ratios.append(_pdf_black_ratio(out, sp.rect, sp.page or 0))
+                        break
+            re_doc = registry.find_parser(out).parse(
+                out, ParseContext(ocr=None, workdir=str(WORK)))
+            re_emb = sum(1 for m in (re_doc.visual_marks or [])
+                         if getattr(m, "kind", "") == "embedded_image")
+            on = {"marks": len(marks), "text_counts": text_counts,
+                  "embedded": len(emb), "black_ratios": ratios,
+                  "reparse_embedded": re_emb,
+                  "verify": exp.get("verify")}
+            os.environ["YINZHAN_PDF_EMBEDDED_TEXT_OCR"] = "0"
+            job2 = _p15_job(path)
+            off = {"marks": sum(1 for m in (getattr(job2.doc, "visual_marks", None) or [])
+                                if getattr(m, "kind", "") == "embedded_image")}
+            res.update({"on": on, "off": off})
+        finally:
+            if old is None:
+                os.environ.pop("YINZHAN_PDF_EMBEDDED_TEXT_OCR", None)
+            else:
+                os.environ["YINZHAN_PDF_EMBEDDED_TEXT_OCR"] = old
+        on = res.get("on") or {}
+        off = res.get("off") or {}
+        ok = bool(on.get("marks", 0) >= 1
+                  and on.get("text_counts") and min(on["text_counts"]) >= 2
+                  and on.get("embedded", 0) >= 1
+                  and on.get("black_ratios")
+                  and all(v >= 0.9 for v in on.get("black_ratios") or [])
+                  and on.get("reparse_embedded") == 0
+                  and (on.get("verify") or {}).get("residual") == 0
+                  and off.get("marks") == 0)
+        return {"ok": ok, **res}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+P15_DOC_LABELS = {
+    "work_permit": "工作证", "residence_permit": "居住证",
+    "hk_mo_permit": "港澳通行证", "tw_permit": "台胞证",
+    "foreign_pr": "外国人永居证", "bank_card": "银行卡",
+}
+
+
+def id_doc_types_chain_test() -> dict:
+    """P1.5：6 类非身份证证件经 jobs 出 ID_DOCUMENT 且 label 正确；银行卡不整页；负样本 0。"""
+    ensure_ready()
+    try:
+        from PIL import Image
+        import test_visual as tv
+        from yinzhan.jobs import MANAGER
+
+        root = WORK / "fixtures_p15_docs"
+        root.mkdir(parents=True, exist_ok=True)
+        fixtures: dict = {}
+        tv._add_id_type_fixtures(root, fixtures)
+        results: dict = {}
+        for name, want_label in P15_DOC_LABELS.items():
+            fixture = fixtures.get(name) or {}
+            path = fixture.get("path")
+            rec: dict = {"ok": False, "want": want_label}
+            if not path or not Path(path).is_file():
+                rec["err"] = "fixture 缺失"
+                results[name] = rec
+                continue
+            job = _p15_job(path)
+            docs = [e for e in job.entities if e.etype == "ID_DOCUMENT"]
+            labels = [e.label for e in docs]
+            rec.update({"stage": job.stage, "labels": labels,
+                        "hit": want_label in labels})
+            if docs:
+                rect = None
+                for sp in docs[0].spans:
+                    if sp.rect:
+                        rect = tuple(float(v) for v in sp.rect)
+                        break
+                page = job.doc.pages[docs[0].spans[0].page or 0] if job.doc.pages else None
+                if rect and page and page.width and page.height:
+                    rec["area_ratio"] = round(
+                        (rect[2] - rect[0]) * (rect[3] - rect[1])
+                        / (page.width * page.height), 3)
+                try:
+                    exp = MANAGER.export(job.id, "human")
+                    out = Path(exp["out"])
+                    img = Image.open(out).convert("RGB")
+                    rec["black"] = _black_ratio(img, rect) if rect else 0.0
+                    rec["verify"] = exp.get("verify")
+                    rec["ok"] = bool(rec["hit"] and (rec.get("black") or 0) >= 0.6
+                                     and (exp.get("verify") or {}).get("residual") == 0)
+                    if name == "bank_card":
+                        rec["ok"] = bool(rec["ok"]
+                                         and float(rec.get("area_ratio") or 1.0) < 0.90)
+                except Exception as exc:  # noqa: BLE001
+                    rec["export_error"] = repr(exc)
+            results[name] = rec
+        negatives: dict = {}
+        neg_paths = {
+            "invoice": TESTS / "fixtures" / "pipl_public" / "synthetic_invoice.png",
+            "contract": TESTS / "fixtures" / "signs" / "neg_document.png",
+        }
+        for name, path in neg_paths.items():
+            if not Path(path).is_file():
+                continue
+            job = _p15_job(path)
+            ids = [e.etype for e in job.entities if e.etype.startswith("ID_")]
+            negatives[name] = {"id_entities": ids, "ok": not ids}
+        ok = (len(results) == 6 and all(r.get("ok") for r in results.values())
+              and negatives and all(v.get("ok") for v in negatives.values()))
+        return {"ok": bool(ok), "cases": results, "negatives": negatives}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+def _detect_text_entities(text: str):
+    from yinzhan import pipeline
+    from yinzhan.jobs import _load_rules
+    from yinzhan.udm import Block, Document, Page
+    doc = Document(doc_id="p15", path="", fmt="text")
+    doc.pages.append(Page(index=0, width=595, height=842,
+                          blocks=[Block(id="b0", kind="text", text=text, page=0)]))
+    rules, _pack, _idx = _load_rules("text")
+    det = pipeline.detect(doc, rules, "standard")
+    pipeline.decide(det.entities, det.rules, pipeline.Session())
+    return det
+
+
+def passport_rule_chain_test() -> dict:
+    """P1.5：护照号规则（near 护照才命中；surrogate 假值；普通编号/法人不误报）。"""
+    ensure_ready()
+    try:
+        from yinzhan import registry
+        registry.load_plugins()
+        yes = _detect_text_entities("护照号码：E12345678\n姓名：张三")
+        yes_ents = [e for e in yes.entities if e.etype == "PASSPORT"]
+        fake_ok = False
+        if yes_ents:
+            e = yes_ents[0]
+            repl = getattr(e.decision, "replacement", None) if e.decision else None
+            fake_ok = bool(e.value == "E12345678" and repl
+                           and repl != e.value
+                           and not getattr(e.decision, "black", False))
+        no_near = _detect_text_entities("编号：E12345678")
+        legal = _detect_text_entities(
+            "法定代表人：王五\n统一社会信用代码：91310000MA1FL1XX0G")
+        no_near_ok = not [e for e in no_near.entities if e.etype == "PASSPORT"]
+        legal_ok = not [e for e in legal.entities if e.etype == "PASSPORT"]
+        return {"ok": bool(yes_ents and fake_ok and no_near_ok and legal_ok),
+                "yes": [(e.etype, e.value,
+                         getattr(e.decision, "replacement", None) if e.decision
+                         else None) for e in yes_ents[:3]],
+                "no_near_passport": [e.value for e in no_near.entities
+                                     if e.etype == "PASSPORT"],
+                "legal_passport": [e.value for e in legal.entities
+                                   if e.etype == "PASSPORT"]}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+CSV_P15_CONTENT = ("姓名,手机号,备注\n张伟,13817264451,普通备注\n"
+                   "李四,13901827733,第二条\n")
+
+
+def csv_encoding_chain_test() -> dict:
+    """P1.5：CSV/TSV 原编码/BOM/换行保留、未知编码 warning 回退、residual/行列不变。"""
+    ensure_ready()
+    try:
+        import csv as _csv
+        from yinzhan.jobs import MANAGER
+
+        d = WORK / "p15_csv"
+        d.mkdir(parents=True, exist_ok=True)
+        content = CSV_P15_CONTENT
+        variants = {
+            "gbk": (content.encode("gb18030"), "gb18030", False),
+            "sig": (b"\xef\xbb\xbf" + content.encode("utf-8"),
+                    "utf-8-sig", True),
+            "utf16": (content.encode("utf-16"), "utf-16", True),
+            "crlf_gbk": (content.replace("\n", "\r\n").encode("gb18030"),
+                         "gb18030", False),
+        }
+        expected_rows = [row for row in _csv.reader(content.splitlines())]
+
+        def _rows(raw: bytes, encoding: str):
+            try:
+                text = raw.decode(encoding)
+            except Exception:
+                return None
+            return [row for row in _csv.reader(text.splitlines())]
+
+        results: dict = {}
+        for label, (raw, encoding, expect_bom) in variants.items():
+            p = d / f"{label}.csv"
+            p.write_bytes(raw)
+            job = _p15_job(p)
+            meta = dict(getattr(job.doc, "meta", None) or {})
+            rec = {"stage": job.stage,
+                   "encoding": meta.get("encoding"),
+                   "encoding_output": meta.get("encoding_output"),
+                   "bom": meta.get("bom"), "newline": meta.get("newline")}
+            try:
+                exp = MANAGER.export(job.id, "ai")
+                out = Path(exp["out"])
+                out_raw = out.read_bytes()
+                has_bom = (out_raw.startswith(b"\xef\xbb\xbf")
+                           or out_raw.startswith(b"\xff\xfe")
+                           or out_raw.startswith(b"\xfe\xff"))
+                rows = _rows(out_raw, rec.get("encoding_output") or encoding)
+                rec.update({"verify": exp.get("verify"),
+                            "has_bom": has_bom,
+                            "rows_ok": rows is not None
+                            and [len(r) for r in rows]
+                            == [len(r) for r in expected_rows]})
+                good = (job.stage == "ready"
+                        and rec.get("encoding") == encoding
+                        and rec.get("encoding_output") == encoding
+                        and bool(rec.get("bom")) is expect_bom
+                        and rec.get("has_bom") is expect_bom
+                        and rec.get("rows_ok")
+                        and (exp.get("verify") or {}).get("residual") == 0)
+                if label == "crlf_gbk":
+                    good = good and rec.get("newline") == "CRLF" \
+                        and b"\r\n" in out_raw
+                rec["ok"] = bool(good)
+            except Exception as exc:  # noqa: BLE001
+                rec.update({"ok": False, "err": repr(exc)})
+            results[label] = rec
+        # 未知编码 → warning 回退 UTF-8
+        bad = d / "unknown.csv"
+        bad.write_bytes(b"\xff\xff\xff\xff")
+        job = _p15_job(bad)
+        meta = dict(getattr(job.doc, "meta", None) or {})
+        unknown = {"stage": job.stage, "encoding": meta.get("encoding"),
+                   "encoding_source": meta.get("encoding_source")}
+        parse_warns = [str(w) for w in (getattr(job.doc, "warnings", None) or [])]
+        unknown["parse_warnings"] = parse_warns[:4]
+        warn: list = []
+        try:
+            exp = MANAGER.export(job.id, "ai")
+            warn = list(exp.get("warnings") or [])
+            unknown["export_ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            unknown["export_ok"] = False
+            unknown["export_err"] = repr(exc)
+        fallback_warn = any(("回退 UTF-8" in str(w)) or ("未保留原编码" in str(w))
+                            or ("替换字符" in str(w))
+                            for w in (warn + parse_warns))
+        unknown["fallback_warn"] = fallback_warn
+        unknown["ok"] = bool(meta.get("encoding_source") == "fallback"
+                             and (meta.get("encoding_output") or "").startswith("utf-8")
+                             and fallback_warn)
+        results["unknown"] = unknown
+        ok = all(r.get("ok") for r in results.values())
+        return {"ok": bool(ok), "cases": results}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
 # ════════════════════════ 已知边界软记录 ════════════════════════
 def capture_known_limits() -> dict:
     ensure_ready()
@@ -2886,6 +3302,31 @@ def capture_known_limits() -> dict:
                 "Office 内嵌图里的纯文字（无 face/id/plate/qr/barcode/chat/sign 目标）不自动处理（P1.5）",
                 "strict_office_media 会改变文档外观（无命中图置白/剥离隐藏对象）",
                 "PDF 内嵌图只处理文本层页且图片面积≥5% 页面；异常格式降级为跳过",
+            ],
+        },
+        # P1.5 语义与已知限制（只做软记录）
+        "p15_features": {
+            "office_text_ocr": {
+                "switch": "YINZHAN_OFFICE_TEXT_OCR",
+                "stats_keys": ["text_hits", "text_images_redacted",
+                               "text_skipped", "text_verify_hits"],
+                "budget_env": ["YINZHAN_OFFICE_TEXT_MAX_IMAGES",
+                               "YINZHAN_OFFICE_TEXT_MAX_SECONDS"],
+            },
+            "pdf_embedded_text_ocr": {
+                "switch": "YINZHAN_PDF_EMBEDDED_TEXT_OCR",
+                "note_format": "engine=embedded_image;text=N;area=",
+            },
+            "id_doc_types": ["work_permit", "residence_permit", "hk_mo_permit",
+                             "tw_permit", "foreign_pr", "bank_card"],
+            "csv_encoding_preserve": ["encoding", "encoding_output", "bom",
+                                      "newline", "encoding_source"],
+            "passport_rule": "legal-cn cn.passport_no（near 护照；PASSPORT；surrogate）",
+            "known_limits": [
+                "Office 内嵌图文字 OCR 有预算（默认 30 张/60s），超预算保留原图+warning",
+                "PDF 内嵌图文字检测仅文本层页且面积≥5%；开关可关",
+                "证件类型扩展只按 OCR 锚点判型；银行卡不做整页扩张",
+                "CSV/TSV 未知编码回退 UTF-8 并 warning（不静默）",
             ],
         },
         "pdf_text_layer_pages_skipped_ocr": {
@@ -3248,6 +3689,14 @@ def write_snapshot(base: dict, path: Path) -> None:
       f"（需确认的是{om.get('confirmation_now_for')}；strict={om.get('strict_option')}）；"
       f"CSV/TSV={p1b.get('delimited')}；PDF 内嵌图={p1b.get('pdf_embedded_image')}")
     for _lim in (p1b.get("known_limits") or []):
+        A(f"  - 已知限制：{_lim}")
+    p15 = kl.get("p15_features") or {}
+    A(f"- **P1.5**：Office 内嵌图文字 OCR={p15.get('office_text_ocr')}；"
+      f"PDF 文字内嵌图={p15.get('pdf_embedded_text_ocr')}；"
+      f"证件类型={p15.get('id_doc_types')}；"
+      f"CSV 编码保留={p15.get('csv_encoding_preserve')}；"
+      f"护照规则={p15.get('passport_rule')}")
+    for _lim in (p15.get("known_limits") or []):
         A(f"  - 已知限制：{_lim}")
     gaps = kl.get("known_gaps_not_fixed") or {}
     if gaps:

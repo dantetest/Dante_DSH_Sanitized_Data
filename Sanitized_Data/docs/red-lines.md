@@ -45,7 +45,8 @@
 | F20 | **P1-A 第一波**：聊天截图逐项（头像/昵称/群名/时间/输入框，仅图片、微信式布局、不整屏）；门牌/路牌/店招/单位铭牌 OCR 锚点扫描（默认 pending、白纸门控）；未成年人身份证生日推断 <14 → 提示 + 人工 `POST /minor-strict`（证件整卡+全部实体强制涂黑）；时间模糊 `time_blur`（默认关，仅完整日期+时刻→时段，日期保留）；组合风险 `combination_risk`（≥2 类准标识符只提示） | `test_visual`（56 项）+ `test_sign_targets`（39 项）+ 回归真链路：聊天合成图 5 类 CHAT_*、发票/名片 0 误报；招牌 4 类实体+导出黑；未成年虚构证件推断/minor-strict/未检出 400；时间模糊 TIME 替换与日期保留；组合风险类别断言 |
 
 | F21 | **P1-B（Office/CSV/PDF 内嵌图）**：Office 内嵌图片**默认自动脱敏**（face/id/plate/qr/barcode/chat/sign），隐藏对象（图表/文本框/OLE/不可解码图）改为**需确认**（`media_confirmation_required`）；`strict_office_media` 剥离隐藏对象并把无命中图置白；CSV/TSV 支持列级+多级/合并表头（`table-cn` scope 含 text），导出保持原分隔符/引号且列数不变；PDF 文本层页 ≥5% 页面内嵌图识别为 `EMBEDDED_IMAGE` 并整块涂黑、重解析黑像素复检 | `test_office_media`（30 项）+ `test_csv_table`（72 断言）+ `test_pdf_embedded`（23 项）+ 回归真链路：Office 图片自动脱敏/重扫 0 命中/正常图字节不变/隐藏对象确认+strict/audit；CSV/TSV 列级覆盖+导出形状不变；PDF 内嵌图实体+黑覆盖+重解析 0 |
-> 允许的"变化"：新增识别类型/更多实体（例如以后人脸、条码、PIPL/表格规则被检出）**不算破坏**；但"原有必须命中的变少 / 导出失败 / 残留>0 / 元数据或隐藏数据回来了 / 服务外呼"一律算破坏。
+
+| F22 | **P1.5（内嵌图文字 / 证件类型 / CSV 编码 / 护照号）**：Office 内嵌图片在视觉/码类后对**纯文字 PII** 做 OCR 规则脱敏（统计 `text_hits/text_images_redacted/text_verify_*`，预算 `YINZHAN_OFFICE_TEXT_MAX_IMAGES/MAX_SECONDS`，总开关 `YINZHAN_OFFICE_TEXT_OCR`，导出后文字自检 0 命中）；PDF 文本层内嵌「纯文字图」也做规则检测 → `EMBEDDED_IMAGE`（note `engine=embedded_image;text=N;area=`，开关 `YINZHAN_PDF_EMBEDDED_TEXT_OCR`）；证件类型扩展 6 类（工作证/居住证/港澳通行证/台胞证/外国人永居证/银行卡，按 `doc=` 显示标签并整卡涂黑；银行卡不整页扩张）；CSV/TSV 保留原编码/BOM/换行（未知编码 warning 回退 UTF-8）；护照号规则 `cn.passport_no`（legal-cn，near 护照，`PASSPORT` + surrogate），规则 103→104 | `test_office_media`（43 项）+ `test_pdf_embedded`（40 项）+ `test_visual`（61 项）+ `test_csv_table`（115 断言）+ 回归真链路：Office 文字 OCR/预算/开关/审计；PDF text_sensitive 标记+涂黑/开关；6 类证件 label+整卡+银行卡不整页+负样本 0；护照 near/假值/不误报；GBK/BOM/UTF-16/CRLF 编码保留+未知回退 |> 允许的"变化"：新增识别类型/更多实体（例如以后人脸、条码、PIPL/表格规则被检出）**不算破坏**；但"原有必须命中的变少 / 导出失败 / 残留>0 / 元数据或隐藏数据回来了 / 服务外呼"一律算破坏。
 > 新增实体必须逐条解释：预期覆盖增强视为合理新增（软提示）；无法解释的才按误报处理（需 owner 修规则）。
 
 ## 三、回归门禁流程（每次改动必须走）
@@ -145,20 +146,21 @@
 - 回归：虚构 xlsx 夹具断言表头列级覆盖 + openpyxl 读回单元格类型为数字；样例 `对账单.xlsx` 新增
   「人名×1、表格账号列×1、金额（数值）×4」共 6 实体属**预期覆盖增强**（软提示，不算回归）。
 
-## 五、当前基线（2026-10-20 P1-B 收口）
+## 五、当前基线（2026-10-20 P1.5 收口）
 
 | 项 | 数值 |
 |---|---|
 | 基线文件 | `app/tests/baseline/baseline.json` + `SNAPSHOT.md`（版本化，`--update-baseline --reason` 重录） |
 | 代码状态 | HEAD `bdae2f2` + P1-B 未提交工作树（`engine_clean=false` 已如实记录） |
-| 规则包 | **8 个**（common/finance-cn/legal-cn/medical-cn/geo-cn/trade-cn/pipl-cn/table-cn），自有规则 **103 条** |
-| 编译规则数 | pdf/text 88、docx 99、xlsx 102、image/tiff 85、mesh 13 |
+| 规则包 | **8 个**（common/finance-cn/legal-cn/medical-cn/geo-cn/trade-cn/pipl-cn/table-cn），自有规则 **104 条**（P1.5 新增 legal-cn `cn.passport_no`） |
+| 编译规则数 | pdf/text 89、docx 100、xlsx 103、image/tiff 86、mesh 13（+1 护照号） |
 | 5 个既有样例 | 实体 52 个（对账单 13→19 为预期新增），双导出 residual 全 0，元数据/隐藏数据全清（本轮无聊天/招牌/证件样例，**功能基线数值不变**） |
-| 红线门禁 | `regression.py` **229 项检查全绿（硬项失败 0）**（+2 软提示）；退出码 0 |
-| 全套测试 | `run_all.py` **14 个套件**全绿：regression + barcodes/finance/trade/visual/legal/pipl/table/pdfhidden/signs/officemedia/csv/pdfembedded/tiff（test_visual 56 项、test_sign_targets 39 项、test_office_media 30 项、test_csv_table 72 断言、test_pdf_embedded 23 项） |
+| 红线门禁 | `regression.py` **241 项检查全绿（硬项失败 0）**（+2 软提示）；退出码 0 |
+| 全套测试 | `run_all.py` **14 个套件**全绿：regression + barcodes/finance/trade/visual/legal/pipl/table/pdfhidden/signs/officemedia/csv/pdfembedded/tiff（test_visual 61 项、test_sign_targets 39 项、test_office_media 43 项、test_csv_table 115 断言、test_pdf_embedded 40 项） |
 | 身份证 A 方案 | `fields` 默认（正面头像/姓名/号码/住址；反面签发机关/有效期限；性别/民族/出生、国徽/标题保留）、`whole` 可选整卡；API 默认/非法值回退 fields；无法定向/两行读不出回退整卡 |
 | P1-A 第一波 | 聊天截图逐项（5 类 CHAT_*，仅图片、微信式布局）；招牌/门牌/路牌/铭牌 OCR 扫描（4 kind，pending）；未成年人身份证生日推断 + `/minor-strict`；时间模糊 `time_blur`；组合风险 `combination_risk` |
 | P1-B 第一波 | Office 内嵌图默认自动脱敏；隐藏对象确认（`media_confirmation_required`）；`strict_office_media` 剥离/置白；CSV/TSV 列级+多级表头、导出形状不变；PDF 文本层内嵌图（≥5%）→ `EMBEDDED_IMAGE` 整块涂黑+复检；audit `counts.office_media` |
+| P1.5 | Office/PDF 内嵌图**文字 OCR** 规则脱敏（预算+开关+自检）；6 类证件标签（工作证/居住证/港澳通行证/台胞证/外国人永居证/银行卡，银行卡不整页）；CSV/TSV 原编码/BOM/换行保留（未知回退 UTF-8+warning）；护照号 `PASSPORT`（near 护照、surrogate），规则 103→104 |
 | 已知不修 | 83 双人低头侧脸（Haar 上限，YuNet 因 WIDER FACE CC BY-NC-ND 未随包）；聊天需 OCR/微信式布局；招牌无 OCR/白底不承诺；Office 内嵌图纯文字 P1.5、strict 改变外观；PDF 内嵌图仅文本层页/≥5%、异常格式降级 |
 
 ## 六、变更记录
@@ -173,3 +175,4 @@
 | 2026-10-20 | **身份证 A 方案增量**（用户再追加）：反面 `fields` 档也遮签发机关+有效期限（ID_AUTHORITY/ID_VALIDITY，国徽/标题/其余卡面保留）；jobs side/字段过滤 + pipeline 复检映射；回归新增反面 7 项真链路检查（201 项全绿）；5 样例无证件，规则/实体基线数值不变 | Lead + faces + qa |
 | 2026-10-20 | **P1-A 第一波**：聊天截图逐项（CHAT_AVATAR/NAME/GROUP/TIME/INPUT；仅 image、微信式布局、合成 5 类 0 误报）、招牌扫描器（sign_targets：门牌/路牌/店招/单位铭牌，OCR 锚点+白纸门控）、未成年人提示+严格模式（`/minor-strict` 整卡+全部黑）、时间模糊 `time_blur`、组合风险提示；前端安全提示条/时间开关/新类型；`test_visual` 56、`test_sign_targets` 39、`regression.py` **215 项**、`run_all.py` **11 套件**；5 样例无新增，基线数值不变 | Lead + faces + codes + designer + qa |
 | 2026-10-20 | **P1-B 第一波**：Office 内嵌图片自动脱敏 + 隐藏对象确认语义（strict 剥离/置白、audit `counts.office_media`）、CSV/TSV 列语义+多级/合并表头+导出形状不变、PDF 文本层内嵌图检测（`EMBEDDED_IMAGE` 涂黑+重解析复检）；`regression.py` **229 项**、`run_all.py` **14 套件**；5 样例无图片/文本层变化，基线规则/实体数值不变 | Lead + geo + trade + codes + qa |
+| 2026-10-20 | **P1.5**：Office 内嵌图片文字 OCR 自动脱敏（预算/开关/导出后自检）、PDF 文本层内嵌纯文字图检测（note text=N → EMBEDDED_IMAGE）、证件类型扩展 6 类（按 doc 显示标签整卡涂黑；银行卡不整页）、CSV/TSV 原编码/BOM/换行保留、护照号规则 `cn.passport_no`（PASSPORT，near 护照）；规则 103→104；`test_office_media` 43、`test_pdf_embedded` 40、`test_visual` 61、`test_csv_table` 115 断言；`regression.py` **241 项**、`run_all.py` **14 套件**；5 样例实体/残留不回归 | Lead + geo + faces + trade + codes + qa |

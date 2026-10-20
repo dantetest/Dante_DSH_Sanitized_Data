@@ -1072,6 +1072,90 @@ def check_p1b_capabilities(gate: Gate) -> None:
               _fmt_val({"bad": pb, "err": pdf_res.get("err")}))
 
 
+# ══════════════════════════ 5.9 P1.5（内嵌图文字/证件类型/CSV 编码/护照号） ══════════════════════════
+def check_p15_capabilities(gate: Gate) -> None:
+    """P1.5 真链路：Office/PDF 内嵌图文字 OCR、6 类证件、CSV 编码保留、护照号规则。"""
+    gate.set_current("功能红线 · P1.5")
+    gate.group("功能红线 · P1.5（内嵌图文字 OCR / 证件类型 / CSV 编码 / 护照号）")
+
+    off = qa.office_text_ocr_chain_test()
+    on = off.get("on") or {}
+    bg = off.get("budget") or {}
+    of = off.get("off") or {}
+    gate.hard("Office 内嵌图文字 OCR：命中>0 且成品重扫 0 命中",
+              on.get("text_hits", 0) >= 1
+              and on.get("text_images_redacted", 0) >= 1
+              and on.get("out_text_hits") == 0,
+              _fmt_val({"text_hits": on.get("text_hits"),
+                        "redacted": on.get("text_images_redacted"),
+                        "out_text_hits": on.get("out_text_hits"),
+                        "err": off.get("err")}))
+    gate.hard("Office 文字图：改的仅命中图、正常图字节不变",
+              on.get("changed_media", 0) >= 1
+              and on.get("unchanged_media", 0) >= 1,
+              _fmt_val({"changed": on.get("changed_media"),
+                        "unchanged": on.get("unchanged_media")}))
+    gate.hard("Office 文字 OCR 预算跳过 + 关闭开关仍做视觉脱敏",
+              bg.get("text_hits") == 0 and bool(bg.get("warnings"))
+              and of.get("text_hits") == 0
+              and of.get("visual_rescan") == 0
+              and (of.get("verify") or {}).get("verified") is True,
+              _fmt_val({"budget": bg, "off": of}))
+    gate.hard("Office 审计记录 office_media.text_*",
+              isinstance(off.get("audit_text"), dict)
+              and "text_hits" in (off.get("audit_text") or {}),
+              _fmt_val(off.get("audit_text")))
+
+    pdf = qa.pdf_embedded_text_chain_test()
+    pon = pdf.get("on") or {}
+    poff = pdf.get("off") or {}
+    gate.hard("PDF 文字内嵌图：EMBEDDED_IMAGE + note text=N + 涂黑/复检/verify",
+              pon.get("marks", 0) >= 1
+              and bool(pon.get("text_counts"))
+              and min(pon.get("text_counts") or [99]) >= 2
+              and pon.get("embedded", 0) >= 1
+              and (pon.get("black_ratios") or [])
+              and all(v >= 0.9 for v in pon.get("black_ratios") or [])
+              and pon.get("reparse_embedded") == 0
+              and (pon.get("verify") or {}).get("residual") == 0,
+              _fmt_val({"marks": pon.get("marks"),
+                        "text": pon.get("text_counts"),
+                        "black": pon.get("black_ratios"),
+                        "reparse": pon.get("reparse_embedded"),
+                        "err": pdf.get("err")}))
+    gate.hard("PDF 文字内嵌图：开关=0 时不产 mark",
+              poff.get("marks") == 0, _fmt_val(poff))
+
+    docs = qa.id_doc_types_chain_test()
+    cases = docs.get("cases") or {}
+    gate.hard("6 类证件：ID_DOCUMENT label 正确且整卡涂黑/verify 通过",
+              docs.get("ok") is True,
+              _fmt_val({"ok": docs.get("ok"), "err": docs.get("err"),
+                        "cases": {k: {"labels": v.get("labels"),
+                                      "area": v.get("area_ratio"),
+                                      "black": v.get("black"),
+                                      "err": v.get("export_error")}
+                                  for k, v in cases.items()}}))
+    gate.hard("银行卡不整页扩张（面积比<0.90）",
+              float((cases.get("bank_card") or {}).get("area_ratio") or 1.0) < 0.90,
+              _fmt_val(cases.get("bank_card")))
+    gate.hard("发票/合同负样本 0 新增证件实体",
+              all((docs.get("negatives") or {}).get(k, {}).get("ok") is True
+                  for k in ("invoice", "contract")),
+              _fmt_val(docs.get("negatives")))
+
+    pp = qa.passport_rule_chain_test()
+    gate.hard("护照号规则：near 命中 PASSPORT + surrogate 假值；无 near/法人不误报",
+              pp.get("ok") is True, _fmt_val(pp))
+
+    csv_res = qa.csv_encoding_chain_test()
+    ccases = csv_res.get("cases") or {}
+    bad = {k: v for k, v in ccases.items() if not v.get("ok")}
+    gate.hard("CSV/TSV 编码保留：GBK/utf-8-sig/UTF-16/GBK+CRLF 回读一致",
+              csv_res.get("ok") is True,
+              _fmt_val({"err": csv_res.get("err"), "bad": bad}))
+
+
 # ══════════════════════════ 6. MCP 工具（F9） ══════════════════════════
 def check_mcp(gate: Gate) -> None:
     gate.set_current("契约完整性 · MCP 工具")
@@ -1371,6 +1455,12 @@ def run_checks() -> int:
         check_p1b_capabilities(gate)
     except Exception:
         gate.hard("P1-B 第一波检查异常", False, traceback.format_exc(limit=2))
+
+    # 4.9 P1.5（内嵌图文字/证件类型/CSV 编码/护照号）
+    try:
+        check_p15_capabilities(gate)
+    except Exception:
+        gate.hard("P1.5 检查异常", False, traceback.format_exc(limit=2))
 
     # 5 HTTP 服务 + 主路径
     http_bundle: dict = {}
