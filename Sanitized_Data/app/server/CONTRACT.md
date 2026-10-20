@@ -1,8 +1,11 @@
-# 数据隐站 · 引擎契约 v2
+# 数据隐站 · 引擎契约 v3
 
 > 所有模块只依赖本文件描述的数据结构与 API。改动契约必须先改本文件。
 > v2（2026-10-19 方案 A 启动）：新增页面图像扫描扩展点、Verify 视觉/码类复检、
 > 未处理内嵌媒体二次确认、仅清理导出；安全与回归红线见 `docs/red-lines.md`。
+> v3（2026-10-20 PIPL P0）：PDF 隐藏数据（附件/批注/表单/JS）默认剥离、图片 EXIF
+> Orientation 转正、人脸大图分块/整头、`pipl-cn`/`table-cn` 规则包、
+> `table_column`/`numeric_cell` 检测器、xlsx 数值写回、整页涂黑按钮。
 
 ## 0. 运行环境
 
@@ -74,6 +77,16 @@ class Document:
     meta: dict = {}                # 作者/设备/坐标参考系等，导出时默认丢弃
     extra: dict = {}               # 解析器私有（可放文件句柄）
     warnings: list[str] = []
+
+# v3 约定（解析器必须遵守）：
+# - image: parse 时按 EXIF Orientation 转正像素（parse/export/render 一致）；
+# - pdf: meta 里记录隐藏数据计数：embedded_files:int、pdf_annotations:int、
+#   pdf_forms:int、pdf_js:bool；可选 embedded_file_names/pdf_annotation_types（审计用，
+#   不记内容）；doc.extra["pdf_hidden"]={"before":..., "removed":..., "kept":bool}
+# - xlsx: 数值单元格 Block.attrs 增加 numeric:bool、date:bool、number_format:str，
+#   仅元数据，不改变解析/导出语义。
+# - Block.attrs 里表头列级/数值检测依赖解析器给出的 ref（xlsx: sheet/cell/row/col；
+#   docx: t/r/c），不得移除。
 
 @dataclass
 class Span:
@@ -149,6 +162,9 @@ class Parser:
 2. 必须清理元数据（见 §7）。
 3. 未知/不支持的子特性不能静默丢弃，要 `warnings.append(...)`。
 4. 解析失败不抛异常给用户，尽量降级并写 `doc.warnings`。
+5. 图片解析器必须按 EXIF Orientation 转正像素（parse 与 export/render 一致），否则 OCR/人脸坐标错位且成品方向错误。
+6. PDF 导出默认剥离附件/批注/表单控件/JS（`keep_pdf_hidden=True` 才保留），保存后重新打开成品复检计数必须为 0（或显式保留），否则 `ExportError`。
+7. 数值单元格导出时：`numeric_cell` 实体写回**数字类型**并保留 `number_format`，账号类保持字符串；公式单元格不破坏。
 
 注册：模块底部 `registry.register_parser(PdfParser)`。
 
@@ -167,6 +183,8 @@ class Detector:
 辅助：`registry.iter_text_blocks(doc)` 产出 `(block, text)`。
 
 检测器**只负责找**，不负责替换。同一 `value` 在多处命中要合并成一个 Entity（多个 spans）。
+
+内置检测器类型（`detect: [{type: ...}]`）：`regex`、`joined_regex`（同页相邻文本块拼接后匹配，命中映射回逐行 span，支持命名捕获 `value` 与 `value_clean: collapse_ws`）、`dict`、`ner`、`table_column`（按解析器 ref 的表格表头做整列检测，仅供 xlsx/docx）、`numeric_cell`（xlsx 数值单元格，按表头列语义生成 AMOUNT/ACCOUNT 实体）。
 
 ## 5. 替换器契约（`replacers/*.py`）
 
@@ -196,7 +214,7 @@ def build(rule: Rule, value: str, ctx: ReplaceContext) -> Decision
 | POST | `/api/jobs/{id}/mark` | `{page, rect:[x0,y0,x1,y1] 归一化 0..1, etype, propagate}` → `{added, propagated}` |
 | POST | `/api/jobs/{id}/entities/{eid}` | `{action:"accept"\|"reject", replacement?}` |
 | POST | `/api/jobs/{id}/accept-all` | → `{total}` |
-| POST | `/api/jobs/{id}/export` | `{mode:"ai"\|"human"}` → `ExportResult` |
+| POST | `/api/jobs/{id}/export` | `{mode:"ai"\|"human", allow_unprocessed_media?, keep_pdf_hidden?}` → `ExportResult` |
 | GET | `/api/jobs/{id}/file?mode=ai\|human` | 下载成品 |
 | GET | `/api/audit?limit=50` | 审计记录 |
 | GET | `/api/packs` | 规则包 |
@@ -228,7 +246,9 @@ def build(rule: Rule, value: str, ctx: ReplaceContext) -> Decision
 
 1. 用全部检测器重跑成品，`residual` 必须为 0 才允许落盘。
 2. 扫描元数据黑名单（pdf `/Author` `/Producer` XMP、docx `docProps/*`、图片 EXIF/XMP/GPS、TIFF 地理标签）。
-3. 任一不通过 → 删除成品、抛 `VerifyError`。
+3. 重扫描成品里的视觉/码类目标（`visual_residual` 必须为 0）；未处理内嵌媒体必须已确认。
+4. PDF 隐藏数据：成品重解析后 `embedded_files/pdf_annotations/pdf_forms/pdf_js` 必须为 0（除非导出时显式 `keep_pdf_hidden=true`）。
+5. 任一不通过 → 删除成品、抛 `VerifyError`。
 
 ## 8. 安全红线
 
@@ -297,3 +317,34 @@ verify(exported, entities, parser, ctx, *, doc=None, options=None) -> dict
 - 新增校验器放域独立文件（`detectors/finance_validators.py`、`detectors/trade_validators.py`），`@register_validator` 注册；`regex_det` 通用新增 `unless_validate`（反向校验）与 `exclude_near`（上下文排除）。
 - `common.yaml` 由 Lead 统一维护：USCC 已挂 `uscc_checksum`；银行卡排除身份证；固定电话排除发票代码。
 - 新增依赖必须离线可装、许可证免费安全（MIT/BSD/Apache-2.0/PSF），并在 `desktop/app.spec` 与 `requirements.txt` 同步。**不得引入运行时联网组件**。
+
+---
+
+## 11. v3 / PIPL P0（2026-10-20）
+
+### 11.1 图片朝向
+
+- `image_parser` 的 parse/export/render 必须在入口调用 `_apply_orientation()`（PIL `ImageOps.exif_transpose`，仅单帧）再转 RGB；页面尺寸取转正后的像素尺寸。导出重编码不携带 EXIF，成品方向必须正确。
+- TIFF 若走 Pillow 路径同理；rasterio 路径的 Orientation 支持列已知限制（P1）。
+
+### 11.2 PDF 隐藏数据
+
+- 解析：`pdf_parser` 统计附件/批注/表单/JS 写入 `doc.meta`（字段见 §2），并 warning "将默认剥离；`keep_pdf_hidden` 可保留"。
+- 导出：先删附件/表单/批注/JS、清 `/Thumb`，再做 redaction 与 metadata/XMP；保存后重开复检，任一计数 >0（且未 keep）→ 删成品并 `ExportError`。
+- Verify：成品 `embedded_files/pdf_annotations/pdf_forms/pdf_js` 任一非 0 且未 `keep_pdf_hidden` → `VerifyError`。
+- `has_cleanup_targets`：仅有隐藏数据、无可涂文字的 PDF 允许"仅清理导出"。
+- 审计：`counts["pdf_hidden"]`、`counts["keep_pdf_hidden"]` 记录剥离/保留痕迹。
+
+### 11.3 图片目标
+
+- `visual_targets`：人脸检测新增长边 >1600 分块（2×2 cap640 / 3×3 cap960）与整头外扩（上 35% 发际、左右 25% 耳廓、下 15% 下颌）；缩放检测时写 `doc.warnings`（会经 job.warnings 展示）；侧脸/低头/遮挡/极小脸为已知限制（P1 YuNet 可选，模型未随包）。
+- 车牌：新增完整牌面色块检测（HSV 蓝/绿/黄底 + 矩形拟合），OCR 仅确认；不可读回退 OCR 框并 note `color/<色>;unconfirmed`。
+- 证件：文本块数门控（≥18 块不判证件；12–17 块禁止 ≥25% 整页扩张，只涂锚点邻域），避免发票/合同整页误伤。
+- 码类低置信门控：`/detect`（仅检测未解码）且面积 >5% 页面的候选不自动打码，写 warning 让用户人工确认（`jobs._visual_entities`）。
+
+### 11.4 规则与表格
+
+- 新增规则包 `pipl-cn.yaml`（21 条：社交/聊天 ID、昵称、快递、票号、CVV、VIN、IMEI、MAC、SN、IPv4/6、门牌/楼栋、航班/车次/座位、工号/工牌、空格手机号、datetime 默认关闭）与 `table-cn.yaml`（11 条表头列级）。
+- 新增检测器：`table_column`（xlsx/docx 表头列级）、`numeric_cell`（xlsx 数值单元格）；新增校验器 `pipl_validators.py`（`pipl_*` 前缀）。
+- 10 条敏感规则 scope 补 `image, tiff`：`cn.amount_cn`、`cn.credit_line`、`cn.iban`、`cn.reg_capital`、`cn.bank_routing_no`、`cn.pay_platform_id`、`cn.lawyer_license`、`cn.legal_party`、`cn.department`、`cn.sensitive_diagnosis`。
+- xlsx 导出：`numeric_cell` 写数字类型、保留 number_format；账号写字符串；公式保留并置 fullCalcOnLoad。
