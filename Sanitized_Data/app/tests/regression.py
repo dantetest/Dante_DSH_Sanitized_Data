@@ -829,6 +829,7 @@ def check_id_card_capabilities(gate: Gate) -> None:
     wf = r.get("whole_front") or {}
     bf = r.get("back_fields") or {}
     bw = r.get("back_whole") or {}
+    bnf = r.get("back_nofields_fields") or {}
     nf = r.get("noface_fields") or {}
     field_kinds = set(ff.get("field_kinds") or [])
     want = {"ID_PHOTO", "ID_NAME", "ID_NUMBER", "ID_ADDRESS"}
@@ -861,13 +862,41 @@ def check_id_card_capabilities(gate: Gate) -> None:
     gate.hard("whole 档 human：verify residual=0",
               (wf.get("verify") or {}).get("residual") == 0,
               _fmt_val(wf.get("verify") or wf.get("export_error")))
-    gate.hard("反面 fields 档：无 ID_* 字段实体（反面不遮）",
-              not (bf.get("id_types") or []), _fmt_val(bf.get("types")))
-    gate.hard("反面 fields 档：提示切「整卡涂黑」",
-              any("反面" in str(x) for x in (bf.get("warnings") or [])),
-              _fmt_val(bf.get("warnings")))
+    # 反面（用户 2026-10-20 追加：签发机关+有效期限也抹）
+    gate.hard("反面 fields 档：实体为 ID_AUTHORITY×1 + ID_VALIDITY×1",
+              bf.get("types") == {"ID_AUTHORITY": 1, "ID_VALIDITY": 1},
+              _fmt_val(bf.get("types")))
+    gate.hard("反面 fields 档：不含 ID_DOCUMENT 整页实体",
+              bf.get("has_doc") is not True, _fmt_val(bf.get("types")))
+    b_prot = bf.get("protected_ratios") or {}
+    gate.hard("反面 fields human：签发机关/有效期限两行已遮盖",
+              set(b_prot) == {"ID_AUTHORITY", "ID_VALIDITY"}
+              and all(float(v) >= 0.6 for v in b_prot.values()),
+              _fmt_val(b_prot))
+    b_ret = bf.get("retained_ratios") or []
+    b_ov = bf.get("retained_max_overlap") or []
+    gate.hard("反面 fields human：国徽/标题/其余卡面保留",
+              bool(b_ret) and all(float(v) <= 0.5 for v in b_ret)
+              and bool(b_ov) and all(float(v) <= 0.2 for v in b_ov),
+              _fmt_val({"pixel": b_ret, "overlap": b_ov}))
+    gate.hard("反面 fields human：verify residual=0",
+              (bf.get("verify") or {}).get("residual") == 0,
+              _fmt_val(bf.get("verify") or bf.get("export_error")))
+    gate.hard("反面「两行读不出」→ fields 回退 ID_DOCUMENT 并提示",
+              bnf.get("has_doc") is True and not (bnf.get("id_types") or [])
+              and any("反面字段定位失败" in str(x)
+                      for x in (bnf.get("warnings") or [])),
+              _fmt_val({"types": bnf.get("types"),
+                        "warnings": bnf.get("warnings")}))
     gate.hard("反面 whole 档：实体含 ID_DOCUMENT", bw.get("has_doc") is True,
               _fmt_val(bw.get("types")))
+    gate.hard("反面 whole 档 human：整页黑覆盖率≈100%",
+              float(bw.get("full_black_ratio") or 0) >= 0.98,
+              _fmt_val({"ratio": bw.get("full_black_ratio"),
+                        "err": bw.get("export_error")}))
+    gate.hard("反面 whole 档 human：verify residual=0",
+              (bw.get("verify") or {}).get("residual") == 0,
+              _fmt_val(bw.get("verify") or bw.get("export_error")))
     gate.hard("无脸/无法定向正面 fields：回退整卡并提示",
               nf.get("has_doc") is True
               and any("整卡" in str(x) for x in (nf.get("warnings") or [])),
@@ -875,7 +904,8 @@ def check_id_card_capabilities(gate: Gate) -> None:
                         "warnings": nf.get("warnings")}))
     gate.soft("身份证 A 方案细节",
               _fmt_val({"fields_warnings": ff.get("warnings"),
-                        "whole_warnings": wf.get("warnings")}))
+                        "whole_warnings": wf.get("warnings"),
+                        "back_warnings": bf.get("warnings")}))
 
 
 # ══════════════════════════ 6. MCP 工具（F9） ══════════════════════════

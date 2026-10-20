@@ -41,7 +41,7 @@
 | F16 | **表格表头列级检测**（`table-cn` 11 条，XLSX/DOCX 整列覆盖） | `test_table_column.py` + 回归 xlsx 列级覆盖夹具 |
 | F17 | **前端整图涂黑**按钮（后端 `/mark` rect=[0,0,1,1] → black 实体铺满页面） | 回归 API 级断言（black/coverage） |
 | F18 | 判决书类文本检测（跨行案号/地址、标签姓名、竖排审判员、带空格金额） | `test_legal_detect.py` |
-| F19 | **身份证 A 方案**：默认 `fields` 档只遮头像/姓名/身份证号/住址（性别/民族/出生保持可见），可选 `whole` 整卡涂黑；`POST /api/jobs` 默认 fields、非法值回退 fields；反面 fields 不遮并提示切整卡、无法定向时回退整卡 | `test_visual`（47 项）+ 回归真链路合成证件夹具（5 组档位断言：API 默认/非法、fields 四字段+保留行、whole 整页、反面、无脸回退） |
+| F19 | **身份证 A 方案**：默认 `fields` 档正面遮头像/姓名/身份证号/住址（性别/民族/出生保持可见），**反面遮签发机关+有效期限（国徽/标题/其余卡面保留）**；可选 `whole` 整卡涂黑；`POST /api/jobs` 默认 fields、非法值回退 fields；正面无脸/无法定向、反面两行读不出 → 整卡回退并提示 | `test_visual`（48 项）+ 回归真链路合成证件夹具（API 默认/非法、fields 正面四字段+保留行、fields 反面两字段+国徽标题保留、whole 整页、两面 fallback） |
 
 > 允许的"变化"：新增识别类型/更多实体（例如以后人脸、条码、PIPL/表格规则被检出）**不算破坏**；但"原有必须命中的变少 / 导出失败 / 残留>0 / 元数据或隐藏数据回来了 / 服务外呼"一律算破坏。
 > 新增实体必须逐条解释：预期覆盖增强视为合理新增（软提示）；无法解释的才按误报处理（需 owner 修规则）。
@@ -152,10 +152,10 @@
 | 规则包 | **8 个**（common/finance-cn/legal-cn/medical-cn/geo-cn/trade-cn/pipl-cn/table-cn），自有规则 **103 条** |
 | 编译规则数 | pdf/text 88、docx 99、xlsx 102、image/tiff 85、mesh 13 |
 | 5 个既有样例 | 实体 52 个（对账单 13→19 为预期新增），双导出 residual 全 0，元数据/隐藏数据全清（本轮无证件样例，**功能基线数值不变**） |
-| 红线门禁 | `regression.py` **199 项检查全绿（硬项失败 0）**（+N 软提示）；退出码 0 |
+| 红线门禁 | `regression.py` **204 项检查全绿（硬项失败 0）**（+N 软提示）；退出码 0 |
 | 全套测试 | `run_all.py` **10 个套件**全绿：regression + barcodes/finance/trade/visual/legal/pipl/table/pdfhidden/tiff（test_visual 47 项） |
-| 身份证 A 方案 | `fields` 默认（头像/姓名/号码/住址；性别/民族/出生保持可见）、`whole` 可选整卡；API 默认/非法值回退 fields；反面 fields 不遮并提示切整卡、无法定向回退整卡 |
-| 已知不修 | 用户测试集 83 双人低头侧脸仍漏（Haar 上限，P1 YuNet）；身份证反面 fields 档不遮（产品语义，提示切整卡） |
+| 身份证 A 方案 | `fields` 默认（正面头像/姓名/号码/住址；反面签发机关/有效期限；性别/民族/出生、国徽/标题保留）、`whole` 可选整卡；API 默认/非法值回退 fields；无法定向/两行读不出回退整卡 |
+| 已知不修 | 用户测试集 83 双人低头侧脸仍漏（Haar 上限，P1 YuNet） |
 
 ## 六、变更记录
 
@@ -166,3 +166,4 @@
 | 2026-10-20 | 真实判决书漏识别修复（跨行案号/地址、标签姓名、竖排审判员、带空格金额）；新增 `joined_regex` 检测器与 `test_legal_detect.py`；基线规则 66→71 | Lead + qa |
 | 2026-10-20 | **P0 第二波（PIPL 收口）**：PDF 隐藏数据剥离 + verify 拦截、图片 EXIF Orientation 转正、`pipl-cn`(21)/`table-cn`(11) 规则包 + 校验器、`numeric_cell` 数值写回、10 条规则 scope 扩 image/tiff、前端整图涂黑；基线规则 71→103（8 包）、对账单 +6 实体（预期）、`regression.py` 177 项硬检查、`run_all.py` 10 套件全绿 | Lead + 6 域开发 + qa |
 | 2026-10-20 | **身份证 A 方案**（用户追加要求）：默认 `fields` 只遮头像/姓名/身份证号/住址，`whole` 可选整卡；jobs `id_card_mode` + `_visual_entities` 按档过滤 + 证件内 OCR 文字实体让位 + 照片较大 warning；API/前端选择器；`pipeline._RECT_ETYPE_KIND` 字段复检映射；回归新增 17 项真链路检查（API 默认/非法、fields 四字段+保留行、whole 整页、反面、无脸回退），`regression.py` **199 项**；5 样例无证件，规则/实体基线数值不变 | Lead + faces + designer + qa |
+| 2026-10-20 | **身份证 A 方案增量**（用户再追加）：反面 `fields` 档也遮签发机关+有效期限（ID_AUTHORITY/ID_VALIDITY，国徽/标题/其余卡面保留）；jobs side/字段过滤 + pipeline 复检映射；回归新增反面 7 项真链路检查（201 项全绿）；5 样例无证件，规则/实体基线数值不变 | Lead + faces + qa |

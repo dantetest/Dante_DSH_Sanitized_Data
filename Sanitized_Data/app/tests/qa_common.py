@@ -1891,23 +1891,57 @@ def _build_id_noface(path: Path) -> dict:
     return _build_id_front(path, photo=False)
 
 
-def _build_id_back(path: Path) -> dict:
-    """合成身份证反面（虚构信息）：只有签发机关/有效期限，无正面字段。"""
+def _build_id_back(path: Path, rows: bool = True) -> dict:
+    """合成身份证反面（虚构信息）：国徽占位 + 标题 + 签发机关/有效期限两行。
+
+    ``rows=False`` 时只画国徽/标题，用于验证「两行读不出 → 整卡 fallback」。
+    """
     from PIL import Image, ImageDraw
     w, h = IDCARD_PAGE
     card = IDCARD_CARD
+    cw, ch = card[2] - card[0], card[3] - card[1]
     img = Image.new("RGB", (w, h), (120, 130, 125))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle(card, radius=28, fill=(250, 250, 248),
                         outline=(90, 90, 90), width=4)
-    d.text(_idc_rel(card, 0.30, 0.14), "中华人民共和国居民身份证",
-           font=_idc_font(38), fill=(25, 25, 25))
-    d.text(_idc_rel(card, 0.12, 0.52), "签发机关 上海市公安局浦东分局",
-           font=_idc_font(32), fill=(25, 25, 25))
-    d.text(_idc_rel(card, 0.12, 0.68), "有效期限 2020.01.01-2040.01.01",
-           font=_idc_font(28), fill=(25, 25, 25))
+    retained: list[tuple] = []
+    # 国徽占位（暗红；不是黑色，用于断言"保留"）
+    ex = card[0] + 0.50 * cw
+    ey = card[1] + 0.085 * ch
+    r = 0.040 * cw
+    d.ellipse([ex - r, ey - r, ex + r, ey + r], fill=(150, 25, 25))
+    retained.append((ex - r, ey - r, ex + r, ey + r))
+    # 标题
+    tpos = _idc_rel(card, 0.30, 0.145)
+    tfont = _idc_font(38)
+    d.text(tpos, "中华人民共和国居民身份证", font=tfont, fill=(25, 25, 25))
+    retained.append(tuple(float(v) for v in d.textbbox(tpos, "中华人民共和国居民身份证",
+                                                      font=tfont)))
+    protected: list[tuple] = []
+    if rows:
+        apos = _idc_rel(card, 0.17, 0.695)
+        afont = _idc_font(28)
+        atext = "签发机关 上海市公安局浦东分局"
+        d.text(apos, atext, font=afont, fill=(25, 25, 25))
+        protected.append(tuple(float(v) for v in d.textbbox(apos, atext, font=afont)))
+        vpos = _idc_rel(card, 0.17, 0.855)
+        vfont = _idc_font(26)
+        vtext = "有效期限 2020.01.01-2040.01.01"
+        d.text(vpos, vtext, font=vfont, fill=(25, 25, 25))
+        protected.append(tuple(float(v) for v in d.textbbox(vpos, vtext, font=vfont)))
     img.save(path)
-    return {"path": path}
+    return {"path": path, "protected": protected, "retained": retained}
+
+
+def _overlap_frac(inner, outer) -> float:
+    """inner 矩形被 outer 覆盖的面积占比（0~1）。"""
+    x0 = max(inner[0], outer[0])
+    y0 = max(inner[1], outer[1])
+    x1 = min(inner[2], outer[2])
+    y1 = min(inner[3], outer[3])
+    inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+    area = max(1e-6, (inner[2] - inner[0]) * (inner[3] - inner[1]))
+    return inter / area
 
 
 def _black_ratio(img, rect, inset: float = 0.12) -> float:
@@ -1945,6 +1979,7 @@ def id_card_chain_test() -> dict:
         d.mkdir(parents=True, exist_ok=True)
         front = _build_id_front(d / "idfront.png")
         back = _build_id_back(d / "idback.png")
+        back_nofields = _build_id_back(d / "idback_nofields.png", rows=False)
         noface = _build_id_noface(d / "idfront_noface.png")
 
         def _override(dets):
@@ -1998,16 +2033,6 @@ def id_card_chain_test() -> dict:
                 ratios = {kind: _black_ratio(img, rects[kind]) for kind in f["field_kinds"]}
                 f["protected_ratios"] = ratios
                 f["retained_ratios"] = [_black_ratio(img, r) for r in front["retained"]]
-
-                def _overlap_frac(inner, outer) -> float:
-                    x0 = max(inner[0], outer[0])
-                    y0 = max(inner[1], outer[1])
-                    x1 = min(inner[2], outer[2])
-                    y1 = min(inner[3], outer[3])
-                    inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
-                    area = max(1e-6, (inner[2] - inner[0]) * (inner[3] - inner[1]))
-                    return inter / area
-
                 field_rects = [r for k, r in rects.items() if k.startswith("ID_")]
                 f["retained_max_overlap"] = [
                     round(max((_overlap_frac(r, pr) for pr in field_rects),
@@ -2039,12 +2064,32 @@ def id_card_chain_test() -> dict:
                 w["export_error"] = f"{type(exc).__name__}: {exc}"
             res["whole_front"] = w
 
-            # 3) 反面：fields 不遮字段但提示切整卡；whole 有整卡
+            # 3) 反面：fields 遮签发机关/有效期限（国徽/标题保留）；whole 整卡；
+            #    「两行读不出」→ 整卡 fallback + 提示
             job = _run(back["path"], "fields", None)
             ents = list(job.entities)
+            rects = {e.etype: _ent_rect(e) for e in ents if _ent_rect(e) is not None}
             bf = {"stage": job.stage, "types": _types(ents),
                   "warnings": list(job.warnings)[:6],
-                  "id_types": [e.etype for e in ents if e.etype.startswith("ID_")]}
+                  "has_doc": "ID_DOCUMENT" in rects}
+            try:
+                rec = _export_human(job)
+                out = Path(rec["out"])
+                img = Image.open(out).convert("RGB")
+                bf["protected_ratios"] = {
+                    etype: _black_ratio(img, rects[etype])
+                    for etype in ("ID_AUTHORITY", "ID_VALIDITY") if etype in rects}
+                bf["retained_ratios"] = [_black_ratio(img, r) for r in back["retained"]]
+                top_rects = [rects[t] for t in ("ID_AUTHORITY", "ID_VALIDITY")
+                             if t in rects]
+                bf["retained_max_overlap"] = [
+                    round(max((_overlap_frac(r, pr) for pr in top_rects),
+                              default=0.0), 3)
+                    for r in back["retained"]]
+                bf["verify"] = dict(rec.get("verify") or {})
+                bf["export_ok"] = out.is_file() and out.stat().st_size > 0
+            except Exception as exc:  # noqa: BLE001
+                bf["export_error"] = f"{type(exc).__name__}: {exc}"
             res["back_fields"] = bf
             job = _run(back["path"], "whole", None)
             ents = list(job.entities)
@@ -2063,6 +2108,17 @@ def id_card_chain_test() -> dict:
                 bw["export_error"] = f"{type(exc).__name__}: {exc}"
             res["back_whole"] = bw
 
+            # 3b) 反面「两行读不出」→ fields 回退整卡 + 提示
+            job = _run(back_nofields["path"], "fields", None)
+            ents = list(job.entities)
+            bnf = {"stage": job.stage, "types": _types(ents),
+                   "warnings": list(job.warnings)[:6],
+                   "has_doc": any(e.etype == "ID_DOCUMENT" for e in ents),
+                   "id_types": [e.etype for e in ents
+                                if e.etype.startswith("ID_")
+                                and e.etype != "ID_DOCUMENT"]}
+            res["back_nofields_fields"] = bnf
+
             # 4) 无脸/无法定向的正面 → fields 回退整卡 + 提示
             job = _run(noface["path"], "fields", [])
             ents = list(job.entities)
@@ -2078,10 +2134,14 @@ def id_card_chain_test() -> dict:
         wf = res.get("whole_front") or {}
         bf = res.get("back_fields") or {}
         bw = res.get("back_whole") or {}
+        bnf = res.get("back_nofields_fields") or {}
         nf = res.get("noface_fields") or {}
         protected = ff.get("protected_ratios") or {}
         retained = ff.get("retained_ratios") or []
         retained_ov = ff.get("retained_max_overlap") or []
+        bf_prot = bf.get("protected_ratios") or {}
+        bf_ret = bf.get("retained_ratios") or []
+        bf_ov = bf.get("retained_max_overlap") or []
         ok = bool(
             ff.get("stage") == "ready"
             and set(ff.get("field_kinds") or []) == {"ID_PHOTO", "ID_NAME",
@@ -2093,9 +2153,17 @@ def id_card_chain_test() -> dict:
             and (ff.get("verify") or {}).get("residual") == 0
             and wf.get("has_doc") and (wf.get("full_black_ratio") or 0) >= 0.98
             and (wf.get("verify") or {}).get("residual") == 0
-            and not bf.get("id_types")
-            and any("反面" in str(x) for x in (bf.get("warnings") or []))
-            and bw.get("has_doc")
+            and bf.get("types") == {"ID_AUTHORITY": 1, "ID_VALIDITY": 1}
+            and not bf.get("has_doc")
+            and set(bf_prot) == {"ID_AUTHORITY", "ID_VALIDITY"}
+            and all(v >= 0.6 for v in bf_prot.values())
+            and bf_ret and all(v <= 0.5 for v in bf_ret)
+            and bf_ov and all(v <= 0.2 for v in bf_ov)
+            and (bf.get("verify") or {}).get("residual") == 0
+            and bw.get("has_doc") and (bw.get("full_black_ratio") or 0) >= 0.98
+            and (bw.get("verify") or {}).get("residual") == 0
+            and bnf.get("has_doc") and not bnf.get("id_types")
+            and any("反面字段定位失败" in str(x) for x in (bnf.get("warnings") or []))
             and nf.get("has_doc")
             and any("整卡" in str(x) for x in (nf.get("warnings") or []))
         )
@@ -2160,11 +2228,15 @@ def capture_known_limits() -> dict:
         "id_card_modes": {
             "default": "fields",
             "optional": ["fields", "whole"],
-            "field_kinds": ["id_photo", "id_name", "id_number", "id_address"],
+            "front_field_kinds": ["id_photo", "id_name", "id_number", "id_address"],
+            "back_field_kinds": ["id_authority", "id_validity"],
+            "field_kinds": ["id_photo", "id_name", "id_number", "id_address",
+                            "id_authority", "id_validity"],
             "jobs_impl": "id_card_mode" in jobs_src,
             "visual_targets_fields": all(k in visual_src for k in
                                          ("id_photo", "id_name", "id_number",
-                                          "id_address")),
+                                          "id_address", "id_authority",
+                                          "id_validity")),
             "ocr_text_entities_dropped_in_card":
                 "_drop_text_entities_in_id_cards" in jobs_src,
             "frontend_selector": ("id_card_mode" in appjs_src
@@ -2174,9 +2246,6 @@ def capture_known_limits() -> dict:
         "known_gaps_not_fixed": {
             "side_face_low_head_miss": "用户测试集 83 双人低头侧脸仍漏（Haar 模型上限，"
                                        "已写 docs/impl/visual.md，P1 YuNet 建议；本轮不修）",
-            "id_card_back_fields_not_masked":
-                "身份证反面在 fields 档不遮字段（反面无姓名/号码/住址），只提示切"
-                "「整卡涂黑」；这是产品语义不是缺陷（whole 档仍可整卡遮）",
         },
         "pdf_text_layer_pages_skipped_ocr": {
             "min_text_chars": int(m.group(1)) if m else None,
@@ -2517,13 +2586,14 @@ def write_snapshot(base: dict, path: Path) -> None:
     A(f"- 前端整图涂黑（rect=[0,0,1,1] → black 实体）："
       f"{kl.get('frontend_full_image_black')}")
     idm = kl.get("id_card_modes") or {}
-    A(f"- **身份证 A 方案**：默认 `{idm.get('default')}`（只遮头像/姓名/身份证号/住址），"
-      f"可选 `{idm.get('optional')}` 整卡涂黑；字段 kind={idm.get('field_kinds')}；"
+    A(f"- **身份证 A 方案**：默认 `{idm.get('default')}`；"
+      f"正面字段={idm.get('front_field_kinds')}，反面字段={idm.get('back_field_kinds')}；"
+      f"可选 `{idm.get('optional')}` 整卡涂黑；"
       f"jobs id_card_mode={idm.get('jobs_impl')}，"
       f"证件内 OCR 文字实体让位={idm.get('ocr_text_entities_dropped_in_card')}，"
       f"前端选择器={idm.get('frontend_selector')}")
-    A("- **边界（产品语义，非缺陷）**：身份证反面在 `fields` 档不遮字段（反面没有"
-      "姓名/号码/住址），会提示切「整卡涂黑」；`whole` 档仍整卡遮。")
+    A("- **边界（产品语义）**：身份证反面在 `fields` 档遮签发机关+有效期限两行，"
+      "国徽/标题/其余卡面保留；两面字段都读不出时整卡回退并提示切「整卡涂黑」。")
     gaps = kl.get("known_gaps_not_fixed") or {}
     if gaps:
         A("- **已知不修（本轮确认，不当作回归）**：")
