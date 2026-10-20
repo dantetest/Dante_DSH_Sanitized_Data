@@ -344,10 +344,10 @@ verify(exported, entities, parser, ctx, *, doc=None, options=None) -> dict
 
 ### 11.5 身份证脱敏档位（2026-10-20 用户选 A）
 
-- 任务级参数 `id_card_mode`：`fields`（默认，只遮头像/姓名/身份证号/住址）/ `whole`（整卡或整页黑）。
-- 扫描器 `visual_targets` 对身份证正面额外返回 `id_photo/id_name/id_number/id_address` 四个 kind；`id_document` 保留给整卡档；note 约定：`side=front|back;fields=n;orient=0|90|180|270`，定位失败时 `fallback=1`。
-- `jobs._visual_entities` 按档位过滤：fields 只取四个字段（正面定位失败回退整卡，并 warning）；whole 只取 id_document；身份证反面 fields 模式不涂字段，只 warning 提示可切整卡。
-- `_VISUAL_SPEC` 新映射：`ID_PHOTO/ID_NAME/ID_NUMBER/ID_ADDRESS` 对应中文「证件头像/证件姓名/证件号码/证件住址」。
+- 任务级参数 `id_card_mode`：`fields`（默认，正面只遮头像/姓名/身份证号/住址，反面遮签发机关/有效期）/ `whole`（整卡或整页黑）。
+- 扫描器 `visual_targets` 对身份证正面返回 `id_photo/id_name/id_number/id_address`，对反面返回 `id_authority/id_validity`；`id_document` 保留给整卡档；note 约定：`side=front|back;fields=n;orient=0|90|180|270`，定位失败时 `fallback=1`。
+- `jobs._visual_entities` 按档位过滤：fields 取字段（按 side 匹配；该面字段缺失/失败回退整卡并 warning）；whole 只取 id_document。
+- `_VISUAL_SPEC` 新映射：`ID_PHOTO/ID_NAME/ID_NUMBER/ID_ADDRESS/ID_AUTHORITY/ID_VALIDITY` 对应中文「证件头像/证件姓名/证件号码/证件住址/证件签发机关/证件有效期」。
 - Verify：`_RECT_ETYPE_KIND` 补上述字段 kind，成品重扫后按字段图 IoU 复检。
 
 ### 11.4 规则与表格
