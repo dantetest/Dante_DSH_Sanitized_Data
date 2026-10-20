@@ -376,3 +376,11 @@ verify(exported, entities, parser, ctx, *, doc=None, options=None) -> dict
   已知：图片内纯文字 P1.5；strict 会改变外观；无命中图可能仍带 EXIF；XFA/SmartArt/SVG 文本未处理。
 - CSV/TSV：	ext_parser 支持 .tsv；CSV/TSV 单元格 Block ef={row,col,sep,line}，doc.meta.delimited/delimiter/quotechar/rows/cols；	able_det 支持 text/CSV/TSV ref 与多级/合并表头继承；	able-cn scope 增加 	ext；导出按原分隔符/引号写回、行/列数不变；document.fmt 仍为 	ext。
 - PDF 内嵌图：pdf_parser 对文本层页 get_images() 面积 ≥5% 页面图片，解码渲染后 mediascan 扫描（face/id/plate/qr/barcode/chat/sign，文本锚点类先 OCR），命中 → isual_marks kind=embedded_image（note engine=embedded_image;n=;area=），jobs 映射 EMBEDDED_IMAGE 内嵌图片（black L3），pipeline 复检映射；导出后解析器黑像素≥95% 复检。扫描页仍走既有链路；图片内纯文字 P1.5。
+
+### 11.8 P1.5（2026-10-20，进行中）
+
+- 内嵌图片文字 OCR：新增 yinzhan/media_text.py::redact_image_text(data, suffix, workdir)：单图 OCR + 全部 image 作用域规则检测 + 黑块 + 重编码；调用方（Office/PDF）负责预算、格式过滤、自检与统计。Office 在视觉/码类脱敏后调用，命中替换图片字节，doc.extra["office_media"].text_* 记录 text_hits/redacted/skipped/verify_*；PDF 在视觉无命中且图片有文字迹象时作检测器，命中产/并 embedded_image（note engine=embedded_image;text=N;area=）。环境开关：YINZHAN_OFFICE_TEXT_OCR（默认1）、YINZHAN_PDF_EMBEDDED_TEXT_OCR（默认1）；预算 env：OFFICE_TEXT_MAX_IMAGES/SECONDS/VERIFY_SECONDS。导出后文字自检命中>0 → ExportError/让 verify 拦截；OCR 不可用/超时 warning 人工复核。
+- 证件类型扩展：id_document note doc= 新增 work_permit/residence_permit/hk_mo_permit/tw_permit/foreign_pr/bank_card；jobs 映射中文 label（工作证/居住证/港澳通行证/台胞证/外国人永居证/银行卡），非身份证整体整卡涂黑；银行卡 
+o_whole_page 不整页扩张。护照号规则 cn.passport_no（legal-cn，near 护照；PASSPORT 实体；surrogate）。
+- CSV/TSV 编码保留：text_parser meta 增加 encoding/encoding_output/encoding_source/bom/newline；导出按原编码写回（UTF-8/utf-8-sig/GB18030/UTF-16），未知编码或不可表示字符 warning 回退 UTF-8；行/列数/分隔符/引号不变。
+- 已知限制：图片文字仅印刷体 OCR，中文手写/艺术字/低分辨率不承诺；OCR 有预算；无命中图片可能仍带 EXIF/GPS；PDF 仅文本层页/面积≥5%；证件/银行卡依赖 OCR 可读。
