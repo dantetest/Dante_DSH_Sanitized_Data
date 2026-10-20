@@ -68,6 +68,8 @@ KINDS: tuple[str, ...] = (
     "id_name",
     "id_number",
     "id_address",
+    "id_authority",
+    "id_validity",
     "plate",
     "road_sign",
     "door_address",
@@ -642,6 +644,16 @@ _ID_FRONT_ANCHORS = ("姓名", "公民身份号码", "住址", "性别", "民族
 _ID_BACK_ANCHORS = ("签发机关", "有效期限", "居民身份证")
 _ID_NUMBER_RE = re.compile(r"\d{17}[\dXx]")
 
+#: 反面字段模板（相对「正立卡片」归一化坐标；按用户 #39 转正实拍校准）。
+#: 用户要求反面也抹「签发机关」「有效期限」，标签一起遮没问题。
+_ID_BACK_FIELD_TEMPLATES: dict[str, tuple[float, float, float, float]] = {
+    "id_authority": (0.17, 0.68, 0.80, 0.82),
+    "id_validity": (0.17, 0.84, 0.92, 0.96),
+}
+_ID_BACK_ROW_TOP = 0.68              # 签发机关行顶（相对卡高）
+_ID_BACK_ROW_BOTTOM = 0.96           # 有效期限行底（相对卡高）
+_ID_BACK_MARGIN_X = 0.17             # 两行共同左边距（相对卡宽）
+
 
 def _offset_box(box: Box, dx: float, dy: float) -> Box:
     return (box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy)
@@ -1033,6 +1045,129 @@ def _detect_id_card_fallback(rgb: np.ndarray, text_boxes: Sequence[tuple[str, Bo
     return k * 90, page
 
 
+def _fitted_back_card_box(authority_rot: Box, validity_rot: Box) -> Box | None:
+    """用反面「签发机关/有效期限」两行锚点反推横版卡片矩形（按 #39 校准）。
+
+    #39 转正实测：签发机关行顶 ≈ 卡高 68%、有效期限行底 ≈ 卡高 96%，
+    两行左边距 ≈ 卡宽 17%。据此直接解卡片高度/左边界。
+    """
+    row_y0 = min(authority_rot[1], validity_rot[1])
+    row_y1 = max(authority_rot[3], validity_rot[3])
+    row_h = row_y1 - row_y0
+    if row_h < 4:
+        return None
+    card_h = row_h / (_ID_BACK_ROW_BOTTOM - _ID_BACK_ROW_TOP)
+    card_w = card_h * _ID_CARD_ASPECT
+    if card_w < 30 or card_h < 18:
+        return None
+    row_x0 = min(authority_rot[0], validity_rot[0])
+    card_x0 = row_x0 - _ID_BACK_MARGIN_X * card_w
+    card_y0 = row_y0 - _ID_BACK_ROW_TOP * card_h
+    return (card_x0, card_y0, card_x0 + card_w, card_y0 + card_h)
+
+
+def _detect_id_card_back(rgb: np.ndarray, text_boxes: Sequence[tuple[str, Box]],
+                         width: int, height: int):
+    """反面字段级检测：定朝向 → 拟合卡 → 签发机关/有效期限模板映射。
+
+    返回 ``(orient, fields, card_page_box)`` 或 ``None``（无法定向/拟合 → 整卡回退）。
+    """
+    authority_boxes = _find_anchor_boxes(text_boxes, ("签发机关",))
+    validity_boxes = _find_anchor_boxes(text_boxes, ("有效期限",))
+    if not authority_boxes or not validity_boxes:
+        return None                    # 两行都读不出 → 不猜，整卡 fallback
+    authority = authority_boxes[0][1]
+    validity = validity_boxes[0][1]
+    back_anchor_rects = [rect for _text, rect in
+                         _find_anchor_boxes(text_boxes, _ID_BACK_ANCHORS)]
+    title_boxes = [rect for _text, rect in
+                   _find_anchor_boxes(text_boxes, ("居民身份证", "中华人民共和国"))]
+    page_w = float(width)
+    page_h = float(height)
+    votes = _text_upright_votes(back_anchor_rects, (0.0, 0.0, page_w, page_h),
+                                page_w, page_h)
+    best_vote = max(votes) if votes else 0
+    candidates = [k for k, vote in enumerate(votes) if vote == best_vote]
+    best = None
+    for k in candidates:
+        auth_rot = _rot_forward_box(authority, k, page_w, page_h)
+        valid_rot = _rot_forward_box(validity, k, page_w, page_h)
+        card_rot = _fitted_back_card_box(auth_rot, valid_rot)
+        if card_rot is None:
+            continue
+        card_w = max(1.0, card_rot[2] - card_rot[0])
+        card_h = max(1.0, card_rot[3] - card_rot[1])
+        row_left = (min(auth_rot[0], valid_rot[0]) - card_rot[0]) / card_w
+        title_ratio = 0.5
+        if title_boxes:
+            title_rot = [_rot_forward_box(r, k, page_w, page_h) for r in title_boxes]
+            cy = sum((b[1] + b[3]) / 2.0 for b in title_rot) / len(title_rot)
+            title_ratio = (cy - card_rot[1]) / card_h
+        # 正向：两行靠卡左（≈0.17）、标题靠上（≈0.1~0.3）
+        score = abs(row_left - _ID_BACK_MARGIN_X) + abs(title_ratio - 0.20)
+        if best is None or score < best[0]:
+            best = (score, k, card_rot)
+    if best is None:
+        return None
+    _score, k, card_rot = best
+    cw = card_rot[2] - card_rot[0]
+    ch = card_rot[3] - card_rot[1]
+    fields: dict[str, Box] = {}
+    for kind, (nx0, ny0, nx1, ny1) in _ID_BACK_FIELD_TEMPLATES.items():
+        rot_box = (card_rot[0] + nx0 * cw, card_rot[1] + ny0 * ch,
+                   card_rot[0] + nx1 * cw, card_rot[1] + ny1 * ch)
+        local = _rot_back_box(rot_box, k, page_w, page_h)
+        local = _clamp_box(local, page_w, page_h)
+        if (local[2] - local[0]) < 20 or (local[3] - local[1]) < 8:
+            return None
+        fields[kind] = local
+    card_local = _rot_back_box(card_rot, k, page_w, page_h)
+    card_page = _clamp_box(card_local, page_w, page_h)
+    if (card_page[2] - card_page[0]) < 40 or (card_page[3] - card_page[1]) < 24:
+        return None
+    fields = _refine_back_fields(fields, text_boxes, card_page)
+    return k * 90, fields, card_page
+
+
+def _refine_back_fields(fields: dict[str, Box],
+                        text_boxes: Sequence[tuple[str, Box]],
+                        card_page_box: Box) -> dict[str, Box]:
+    """反面两行允许连标签一起遮：用同关键词 OCR 行框扩到整行，再裁进卡片。"""
+    card_area = max(1.0, (card_page_box[2] - card_page_box[0])
+                    * (card_page_box[3] - card_page_box[1]))
+    keywords = {"id_authority": ("签发机关",),
+                "id_validity": ("有效期限",)}
+    for kind, keys in keywords.items():
+        box = fields.get(kind)
+        if box is None:
+            continue
+        for text, rect in text_boxes:
+            norm = _norm_text(text)
+            if not norm or not any(key in norm for key in keys):
+                continue
+            rect_area = max(1e-6, (rect[2] - rect[0]) * (rect[3] - rect[1]))
+            if rect_area > card_area * 0.6:
+                continue
+            # 只并集「与本行在同一带」的框（中心落在字段框纵向附近）
+            cy = (rect[1] + rect[3]) / 2.0
+            if not (box[1] - (box[3] - box[1]) * 0.8 <= cy
+                    <= box[3] + (box[3] - box[1]) * 0.8):
+                continue
+            box = (min(box[0], rect[0]), min(box[1], rect[1]),
+                   max(box[2], rect[2]), max(box[3], rect[3]))
+        fields[kind] = box
+    pad_x = (card_page_box[2] - card_page_box[0]) * 0.05
+    pad_y = (card_page_box[3] - card_page_box[1]) * 0.05
+    allowed = (card_page_box[0] - pad_x, card_page_box[1] - pad_y,
+               card_page_box[2] + pad_x, card_page_box[3] + pad_y)
+    for kind, box in list(fields.items()):
+        clipped = (max(box[0], allowed[0]), max(box[1], allowed[1]),
+                   min(box[2], allowed[2]), min(box[3], allowed[3]))
+        if clipped[2] > clipped[0] and clipped[3] > clipped[1]:
+            fields[kind] = clipped
+    return fields
+
+
 def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
                         text_boxes: Sequence[tuple[str, Box]]) -> list[ScanHit]:
     if not text_boxes:
@@ -1120,15 +1255,33 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
     back_hits = _find_anchor_boxes(text_boxes, _ID_BACK_ANCHORS)
     side = "back" if len(back_hits) > len(front_hits) else "front"
     if side == "back":
-        # 反面：没有可抹的字段，只报 side=back 的整卡（关键字段模式由 Lead 决定提示）
-        orient, card_box = _detect_id_card_fallback(
-            rgb, text_boxes, anchor_rects, width, height, side="back")
+        back = _detect_id_card_back(rgb, text_boxes, width, height)
+        if back is None:
+            # 无法定向/拟合失败 → 不猜，整卡 fallback=1（保证不漏）
+            orient, card_box = _detect_id_card_fallback(
+                rgb, text_boxes, anchor_rects, width, height, side="back")
+            doc_rect = page_rect if whole_page else _expand_card_rect(
+                card_box, width, height, ratio=0.10)
+            return [ScanHit(
+                kind="id_document", rect=doc_rect,
+                confidence=round(min(conf, 0.88), 3),
+                note=(f"engine=ocr;doc=id_card;side=back;fields=0;fallback=1;"
+                      f"orient={orient}"))]
+        orient, fields, card_page = back
+        field_note = f"engine=ocr;doc=id_card;side=back;fields={len(fields)};orient={orient}"
+        hits: list[ScanHit] = []
+        for kind in ("id_authority", "id_validity"):
+            box = fields.get(kind)
+            if box is None:
+                continue
+            hits.append(ScanHit(kind=kind, rect=box, confidence=0.88,
+                                note=field_note))
         doc_rect = page_rect if whole_page else _expand_card_rect(
-            card_box, width, height, ratio=0.10)
-        return [ScanHit(
-            kind="id_document", rect=doc_rect,
-            confidence=round(max(conf, 0.85), 3),
-            note=f"engine=ocr;doc=id_card;side=back;fields=0;orient={orient}")]
+            card_page, width, height, ratio=0.10)
+        hits.append(ScanHit(kind="id_document", rect=doc_rect,
+                            confidence=round(min(0.97, conf), 3),
+                            note=field_note))
+        return hits
 
     front = _detect_id_card_front(rgb, text_boxes, width, height)
     if front is None:
@@ -1452,7 +1605,8 @@ def _detect_door_address(rgb: np.ndarray, ctx: ScanContext,
 # ────────────────────────────── 总入口 ──────────────────────────────
 
 #: 身份证关键字段 kind：落在整卡框里也必须保留（A 方案 fields 模式要用）
-_ID_FIELD_KINDS = ("id_photo", "id_name", "id_number", "id_address")
+_ID_FIELD_KINDS = ("id_photo", "id_name", "id_number", "id_address",
+                   "id_authority", "id_validity")
 
 
 def _prune_nested(hits: list[ScanHit]) -> list[ScanHit]:
@@ -1548,8 +1702,9 @@ __all__ = [
     "KINDS", "SCANNER_NAME", "scan", "iter_text_boxes",
     "_detect_faces", "_detect_id_document", "_detect_plates",
     "_detect_road_sign", "_detect_door_address",
-    "_detect_id_card_front", "_detect_id_card_fallback",
-    "_ID_FIELD_TEMPLATES", "_rot_forward_box", "_rot_back_box",
+    "_detect_id_card_front", "_detect_id_card_back", "_detect_id_card_fallback",
+    "_ID_FIELD_TEMPLATES", "_ID_BACK_FIELD_TEMPLATES",
+    "_rot_forward_box", "_rot_back_box",
     "_fitted_card_box",
     "_FACE_CASCADES_OVERRIDE",
 ]

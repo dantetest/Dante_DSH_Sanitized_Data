@@ -399,3 +399,67 @@ engine=ocr;doc=id_card;side=back;fields=0;orient=90            # 反面：只有
 - 反面按约定不返回字段；关键字段模式下的提示/交互由 Lead 在 jobs/前端决定。
 - `id_document` 在 fields 模式是否保留、以及新 kind 的 pipeline `_RECT_ETYPE_KIND`
   映射/verify 残留比对，需要 Lead 在 jobs/api/pipeline 侧接入（扫描器层只返回完整 hits）。
+
+---
+
+## 11 身份证反面字段（签发机关 / 有效期限，2026-10-20 已实现）
+
+用户追加：A 方案反面也要抹「签发机关」「有效期限」。新增 kind `id_authority`、
+`id_validity`；保留 `id_document`（整卡/整页）。
+
+### 11.1 note 约定（反面）
+
+```
+engine=ocr;doc=id_card;side=back;fields=2;orient=90            # 反面两行定位成功（2 字段 + 1 个 id_document）
+engine=ocr;doc=id_card;side=back;fields=0;fallback=1;orient=0  # 读不出两行/无法定向/拟合失败 → 整卡回退
+```
+
+- 定位成功返回 `id_authority` + `id_validity` + `id_document`；`id_document` 在卡片
+  几乎占满页时仍返回整页（整卡模式沿用旧行为），否则为拟合卡外扩 10%。
+- `orient` 同样表示把原页面逆时针旋转多少度得到正向卡（#39 实测 `orient=90`）。
+
+### 11.2 反面模板（相对正立卡片归一化坐标；按 #39 转正实拍校准）
+
+| 字段 | 模板 (x0,y0,x1,y1) | 说明 |
+|---|---|---|
+| `id_authority` | (0.17, 0.68, 0.80, 0.82) | 签发机关行；可连标签一起遮 |
+| `id_validity` | (0.17, 0.84, 0.92, 0.96) | 有效期限行；可连标签一起遮 |
+
+- 卡片拟合单独校准：签发机关行顶 ≈ 卡高 68%、有效期限行底 ≈ 卡高 96%、两行左边距
+  ≈ 卡宽 17%（`_fitted_back_card_box`）；与正面拟合互不复用。
+- 朝向：沿用文本排向投票 + 反面标题「中华人民共和国居民身份证」靠上、两行靠左的
+  位置打分消歧（无标题时用「两行左边距」单独消歧）。
+- 两行允许遮标签+值：用含「签发机关/有效期限」的 OCR 行框并集到整行，再裁进卡片
+  5% 缓冲内（#39 实测两行 OCR 行覆盖率均 100%）。
+- 读不出「签发机关/有效期限」或卡片拟合失败 → **不猜**，返回 `fallback=1` 整卡。
+
+### 11.3 #39 实测（只读，未复制/提交）
+
+`side=back;fields=2;orient=90`，无 fallback：
+
+| 输出 | 原图（像素，raw） | 转正后（像素） | OCR 行覆盖率 |
+|---|---|---|---|
+| `id_authority` | (230, 508, 322, 1264) | (508, 758, 1264, 850) | 签发机关行 **100%** |
+| `id_validity` | (139, 508, 217, 1298) | (508, 863, 1298, 941) | 有效期限行 **100%** |
+| `id_document` | (0, 0, 1080, 1920) 整页 | — | 整卡模式兜底 |
+
+字段定位 0ms（反面不做 Haar；OCR 仍为整体瓶颈）。#85 正面结果不变（fields=4, orient=90）。
+
+### 11.4 测试
+
+`test_visual.py` 扩展 `TestIdCardFields`（48 项全绿）：
+
+- 合成反面卡 0/90/180/270 四向：`id_authority`/`id_validity`/`id_document` 齐全、
+  note `side=back;fields=2;orient=期望值`、行框在卡内且覆盖语义区 ≥85%；
+- 只有标题、读不出两行 → 单条 `id_document`，`side=back;fields=0;fallback=1`；
+- 既有正面 47 项测试全部不回归；负样本（名片/正射影像/白页）不新增 id 误报；
+- 命令：`python -X utf8 app\tests\test_visual.py` → **48/48 通过**。
+
+### 11.5 限制 / 集成
+
+- 反面两行必须 OCR 可读（标题/签发机关/有效期限至少各命中）；OCR 读不出时走
+  `fallback=1` 整卡（不漏）。
+- 倾斜/透视过大时模板映射会偏移，但两行 OCR 行框并集可部分补偿；仍不行则 fallback。
+- Lead 需在 jobs/pipeline 接新 kind：`_VISUAL_SPEC` 已加 `id_authority`/`id_validity`
+  （etype ID_AUTHORITY/ID_VALIDITY），fields 模式保留这两个 kind、whole 模式用 id_document；
+  `pipeline._RECT_ETYPE_KIND` 需补映射以纳入 verify 残留比对。

@@ -517,6 +517,8 @@ _RECT_ETYPE_KIND = {
     "ID_NAME": "id_name",
     "ID_NUMBER": "id_number",
     "ID_ADDRESS": "id_address",
+    "ID_AUTHORITY": "id_authority",
+    "ID_VALIDITY": "id_validity",
     "PLATE": "plate",
     "ROAD_SIGN": "road_sign",
     "DOOR_ADDRESS": "door_address",

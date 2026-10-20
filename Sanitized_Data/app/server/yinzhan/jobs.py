@@ -583,6 +583,7 @@ _TYPE_LABEL = {
     "FACE": "人脸", "ID_DOCUMENT": "证件", "PLATE": "车牌",
     "ID_PHOTO": "证件头像", "ID_NAME": "证件姓名",
     "ID_NUMBER": "证件号码", "ID_ADDRESS": "证件住址",
+    "ID_AUTHORITY": "证件签发机关", "ID_VALIDITY": "证件有效期",
     "ROAD_SIGN": "路牌", "DOOR_ADDRESS": "门牌/门址",
     "QRCODE": "二维码", "BARCODE": "条形码",
 }
@@ -601,6 +602,9 @@ _VISUAL_SPEC = {
     "id_name":     ("ID_NAME", "证件姓名", "accepted", "L3"),
     "id_number":   ("ID_NUMBER", "证件号码", "accepted", "L3"),
     "id_address":  ("ID_ADDRESS", "证件住址", "accepted", "L3"),
+    # 身份证反面：签发机关 + 有效期限（用户 2026-10-20 追加要求一并抹除）
+    "id_authority": ("ID_AUTHORITY", "证件签发机关", "accepted", "L3"),
+    "id_validity":  ("ID_VALIDITY", "证件有效期", "accepted", "L3"),
     "plate":       ("PLATE", "车牌", "pending", "L2"),
     "road_sign":   ("ROAD_SIGN", "路牌", "pending", "L2"),
     "door_address": ("DOOR_ADDRESS", "门牌/门址", "pending", "L2"),
@@ -645,7 +649,8 @@ def _low_confidence_entities(doc: Document, entities: list[Entity]) -> list[Enti
     return out
 
 
-_ID_FIELD_KINDS = frozenset({"id_photo", "id_name", "id_number", "id_address"})
+_ID_FIELD_KINDS = frozenset({"id_photo", "id_name", "id_number", "id_address",
+                             "id_authority", "id_validity"})
 
 
 def _drop_text_entities_in_id_cards(job: "Job", doc: Document) -> None:
@@ -726,20 +731,36 @@ def _visual_entities(doc: Document, sig_blocks: list | None = None,
         # 整卡档：只保留整卡/整页命中，字段命中不重复涂
         chosen.extend(id_docs)
     else:
-        # 关键字段档（默认）：只涂头像/姓名/身份证号/住址
+        # 关键字段档（默认）：
+        #   正面 -> 头像/姓名/身份证号/住址；
+        #   反面 -> 签发机关/有效期限（用户 2026-10-20 追加）。
         chosen.extend(field_marks)
         for mark in id_docs:
             meta = _mark_note(mark.note)
-            side = meta.get("side", "")
+            page = getattr(mark, "page", 0)
+            side = meta.get("side", "") or "front"
+            if meta.get("fallback") == "1":
+                card_fields: list = []
+            else:
+                card_fields = []
+                for fm in field_marks:
+                    if getattr(fm, "page", 0) != page:
+                        continue
+                    f_side = _mark_note(getattr(fm, "note", "")).get("side", "front")
+                    if not f_side:
+                        f_side = "front"
+                    if f_side == side:
+                        card_fields.append(fm)
+            if card_fields:
+                # 该面字段已命中：整卡命中不加入，避免把卡面全部涂掉
+                continue
+            chosen.append(mark)
             if side == "back":
                 doc.warnings.append(
-                    "检测到身份证反面：关键字段模式下反面没有姓名/号码/住址，"
-                    "未做字段脱敏；如需整卡请切换「整卡涂黑」")
-                continue
-            if meta.get("fallback") == "1" or not field_marks:
-                chosen.append(mark)
-                doc.warnings.append("证件字段定位失败，已按整卡涂黑（可改用整卡模式）")
-            # 正面且字段命中成功：整卡命中不加入，避免把卡面全部涂掉
+                    "身份证反面字段定位失败，已按整卡涂黑（可改用整卡模式）")
+            else:
+                doc.warnings.append(
+                    "证件字段定位失败，已按整卡涂黑（可改用整卡模式）")
 
     out: list[Entity] = []
     for vm in chosen:

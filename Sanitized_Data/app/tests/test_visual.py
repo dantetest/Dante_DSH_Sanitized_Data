@@ -305,8 +305,11 @@ def _add_id_field_fixtures(root: Path, out: dict) -> None:
     )
     back_items = (
         ("中华人民共和国居民身份证", 0.30, 0.10, 34, None),
-        ("签发机关 上海市公安局", 0.10, 0.55, 32, None),
-        ("有效期限 2020.01.01-2040.01.01", 0.10, 0.72, 30, None),
+        ("签发机关 上海市公安局", 0.17, 0.695, 28, "id_authority"),
+        ("有效期限 2020.01.01-2040.01.01", 0.17, 0.855, 26, "id_validity"),
+    )
+    back_fallback_items = (
+        ("中华人民共和国居民身份证", 0.30, 0.10, 34, None),
     )
 
     def _union(rects):
@@ -333,7 +336,8 @@ def _add_id_field_fixtures(root: Path, out: dict) -> None:
             if group:
                 groups.setdefault(group, []).append(bbox)
         value_rects = {key: _union(rects) for key, rects in groups.items()
-                       if key in ("id_name", "id_address", "id_number")}
+                       if key in ("id_name", "id_address", "id_number",
+                                  "id_authority", "id_validity")}
         retained = [_union(groups[key]) for key in
                     ("retained_gender", "retained_birth") if key in groups]
         return img, text_boxes, photo_rect, value_rects, retained
@@ -376,7 +380,11 @@ def _add_id_field_fixtures(root: Path, out: dict) -> None:
           noface_retained, rotations=(0,))
     back_img, back_boxes, _, back_values, _ = _render(back_items, False)
     _emit("idback", back_img, back_boxes, None, back_values, [],
-          rotations=(0, 90))
+          rotations=(0, 90, 180, 270))
+    fallback_img, fallback_boxes, _, fallback_values, _ = _render(
+        back_fallback_items, False)
+    _emit("idback_fallback", fallback_img, fallback_boxes, None,
+          fallback_values, [], rotations=(0,))
 
 
 
@@ -497,6 +505,8 @@ class TestRegistration(unittest.TestCase):
         self.assertIn("id_name", visual_targets.KINDS)
         self.assertIn("id_number", visual_targets.KINDS)
         self.assertIn("id_address", visual_targets.KINDS)
+        self.assertIn("id_authority", visual_targets.KINDS)
+        self.assertIn("id_validity", visual_targets.KINDS)
         self.assertIn("plate", visual_targets.KINDS)
 
     def test_no_cv2_still_importable(self):
@@ -817,17 +827,48 @@ class TestIdCardFields(unittest.TestCase):
                         f"rotation={rotation} 保留行{index}被字段框覆盖 "
                         f"{coverage:.0%}：{retained} masks={mask_boxes}")
 
-    def test_back_returns_only_id_document(self):
-        for rotation in (0, 90):
+    def test_back_fields_all_orientations(self):
+        for rotation in (0, 90, 180, 270):
+            name = f"idback_{rotation}"
+            fixture = FIXTURES[name]
             with self.subTest(rotation=rotation):
-                hits = self._run(f"idback_{rotation}")
-                self.assertEqual([hit.kind for hit in hits], ["id_document"],
+                hits = self._run(name)
+                fields = {hit.kind: hit for hit in hits
+                          if hit.kind in ("id_authority", "id_validity")}
+                self.assertEqual(set(fields), {"id_authority", "id_validity"},
                                  [hit.note for hit in hits])
-                note = hits[0].note
-                self.assertIn("side=back", note)
-                self.assertIn("fields=0", note)
-                self.assertIn("orient=", note)
-                self.assertNotIn("fallback=1", note)
+                docs = [hit for hit in hits if hit.kind == "id_document"]
+                self.assertEqual(len(docs), 1)
+                for hit in hits:
+                    self.assertIn("side=back", hit.note)
+                    self.assertIn("fields=2", hit.note)
+                    self.assertNotIn("fallback=1", hit.note)
+                    self.assertIn(f"orient={fixture['orient_expected']}", hit.note)
+                # 行框在卡片范围内（外扩 8% 容差）
+                cx0, cy0, cx1, cy1 = fixture["card_rect"]
+                dx, dy = (cx1 - cx0) * 0.08, (cy1 - cy0) * 0.08
+                card = (cx0 - dx, cy0 - dy, cx1 + dx, cy1 + dy)
+                for kind, hit in fields.items():
+                    self.assertGreaterEqual(
+                        visual_targets._ioc(hit.rect, card), 0.95, kind)
+                # 覆盖语义区：签发机关行 / 有效期限行（标签+值一起遮）
+                for kind in ("id_authority", "id_validity"):
+                    expected = fixture["value_rects"][kind]
+                    area = (expected[2] - expected[0]) * (expected[3] - expected[1])
+                    covered = _intersection_area(fields[kind].rect, expected) / area
+                    self.assertGreaterEqual(covered, 0.85, kind)
+
+    def test_back_falls_back_when_rows_unreadable(self):
+        # 只有标题、读不出签发机关/有效期限 → 无法拟合，回退整卡 fallback=1
+        hits = self._run("idback_fallback_0")
+        self.assertEqual(len(hits), 1, [hit.note for hit in hits])
+        note = hits[0].note
+        self.assertEqual(hits[0].kind, "id_document")
+        self.assertIn("side=back", note)
+        self.assertIn("fields=0", note)
+        self.assertIn("fallback=1", note)
+        self.assertIn("orient=", note)
+        self.assertNotIn("id_authority", [hit.kind for hit in hits])
 
     def test_no_face_falls_back_to_whole_card(self):
         hits = self._run("idfront_noface_0")

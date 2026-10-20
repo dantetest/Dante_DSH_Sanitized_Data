@@ -40,11 +40,13 @@ const TYPE_CN = {
   DOOR_ADDRESS: '门牌/门址', QRCODE: '二维码', BARCODE: '条形码',
   // 身份证关键字段（方案 A：默认「关键字段」，整卡可选）
   ID_PHOTO: '证件头像', ID_NAME: '证件姓名', ID_NUMBER: '证件号码', ID_ADDRESS: '证件住址',
+  // 身份证反面（A 方案扩展）：只遮签发机关 + 有效期限，国徽/标题保留
+  ID_AUTHORITY: '证件签发机关', ID_VALIDITY: '证件有效期',
   OTHER: '其他敏感',
 };
 const TYPE_ORDER = [
   'PERSON', 'ID_CARD', 'ADDRESS', 'PHONE', 'ORG', 'CASE_NO', 'AMOUNT', 'BANK', 'LICENSE', 'EMAIL', 'DATE', 'IP',
-  'FACE', 'ID_DOCUMENT', 'ID_PHOTO', 'ID_NAME', 'ID_NUMBER', 'ID_ADDRESS',
+  'FACE', 'ID_DOCUMENT', 'ID_PHOTO', 'ID_NAME', 'ID_NUMBER', 'ID_ADDRESS', 'ID_AUTHORITY', 'ID_VALIDITY',
   'PLATE', 'ROAD_SIGN', 'DOOR_ADDRESS',
   'SEAL', 'SIGNATURE', 'SIG_BLOCK', 'HANDWRITING', 'QRCODE', 'BARCODE',
   'OTHER',
@@ -59,6 +61,8 @@ const TYPE_COLOR = {
   DOOR_ADDRESS: '#6B4636', QRCODE: '#2E3A48', BARCODE: '#24211C',
   // 身份证关键字段：同一份「证件」下的细分，用同族低饱和色区分
   ID_PHOTO: '#8E4A3C', ID_NAME: '#5A4A3F', ID_NUMBER: '#2F4F66', ID_ADDRESS: '#7A6A4A',
+  // 身份证反面两字段（A 方案扩展）
+  ID_AUTHORITY: '#46604A', ID_VALIDITY: '#5C4A6B',
   OTHER: '#8C8272',
 };
 const STRICT_CN = { loose: '宽松', standard: '标准', strict: '最严' };
@@ -79,7 +83,7 @@ const MENU_ETYPES = [
 ];
 
 /* 证件脱敏档位（用户已批准方案 A）：默认「关键字段」，整卡涂黑可选。
-   fields=只遮头像/姓名/身份证号/住址；whole=整卡不透明覆盖（公开/不确定场景推荐）。
+   fields=遮头像/姓名/身份证号/住址 + 反面签发机关/有效期；whole=整卡覆盖（公开/不确定场景推荐）。
    只影响任务创建（POST /api/jobs 的 id_card_mode），已创建的任务不自动重跑。 */
 const ID_MODE_OPTIONS = [
   { value: 'fields', label: '关键字段（默认）', short: '关键字段' },
@@ -87,8 +91,8 @@ const ID_MODE_OPTIONS = [
 ];
 const ID_MODE_CN = { fields: '关键字段', whole: '整卡涂黑' };
 const ID_MODE_DESC = {
-  fields: '只遮头像、姓名、身份证号、住址',
-  whole: '整卡不透明覆盖（公开 / 不确定场景推荐）',
+  fields: '遮头像/姓名/身份证号/住址 + 反面签发机关/有效期',
+  whole: '整卡覆盖（公开 / 不确定场景推荐）',
 };
 function normalizeIdCardMode(value) {
   return value === 'whole' ? 'whole' : 'fields';
@@ -293,7 +297,7 @@ function buildIdModeBlock(compact) {
     wrap.appendChild(ui.idModeJobHint);
   } else {
     wrap.appendChild(mk('div', 'idmode-hint',
-      '关键字段：只遮头像 / 姓名 / 身份证号 / 住址；整卡涂黑：整卡不透明覆盖（公开 / 不确定场景推荐）'));
+      '关键字段：遮头像 / 姓名 / 身份证号 / 住址 + 反面签发机关 / 有效期；整卡：整卡覆盖（公开 / 不确定场景推荐）'));
   }
   return wrap;
 }

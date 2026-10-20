@@ -1,4 +1,4 @@
-# 前端实现记录 · 导出媒体二次确认 + 新实体类型展示
+﻿# 前端实现记录 · 导出媒体二次确认 + 新实体类型展示
 
 > 状态：已实现 · 2026-10-19 · 负责人：designer-icon（task-12）
 > 代码文件：`app/web/app.js`（**本批唯一改动**，+95 / −11 行）；`app/web/style.css`、4 个 HTML、`api.py` / `jobs.py` / `pipeline.py` / 规则 / 解析器均未改。
@@ -367,4 +367,65 @@
   3. **ID_* 为新 etype**：旧版后端不返回这些类型时，前端映射多出来的键无害；旧数据只显示原有类型。
   4. **紧凑选择器占用对照台头部空间**：`console-head` 本身 `flex-wrap:wrap`，窄屏会自动换行；1360px 实测布局正常。
   5. **strictness 变更会重跑任务**：`changeStrictness` 走原有重新建任务路径，此时会把当前 `id_card_mode` 一起带上（与档位选择一致，属合理行为）。
-  6. **证件反面**：关键字段模式下后端会 warning 提示「反面无字段可脱敏，如需整卡请切换」，前端照常展示 warning（入口在导出前 toast / 扫描日志），无额外改动。
+  6. **证件反面**：关键字段模式下后端会 warning 提示「反面无字段可脱敏，如需整卡请切换」，前端照常展示 warning（入口在导出前 toast / 扫描日志），无额外改动。（**第四轮 A 方案扩展后，反面改为只遮签发机关/有效期，见 §10**。）
+
+---
+
+# 第四轮（P0 扩展）：身份证反面两字段展示 + 档位文案更新
+
+> 状态：已实现 · 2026-10-20 · 负责人：designer-icon（task-26）
+> 背景：用户追加「A 方案扩展」——身份证反面也遮**签发机关 + 有效期限**。Lead 已在后端增加 `ID_AUTHORITY / ID_VALIDITY` 两个 etype（fields 档正反字段一起返回；whole 档不变）。
+> 本轮代码：`app/web/app.js`（小改，见下）；`app/web/style.css` 未改；`docs/impl/frontend.md` 追加本节；未 push。
+
+## 10.1 改动点
+
+| 位置 | 改动 |
+|---|---|
+| `TYPE_CN` | 新增 `ID_AUTHORITY: '证件签发机关'`、`ID_VALIDITY: '证件有效期'`（与 ID_PHOTO/NAME/NUMBER/ADDRESS 同组） |
+| `TYPE_ORDER` | 两个新类型排在 `ID_ADDRESS` 之后（同一份证件的字段连续展示） |
+| `TYPE_COLOR` | 沿用 ID_* muted 分组色：`ID_AUTHORITY #46604A`、`ID_VALIDITY #5C4A6B` |
+| `ID_MODE_DESC` | `fields: '遮头像/姓名/身份证号/住址 + 反面签发机关/有效期'`；`whole: '整卡覆盖（公开 / 不确定场景推荐）'`（按钮 title / 切换 toast / 扫描日志同步生效） |
+| 投放台说明文案 | 「关键字段：遮头像 / 姓名 / 身份证号 / 住址 + 反面签发机关 / 有效期；整卡：整卡覆盖（公开 / 不确定场景推荐）」 |
+| 对照台紧凑选择器 | 同步使用新 `ID_MODE_DESC`（按钮 title），行为不变 |
+
+**未改**：`index.html`、`api.py` / `jobs.py` / `visual_targets.py` / `pipeline.py`、规则包；未新增依赖、未外呼、未 push。
+
+## 10.2 实测（真实 HTTP + CDP 驱动真实 Edge，17 项断言 ALL PASS）
+
+样本：`C:\Users\Dante\Desktop\测试集\微信图片_20260622162356_39_29.jpg`（用户测试集 **#39 身份证反面**，只读）。服务：临时数据目录 + `python run.py --port 18765 --no-browser`。
+
+| 断言 | 实测 |
+|---|---|
+| 文案 | 投放台说明含「反面签发机关 / 有效期」「整卡：整卡覆盖」；两档按钮 title 同步更新 |
+| fields 创建 | `POST /api/jobs` body 带 `"id_card_mode":"fields"` |
+| fields 清单（真实后端） | `证件签发机关×1 / 证件有效期×1 / 二维码×1` —— **不兜底「其他敏感」** |
+| fields 预览 | 两个字段框（8.444% × 33.883%、7.238% × 40.337%），**0 个整页框**；国徽、标题、其余卡面未被覆盖 |
+| fields 导出 human | 1080×1920 成品：黑像素 **5.95%**、平均亮度 161.6 → 只有签发机关/有效期两行被涂，国徽/标题保留可见 |
+| whole 重新投放 | body 带 `"id_card_mode":"whole"`；预览出现整页覆盖框 |
+| whole 导出 human | 1080×1920 成品：黑像素 **100%**、平均亮度 11.07 → 整页不可读 |
+| 类型映射 | `ID_AUTHORITY/ID_VALIDITY` 中文名齐全、进入 TYPE_ORDER、有 muted 分组色 |
+| 页面 | `/`、`/download`、`/mcp`、`/console` 全部加载，0 JS 异常；`node --check app/web/app.js` exit 0 |
+
+证据（临时目录 `%TEMP%\yz_idback_test\`）：
+
+- `ui_idback_fields.png`：fields 任务——清单「证件签发机关/证件有效期」、左栏两行虚线框、右栏两行被涂、国徽/标题保留
+- `ui_idback_whole.png`：whole 任务整页覆盖
+- `evidence_idback_fields_vs_whole.png`：原图 / fields 成品 / whole 成品三联图（附黑像素占比 5.95% vs 100%）
+
+## 10.3 手动测试步骤
+
+1. 起服务打开 `/console`，确认投放台档位说明已包含「反面签发机关 / 有效期」。
+2. 保持「关键字段（默认）」，拖入身份证反面照片（测试集 #39）→ 对照台：清单应出现「证件签发机关 / 证件有效期」；左栏两行虚线框、右栏两行被涂，国徽和「居民身份证」标题仍可见。
+3. 导出 human 成品：仅两行字段不可读，其余卡面清楚。
+4. 头部切「整卡涂黑」→ 提示重新投放生效 → 重新投放同一张 → 预览整页覆盖，导出后整页不可读。
+5. 正反两面混合的图片/PDF：fields 档会同时返回正面 4 字段与反面 2 字段（后端按命中情况给），前端按实体类型分组展示。
+
+## 10.4 兼容与风险
+
+- **纯展示层小改**：只补 etype 映射与文案；不改变请求/导出协议，`createJob` 逻辑不变。
+- **旧后端/旧数据兼容**：不返回 ID_AUTHORITY/ID_VALIDITY 时，多出的映射键无害；未知 etype 仍兜底「其他敏感」（兜底逻辑未动）。
+- **后端字段定位失败**：沿用后端 warning + fallback 整卡逻辑，前端照常展示，不报错。
+- **二维码等其它实体**：反面样例上的二维码仍按原逻辑自动涂黑（检测器行为，本轮不涉及）。
+- **回归门禁现状**：本轮 `regression.py` 为 **193/195 硬检查通过**；2 项红是 **qa 旧断言过期**——`app/tests/regression.py:864-868` 仍按「反面 fields 档不遮字段、只提示切整卡」的旧行为断言，与用户新批准的 A 方案扩展（反面遮签发机关/有效期）相反；实测返回值 `{"ID_AUTHORITY": 1, "ID_VALIDITY": 1}` 恰好证明新行为已生效。需 qa 更新该断言与基线（regression.py / qa_common.py / baseline.json / SNAPSHOT.md / README 的 known_gaps 文案）后复跑；前端本身已按新需求通过 CDP 实测与 `node --check`。
+
+
