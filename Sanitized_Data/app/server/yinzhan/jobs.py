@@ -67,10 +67,11 @@ def _load_rules(fmt: str, pack_ids: list[str] | None = None) -> tuple[list[Rule]
 
 
 def _embedded_media_info(doc: Document) -> dict:
-    """解析器写在 ``doc.meta["embedded_media"]`` 的未处理媒体信息。
+    """解析器写在 ``doc.meta["embedded_media"]`` 的隐藏对象信息。
 
-    约定结构：``{"count": int, "parts": [部件名...]}``。P0 阶段只检测 + 阻断，
-    P1 再做 Office 内嵌图片的自动脱敏。
+    P1-B 语义：``count`` = **无法自动脱敏、需用户确认**的隐藏对象数（图表/
+    文本框/OLE/activeX/不可解码图片等）；可自动脱敏的内嵌图片在 ``images``，
+    不计入 count。成品里图片仍然存在是正常的（已被解析器自动涂黑）。
     """
     try:
         media = (getattr(doc, "meta", None) or {}).get("embedded_media") or {}
@@ -566,8 +567,8 @@ class JobManager:
             media_count = int(media.get("count") or 0)
             if media_count and not options.get("allow_unprocessed_media"):
                 err = YinzhanError(
-                    f"检测到 {media_count} 张未脱敏的内嵌图片（DOCX/XLSX 内的图片/图表），"
-                    "当前版本不会自动处理这些图片。要继续导出吗？")
+                    f"检测到 {media_count} 个无法自动脱敏的隐藏对象"
+                    "（图表/文本框/OLE 等），继续导出会保留它们。要继续吗？")
                 err.code = "media_confirmation_required"
                 err.media_count = media_count
                 raise err
@@ -582,13 +583,16 @@ class JobManager:
             counts = job.counts()
             out_hash = sha256_file(out)
             pdf_hidden = (job.doc.extra or {}).get("pdf_hidden") if job.doc else None
+            office_media = (job.doc.extra or {}).get("office_media") if job.doc else None
             audit.append(
                 job_id=job.id, doc_name=job.name, doc_hash=sha256_file(job.path),
                 fmt=job.fmt,
                 counts={"total": counts["total"], "by_type": counts["by_type"],
-                        # 未处理媒体被用户二次确认放行时，审计留下痕迹
+                        # 未自动处理隐藏对象经用户二次确认放行时，审计留下痕迹
                         "media_count": media_count,
                         "media_confirmed": bool(options.get("allow_unprocessed_media")),
+                        # Office 内嵌图片自动脱敏/隐藏对象统计
+                        "office_media": office_media or {},
                         # PDF 隐藏数据（附件/批注/表单/JS）剥离/保留痕迹
                         "pdf_hidden": pdf_hidden or {},
                         "keep_pdf_hidden": bool(options.get("keep_pdf_hidden"))},
@@ -663,6 +667,7 @@ _TYPE_LABEL = {
     "CHAT_AVATAR": "聊天头像", "CHAT_NAME": "聊天昵称",
     "CHAT_GROUP": "群名称", "CHAT_TIME": "聊天时间",
     "CHAT_INPUT": "聊天输入框",
+    "EMBEDDED_IMAGE": "内嵌图片（敏感）",
     "QRCODE": "二维码", "BARCODE": "条形码",
 }
 
@@ -694,6 +699,8 @@ _VISUAL_SPEC = {
     "chat_group":  ("CHAT_GROUP", "群名称", "accepted", "L3"),
     "chat_time":   ("CHAT_TIME", "聊天时间", "accepted", "L2"),
     "chat_input":  ("CHAT_INPUT", "聊天输入框", "accepted", "L3"),
+    # PDF 文本层页面里的内嵌图片命中敏感目标：整块图片区域不可逆涂黑
+    "embedded_image": ("EMBEDDED_IMAGE", "内嵌图片（敏感）", "accepted", "L3"),
     "qrcode":      ("QRCODE", "二维码", "accepted", "L3"),
     "barcode":     ("BARCODE", "条形码", "accepted", "L2"),
 }

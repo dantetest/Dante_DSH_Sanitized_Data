@@ -28,7 +28,7 @@ rules:
     entity: PERSON
     label: 表格姓名列
     level: L2
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 14
     detect:
       - type: table_column
@@ -44,7 +44,7 @@ rules:
     entity: PERSON
     label: 表格联系人列
     level: L2
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 13
     detect:
       - type: table_column
@@ -60,7 +60,7 @@ rules:
     entity: ID_CARD
     label: 表格证件号列
     level: L3
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 12
     detect:
       - type: table_column
@@ -80,7 +80,7 @@ rules:
     entity: PHONE
     label: 表格电话列
     level: L2
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 11
     detect:
       - type: table_column
@@ -97,7 +97,7 @@ rules:
     entity: ADDRESS
     label: 表格地址列
     level: L2
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 10
     detect:
       - type: table_column
@@ -112,7 +112,7 @@ rules:
     entity: EMAIL
     label: 表格邮箱列
     level: L2
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 6
     detect:
       - type: table_column
@@ -129,7 +129,7 @@ rules:
     entity: ORG
     label: 表格单位列
     level: L2
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 7
     detect:
       - type: table_column
@@ -144,7 +144,7 @@ rules:
     entity: BANK
     label: 表格银行卡列
     level: L3
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 9
     detect:
       - type: table_column
@@ -160,7 +160,7 @@ rules:
     entity: ACCOUNT
     label: 表格账号列
     level: L3
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 8
     detect:
       - type: table_column
@@ -177,7 +177,7 @@ rules:
     entity: AMOUNT
     label: 表格金额列
     level: L2
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 5
     detect:
       - type: table_column
@@ -195,7 +195,7 @@ rules:
     entity: TXN_NO
     label: 表格单号列
     level: L2
-    scope: [xlsx, docx]
+    scope: [xlsx, docx, text]
     priority: 4
     detect:
       - type: table_column

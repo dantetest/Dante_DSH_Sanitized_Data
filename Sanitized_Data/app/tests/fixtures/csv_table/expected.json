@@ -1,0 +1,39 @@
+{
+  "_note": "虚构数据；table_column 在 CSV/TSV 上的期望覆盖（按规则直接调用检测器，不受其它规则合并影响）。",
+  "client_list.csv": {
+    "table.person": ["张伟", "欧阳娜娜"],
+    "table.id_card": ["310104198703124510", "31010419870312451"],
+    "table.phone": ["13817264451", "138 1726 4451"],
+    "table.address": ["上海市徐汇区某路1号", "某市某区"],
+    "table.org": ["某单位", "某某贸易有限公司"],
+    "table.email": ["zhang@example.com", "li@example.com"],
+    "table.amount": ["12,000.00", "8000"]
+  },
+  "client_list.tsv": {
+    "table.person": ["张伟", "欧阳娜娜"],
+    "table.id_card": ["310104198703124510", "31010419870312451"],
+    "table.phone": ["13817264451", "138 1726 4451"],
+    "table.address": ["上海市徐汇区某路1号", "某市某区"],
+    "table.org": ["某单位", "某某贸易有限公司"],
+    "table.email": ["zhang@example.com", "li@example.com"],
+    "table.amount": ["12000.00", "8000"]
+  },
+  "two_level.csv": {
+    "table.person": ["张伟", "欧阳娜娜"],
+    "table.id_card": ["310104198703124510", "31010419870312451"],
+    "table.phone": ["13817264451", "138 1726 4451"],
+    "table.org": ["某单位", "某某贸易有限公司"],
+    "table.email": ["zhang@example.com", "li@example.com"]
+  },
+  "merged_header.csv": {
+    "table.person": ["张伟", "李四"],
+    "table.phone": ["13817264451", "021-62889017", "13901827733", "138 1726 4451"],
+    "table.org": ["某单位", "某某贸易有限公司"]
+  },
+  "vertical_multilevel.csv": {
+    "table.person": ["汪小明"],
+    "table.phone": ["13817264451", "13901827733"],
+    "table.org": ["某单位"]
+  },
+  "no_header.csv": {}
+}

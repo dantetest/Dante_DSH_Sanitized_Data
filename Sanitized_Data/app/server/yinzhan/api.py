@@ -221,6 +221,9 @@ def export(ctx, jid):
         "allow_unprocessed_media": bool(body.get("allow_unprocessed_media")),
         # P0：PDF 附件/批注/表单默认剥离；高级用户可显式保留（写审计/告警）
         "keep_pdf_hidden": bool(body.get("keep_pdf_hidden")),
+        # P1-B：Office 内嵌图片自动脱敏（默认开）；strict 时无命中图置空白+剥离隐藏对象
+        "redact_office_media": bool(body.get("redact_office_media", True)),
+        "strict_office_media": bool(body.get("strict_office_media", False)),
     }
     return MANAGER.export(jid, body.get("mode", "ai"), options=options)
 

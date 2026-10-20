@@ -180,7 +180,8 @@ def test_rule_pack_and_detector():
     check(f"table-cn 自有规则 {len(RULE_IDS)} 条", len(own) == len(RULE_IDS), f"实际 {len(own)}")
     check("规则 id 与测试清单一致", ids == RULE_IDS, f"缺少 {sorted(RULE_IDS - ids)} 多出 {sorted(ids - RULE_IDS)}")
     for rule in own:
-        check(f"{rule.id} scope 仅 xlsx/docx", set(rule.scope) == {"xlsx", "docx"}, str(rule.scope))
+        check(f"{rule.id} scope 含 xlsx/docx/text（P1-B CSV/TSV）",
+              set(rule.scope) >= {"xlsx", "docx", "text"}, str(rule.scope))
         check(f"{rule.id} priority < 15（让位既有规则）", rule.priority < 15, str(rule.priority))
         check(f"{rule.id} 替换策略 surrogate",
               rule.replace.get("strategy") == "surrogate", str(rule.replace))
@@ -188,9 +189,10 @@ def test_rule_pack_and_detector():
               [item.get("type") for item in rule.detect] == ["table_column"],
               str([item.get("type") for item in rule.detect]))
 
-    # 格式编译：table 规则只在 xlsx/docx 生效；include 进来的 common 仍生效
+    # 格式编译：table 规则在 xlsx/docx + P1-B 的 text(CSV/TSV) 生效；include 进来的 common 仍生效
     for fmt, expected in (("xlsx", len(RULE_IDS)), ("docx", len(RULE_IDS)),
-                          ("pdf", 0), ("text", 0), ("image", 0), ("tiff", 0), ("mesh", 0)):
+                          ("text", len(RULE_IDS)),
+                          ("pdf", 0), ("image", 0), ("tiff", 0), ("mesh", 0)):
         got = [rule for rule in rules_mod.compile_rules(packs, fmt) if rule.pack == "table-cn"]
         check(f"{fmt} 格式包含 {expected} 条 table 规则", len(got) == expected, f"实际 {len(got)}")
     selected = rules_mod.compile_rules(packs, "xlsx", ["table-cn"])

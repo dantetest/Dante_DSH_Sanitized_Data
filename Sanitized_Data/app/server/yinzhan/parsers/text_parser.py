@@ -1,21 +1,33 @@
-"""纯文本类解析器与破坏性导出器（.txt / .md / .csv / .json / .log）。
+"""纯文本类解析器与破坏性导出器（.txt / .md / .csv / .tsv / .json / .log）。
 
 parse
-    按行切分（兼容 LF / CRLF / 混合换行），一行一个 text Block，
-    ref={"line": 行号, "eol": 原行尾}，不改变任何字符内容。
+    - 普通文本（.txt/.md/.json/.log）：按行切分（兼容 LF / CRLF / 混合换行），
+      一行一个 text Block，ref={"line": 行号, "eol": 原行尾}，不改变任何字符内容。
+    - 分隔符表格（.csv / .tsv）：用 csv 模块解析（保留原分隔符/引号/换行），
+      每个**非空单元格**一个 text Block，ref={"row": 行, "col": 列, "sep": 分隔符,
+      "line": 行}；page.ref 保留 dialect 与原始行文本（raw_rows），doc.meta 记录
+      delimited/delimiter/quotechar/rows/cols。document.fmt 仍为 "text"（兼容既有
+      text-scope 规则）；table_column 检测器按 row/col ref 做列语义识别。
 
 export
-    按 ref 行号重排、替换后按原换行符拼回，统一写 UTF-8：
-    black → 用 “█” 覆盖原长度；surrogate / mask → 写入 replacement；drop → 删除。
-    另做一次「值级传播」：检测器漏掉的行里若仍出现同一实体值，也按同一决策覆盖。
+    - 普通文本：按 ref 行号重排、替换后按原换行符拼回，统一写 UTF-8。
+    - CSV/TSV：按原分隔符/引号用 csv.writer 重写被修改的行（未修改且有原始行时
+      逐行写回原文），保持行数/列数/引号语义；black → “█” 覆盖原长度；
+      surrogate / mask → 写入 replacement；drop → 空单元格。
+    - 两者都做「值级传播」：检测器漏掉的单元格/行里若仍出现同一实体值，也按同一
+      决策覆盖。
 
 设计取舍：
     - 解码顺序：UTF-8(BOM) → UTF-16(BOM) → UTF-8 → GB18030 → UTF-8 替换字符。
       编码不是 UTF-8 时写 warning，成品固定 UTF-8。
-    - 空行也保留成空 Block，保证导出时行结构逐字节可还原。
+    - 空行也保留成空 Block，保证普通文本导出时行结构逐字节可还原。
+    - CSV/TSV 的 header 语义不在这里判断：交给 detectors/table_det.py 的
+      table_column（无表头时自然退化为逐单元格的既有规则）。
 """
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from pathlib import Path
 from typing import Any
@@ -30,6 +42,8 @@ A4_HEIGHT = 842.0
 BLACK_CHAR = "█"
 # 这些扩展名都按纯文本处理
 TEXT_ENCODINGS = ("utf-8", "gb18030")
+# 分隔符表格：扩展名 -> 格式 id（document.fmt 保持 "text"，语义放 meta/ref）
+DELIMITED_SUFFIXES = {".csv": "csv", ".tsv": "tsv"}
 
 
 def _decode_text(data: bytes) -> tuple[str, str, list[str]]:
@@ -68,6 +82,126 @@ def _split_lines(text: str) -> list[tuple[str, str]]:
         else:
             lines.append((part, ""))
     return lines
+
+
+def _sniff_delimiter(text: str, kind: str) -> tuple[str, str]:
+    """识别 CSV/TSV 的分隔符与引号字符。
+
+    - ``.tsv`` 固定制表符；
+    - ``.csv`` 先用 ``csv.Sniffer``（候选 , ; \\t |），失败则按首行出现次数兜底。
+    引号字符默认 ``"``，Sniffer 识别到其它引号时保留。
+    """
+    if kind == "tsv":
+        return "\t", '"'
+    sample = text[:16384]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        delimiter = dialect.delimiter or ","
+        quotechar = dialect.quotechar or '"'
+        return delimiter, quotechar
+    except Exception:
+        first_line = sample.split("\n", 1)[0] if sample else ""
+        delimiter = max(",;\t|", key=lambda ch: first_line.count(ch))
+        if first_line.count(delimiter) == 0:
+            delimiter = ","
+        return delimiter, '"'
+
+
+def _read_delimited_rows(text: str, delimiter: str, quotechar: str) -> list[list[str]]:
+    """用 csv 模块解析；保留引号内的换行/分隔符（单元格可跨行）。"""
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter,
+                        quotechar=quotechar or '"')
+    return [list(row) for row in reader]
+
+
+def _csv_line(values: list[str], delimiter: str, quotechar: str) -> str:
+    """把一行单元格写成 CSV/TSV 文本（按需加引号，不带行尾）。"""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=delimiter,
+                        quotechar=quotechar or '"', lineterminator="")
+    writer.writerow(values)
+    return buffer.getvalue()
+
+
+def _fill_delimited_document(
+    document: "Document", text: str, kind: str, encoding: str, warnings: list[str]
+) -> bool:
+    """把 CSV/TSV 文本填进 Document（单元格 Block + page.ref dialect + doc.meta）。
+
+    返回 False 表示解析失败，调用方应退回"按行解析"的普通文本路径。
+    """
+    delimiter, quotechar = _sniff_delimiter(text, kind)
+    try:
+        rows = _read_delimited_rows(text, delimiter, quotechar)
+    except csv.Error as exc:
+        warnings.append(f"{kind.upper()} 解析失败（{exc}），已退回按行解析")
+        return False
+
+    eol = "\r\n" if "\r\n" in text else "\n"
+    final_newline = text.endswith("\n")
+    raw_pairs = _split_lines(text)
+    if final_newline and raw_pairs and raw_pairs[-1][0] == "":
+        raw_pairs = raw_pairs[:-1]
+    # 只有"每条记录占一行"时才能逐行写回原文（引号内换行会破坏行对应）
+    raw_ok = (len(raw_pairs) == len(rows)
+              and all("\n" not in line for line, _eol in raw_pairs))
+
+    page = Page(index=0, width=A4_WIDTH, height=A4_HEIGHT)
+    max_cols = 0
+    for row_index, row in enumerate(rows):
+        max_cols = max(max_cols, len(row))
+        for col_index, cell_value in enumerate(row):
+            cell_text = "" if cell_value is None else str(cell_value)
+            if not cell_text:
+                continue
+            page.blocks.append(
+                Block(
+                    id=f"b{row_index}_{col_index}",
+                    kind="text",
+                    text=cell_text,
+                    ref={
+                        "row": row_index,
+                        "col": col_index,
+                        "sep": delimiter,
+                        "line": row_index,
+                    },
+                    page=0,
+                    attrs={"row": row_index, "col": col_index, "sep": delimiter},
+                )
+            )
+    page.ref = {
+        "delimited": kind,
+        "delimiter": delimiter,
+        "quotechar": quotechar,
+        "eol": eol,
+        "final_newline": final_newline,
+        "raw_rows": [line for line, _eol in raw_pairs] if raw_ok else [],
+        "row_cols": [len(row) for row in rows],
+        "rows": len(rows),
+    }
+    document.pages.append(page)
+    document.meta = {
+        "encoding": encoding,
+        "line_count": len(raw_pairs),
+        "delimited": kind,
+        "delimiter": delimiter,
+        "quotechar": quotechar,
+        "rows": len(rows),
+        "cols": max_cols,
+        "final_newline": final_newline,
+        "raw_rows_ok": raw_ok,
+    }
+    if not rows:
+        warnings.append(f"{kind.upper()} 没有可解析的数据行")
+    ragged = sum(1 for row in rows if len(row) != max_cols)
+    if ragged:
+        warnings.append(
+            f"{kind.upper()} 有 {ragged} 行列数与最大列数（{max_cols}）不一致，"
+            "导出时按各行列数原样保留"
+        )
+    if encoding not in ("utf-8", "utf-8-sig"):
+        warnings.append(f"输入编码为 {encoding}，成品统一按 UTF-8 输出")
+    return True
 
 
 def _replacement_text(decision: Decision, length: int) -> str | None:
@@ -118,11 +252,143 @@ def _propagation_rules(
     return rules
 
 
+def _export_delimited(
+    document: "Document",
+    entities: list[Entity],
+    decisions: dict[str, Decision],
+    out_path: Path,
+    warnings: list[str],
+) -> ExportResult:
+    """CSV/TSV 破坏性写回：逐格替换、按原 dialect 重写，保持行数/列数。"""
+    page = document.pages[0] if document.pages else None
+    ref = dict(getattr(page, "ref", None) or {})
+    rows_meta = list(ref.get("row_cols") or [])
+    nrows = int(ref.get("rows") or len(rows_meta))
+    delimiter = str(ref.get("delimiter") or ",")
+    quotechar = str(ref.get("quotechar") or '"')[:1] or '"'
+    eol = str(ref.get("eol") or "\n")
+    final_newline = bool(ref.get("final_newline", True))
+    raw_rows = list(ref.get("raw_rows") or [])
+
+    blocks = [block for page_ in document.pages for block in page_.blocks]
+    block_by_id = {block.id: block for block in blocks}
+    grid: dict[tuple[int, int], str] = {}
+    for block in blocks:
+        block_ref = block.ref or {}
+        row = block_ref.get("row")
+        col = block_ref.get("col")
+        if isinstance(row, int) and isinstance(col, int):
+            grid[(row, col)] = block.text
+
+    def cell_text(row: int, col: int) -> str:
+        return grid.get((row, col), "")
+
+    unresolved = 0
+    edits: dict[tuple[int, int], list[tuple[int, int, str]]] = {}
+    edited_rows: set[int] = set()
+    for entity in entities:
+        if entity.status == "rejected" or not entity.value:
+            continue
+        decision = decisions.get(entity.id) or entity.decision
+        if decision is None:
+            decision = Decision(strategy="black", black=True)
+        if decision.strategy == "keep":
+            continue
+        for span in entity.spans:
+            if not span.is_text:
+                unresolved += 1
+                continue
+            block = block_by_id.get(span.block_id or "")
+            block_ref = (block.ref if block else None) or {}
+            row = block_ref.get("row")
+            col = block_ref.get("col")
+            if not isinstance(row, int) or not isinstance(col, int):
+                unresolved += 1
+                continue
+            text = cell_text(row, col)
+            start = max(0, min(int(span.start), len(text)))
+            end = max(start, min(int(span.end), len(text)))
+            if end <= start:
+                unresolved += 1
+                continue
+            replacement = _replacement_text(decision, end - start)
+            if replacement is None:
+                continue
+            edits.setdefault((row, col), []).append((start, end, replacement))
+            edited_rows.add(row)
+
+    # 值级传播：检测范围外（其它单元格）若还有同值出现，也按同一决策覆盖
+    propagation = _propagation_rules(entities, decisions, warnings)
+    if propagation:
+        ordered = sorted(propagation.items(), key=lambda item: len(item[0]),
+                         reverse=True)
+        propagated = 0
+        for (row, col), text in list(grid.items()):
+            cell_edits = edits.setdefault((row, col), [])
+            for value, replacement in ordered:
+                position = 0
+                while True:
+                    hit = text.find(value, position)
+                    if hit < 0:
+                        break
+                    end = hit + len(value)
+                    if not any(not (end <= old_start or hit >= old_end)
+                               for old_start, old_end, _old in cell_edits):
+                        cell_edits.append((hit, end, replacement))
+                        edited_rows.add(row)
+                        propagated += 1
+                    position = end
+            if not cell_edits:
+                edits.pop((row, col), None)
+        if propagated:
+            warnings.append(
+                f"检测范围外另有 {propagated} 处同值出现，已按同一决策一并覆盖"
+            )
+
+    for (row, col), cell_edits in edits.items():
+        current = cell_text(row, col)
+        for start, end, replacement in sorted(cell_edits, key=lambda item: item[0],
+                                              reverse=True):
+            start = max(0, min(start, len(current)))
+            end = max(start, min(end, len(current)))
+            current = current[:start] + replacement + current[end:]
+        grid[(row, col)] = current
+
+    lines: list[str] = []
+    for row in range(nrows):
+        cols_count = rows_meta[row] if row < len(rows_meta) else 0
+        if row not in edited_rows and row < len(raw_rows):
+            lines.append(raw_rows[row])          # 未修改行按原文写回（保引号/空格）
+            continue
+        values = [cell_text(row, col) for col in range(cols_count)]
+        lines.append(_csv_line(values, delimiter, quotechar))
+    output = eol.join(lines)
+    if nrows and final_newline:
+        output += eol
+
+    if unresolved:
+        warnings.append(f"有 {unresolved} 处标记无法映射到 CSV/TSV 单元格，请人工复核成品")
+
+    try:
+        with open(out_path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(output)
+    except Exception as exc:
+        out_path.unlink(missing_ok=True)
+        raise ExportError(f"CSV/TSV 写出失败，未产出成品：{exc}") from exc
+
+    meta_encoding = (document.meta or {}).get("encoding")
+    if meta_encoding and meta_encoding not in ("utf-8", "utf-8-sig"):
+        warnings.append(f"输入编码 {meta_encoding} 已统一转为 UTF-8")
+    return ExportResult(
+        path=str(out_path), warnings=warnings, size=out_path.stat().st_size
+    )
+
+
 class TextParser(Parser):
     """纯文本解析器（flow 类格式，不提供位图渲染）。"""
 
     format_id = "text"
-    extensions = (".txt", ".md", ".csv", ".json", ".log")
+    extensions = (".txt", ".md", ".csv", ".tsv", ".json", ".log")
     can_render = False
 
     # ── 判型 ──
@@ -155,6 +421,14 @@ class TextParser(Parser):
         except Exception as exc:  # 极端情况：解码器崩溃也不抛给用户
             document.warnings.append(f"文本解码失败：{exc}")
             return document
+
+        suffix = path.suffix.lower()
+        if suffix in DELIMITED_SUFFIXES:
+            kind = DELIMITED_SUFFIXES[suffix]
+            if _fill_delimited_document(document, text, kind, encoding,
+                                        document.warnings):
+                return document
+            # 解析失败：退回下面的"按行解析"普通文本路径
 
         lines = _split_lines(text)
         page = Page(index=0, width=A4_WIDTH, height=A4_HEIGHT)
@@ -190,6 +464,9 @@ class TextParser(Parser):
             out_path.parent.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
+
+        if (doc.meta or {}).get("delimited"):
+            return _export_delimited(doc, entities, decisions, out_path, warnings)
 
         page_blocks = [block for page in doc.pages for block in page.blocks]
         block_by_id = {block.id: block for block in page_blocks}

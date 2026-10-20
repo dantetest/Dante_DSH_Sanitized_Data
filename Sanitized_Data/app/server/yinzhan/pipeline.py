@@ -530,6 +530,7 @@ _RECT_ETYPE_KIND = {
     "CHAT_GROUP": "chat_group",
     "CHAT_TIME": "chat_time",
     "CHAT_INPUT": "chat_input",
+    "EMBEDDED_IMAGE": "embedded_image",
     "QRCODE": "qrcode",
     "BARCODE": "barcode",
 }
@@ -602,6 +603,10 @@ def has_cleanup_targets(doc: Document) -> bool:
     # PDF 隐藏数据（附件/批注/表单/JS）：即使正文没有可涂实体，也允许「仅清理导出」
     if any(meta.get(key) for key in
            ("embedded_files", "pdf_annotations", "pdf_forms", "pdf_js")):
+        return True
+    # Office 隐藏对象（图表/文本框/OLE）：同样允许「仅清理导出」；图片会自动脱敏
+    media = meta.get("embedded_media") if isinstance(meta, dict) else None
+    if isinstance(media, dict) and int(media.get("count") or 0):
         return True
     if (getattr(doc, "extra", None) or {}).get("geo_transform"):
         return True
@@ -728,7 +733,9 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
         media_info = {}
     media_count = int(media_info.get("count") or 0)
     if media_count and not options.get("allow_unprocessed_media"):
-        issues.append(f"文件里仍有 {media_count} 张未脱敏的内嵌图片")
+        issues.append(
+            f"文件里仍有 {media_count} 个无法自动脱敏的隐藏对象"
+            "（图表/文本框/OLE 等）")
 
     # PDF 隐藏数据（附件/批注/表单/JS）：默认必须被剥离；显式 keep_pdf_hidden 才放行
     pdf_hidden: dict[str, int] = {}

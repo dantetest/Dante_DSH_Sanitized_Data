@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import uuid
 import unicodedata
 from pathlib import Path
@@ -558,8 +559,314 @@ def _normalize_ocr_text(text: str) -> str:
         return text.strip()
 
 
+# ──────────────────────── 文本层页内嵌图片扫描（P1-B） ────────────────────────
+#
+# 背景：有文本层的页只处理文字，页面内嵌的证件照/聊天截图/二维码不做识别。
+# 这里对「面积 ≥5% 页面的内嵌图片」按图片区域单独渲染 + 扫描；命中敏感目标
+# （人脸/证件/车牌/二维码/条码/聊天截图/招牌）时把**整块图片区域**产出一个
+# kind="embedded_image" 的视觉标记（保守：避免图片内文字/局部目标漏涂）。
+# 纯文本页（无图片）不进入本函数；图片解码/缩放前先按页面面积粗筛。
+EMBEDDED_MIN_AREA_RATIO = 0.05
+EMBEDDED_SCAN_DPI = 150
+EMBEDDED_MAX_IMAGES = 8
+EMBEDDED_OCR_MIN_PIXELS = 60_000
+
+#: 命中这些 kind 才把整块内嵌图片判为敏感（保守；宁可多涂不可漏）
+_EMBEDDED_SENSITIVE_KINDS = frozenset((
+    "face", "id_document", "id_photo", "id_name", "id_number", "id_address",
+    "id_authority", "id_validity", "plate",
+    "qrcode", "barcode",
+    "chat_avatar", "chat_name", "chat_group", "chat_time", "chat_input",
+    "road_sign", "door_address", "shop_sign", "org_plaque",
+))
+
+
+def _embedded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _embedded_env_float(name: str, default: float, minimum: float,
+                        maximum: float) -> float:
+    try:
+        value = float(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _iou_rect(a: Box, b: Box) -> float:
+    """两个矩形的交并比（内嵌图片区域去重用）。"""
+    x0, y0 = max(a[0], b[0]), max(a[1], b[1])
+    x1, y1 = min(a[2], b[2]), min(a[3], b[3])
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    inter = (x1 - x0) * (y1 - y0)
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _iter_embedded_images(page: fitz.Page) -> tuple[list[dict[str, Any]], int]:
+    """枚举页面内嵌图片（面积 ≥ 阈值）。
+
+    返回 ``(待扫描项, 去重后命中面积阈值的总数)``；待扫描项按面积降序、
+    重叠去重、最多 ``YINZHAN_PDF_EMBEDDED_MAX_IMAGES`` 张。渲染用
+    ``pdf_rect``；visual mark 用 ``display_rect``（与 OCR/导出坐标一致，
+    旋转页由 ``_to_page_space`` 换算）。
+    """
+    min_ratio = _embedded_env_float("YINZHAN_PDF_EMBEDDED_MIN_AREA",
+                                    EMBEDDED_MIN_AREA_RATIO, 0.01, 0.60)
+    max_images = _embedded_env_int("YINZHAN_PDF_EMBEDDED_MAX_IMAGES",
+                                   EMBEDDED_MAX_IMAGES, 1, 64)
+    try:
+        infos = page.get_images(full=True)
+    except Exception:
+        return [], 0
+    page_rect = page.rect
+    page_area = max(1.0, float(page_rect.width) * float(page_rect.height))
+    items: list[dict[str, Any]] = []
+    seen_xref: set[int] = set()
+    for info in infos or []:
+        try:
+            xref = int(info[0])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if xref <= 0 or xref in seen_xref:
+            continue
+        seen_xref.add(xref)
+        try:
+            rects = page.get_image_rects(xref)
+        except Exception:
+            continue
+        for raw_rect in rects or []:
+            try:
+                pdf_rect = fitz.Rect(raw_rect)
+                pdf_rect.normalize()
+                if pdf_rect.is_empty or pdf_rect.width < 4 or pdf_rect.height < 4:
+                    continue
+                display = _to_page_space(pdf_rect, page)
+                display_rect = fitz.Rect(display)
+                display_rect.normalize()
+                # 显示坐标收进页面范围（旋转页也可用）
+                clip = display_rect & page_rect
+                if clip.is_empty or clip.width < 4 or clip.height < 4:
+                    continue
+                ratio = float(clip.width * clip.height) / page_area
+                if ratio < min_ratio:
+                    continue
+                items.append({
+                    "xref": xref,
+                    "pdf_rect": pdf_rect,
+                    "display_rect": (float(display_rect.x0), float(display_rect.y0),
+                                     float(display_rect.x1), float(display_rect.y1)),
+                    "area_ratio": round(ratio, 4),
+                })
+            except Exception:
+                continue
+    # 同一块图片被多个 xref/多次引用：按面积降序，重叠 ≥0.85 只保留一个
+    items.sort(key=lambda item: -float(item["area_ratio"]))
+    kept: list[dict[str, Any]] = []
+    for item in items:
+        rect = item["display_rect"]
+        if any(_iou_rect(rect, other["display_rect"]) >= 0.85 for other in kept):
+            continue
+        kept.append(item)
+    total = len(kept)
+    if total > max_images:
+        kept = kept[:max_images]
+    return kept, total
+
+
+def _embedded_sensitive_hits(marks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """从扫描命中里筛出足够可信的敏感目标（避免正常配图误判整块涂黑）。"""
+    picked: list[dict[str, Any]] = []
+    for mark in marks or []:
+        try:
+            kind = str(mark.get("kind") or "")
+            if kind not in _EMBEDDED_SENSITIVE_KINDS:
+                continue
+            note = str(mark.get("note") or "")
+            confidence = float(mark.get("confidence") or 0.0)
+            if kind in ("qrcode", "barcode") and "/detect" in note:
+                continue                    # 仅检测未解码：不可信，不据此整块涂黑
+            if kind == "face" and confidence < 0.75:
+                continue
+            if kind == "plate" and (confidence < 0.80 or "unconfirmed" in note):
+                continue
+            if kind in ("id_document", "id_photo", "id_name", "id_number",
+                        "id_address", "id_authority", "id_validity") \
+                    and confidence < 0.65:
+                continue
+            if kind.startswith("chat_") and confidence < 0.60:
+                continue
+            picked.append(mark)
+        except Exception:
+            continue
+    return picked
+
+
+def _scan_embedded_images(page: fitz.Page, page_index: int, doc: Document,
+                          ctx: ParseContext | None) -> None:
+    """扫描一页文本层页里的内嵌图片；有敏感命中时产 embedded_image 视觉标记。"""
+    if ctx is None:
+        return
+    from .. import mediascan
+
+    if not mediascan.has_enabled():
+        return
+    items, total = _iter_embedded_images(page)
+    if not items:
+        return
+    if total > len(items):
+        doc.warnings.append(
+            f"第 {page_index + 1} 页内嵌图片 {total} 张，仅扫描面积最大的 "
+            f"{len(items)} 张（YINZHAN_PDF_EMBEDDED_MAX_IMAGES），其余请人工复核")
+    dpi = _embedded_env_int("YINZHAN_PDF_EMBEDDED_DPI", EMBEDDED_SCAN_DPI, 96, 300)
+    ocr = getattr(ctx, "ocr", None)
+    try:
+        ocr_ready = bool(ocr is not None and getattr(ocr, "available", True))
+    except Exception:
+        ocr_ready = False
+    ocr_min_pixels = _embedded_env_int("YINZHAN_PDF_EMBEDDED_OCR_MIN_PIXELS",
+                                       EMBEDDED_OCR_MIN_PIXELS, 10_000, 4_000_000)
+    debug = str(os.environ.get("YINZHAN_PDF_EMBEDDED_DEBUG", "") or "").strip() \
+        not in ("", "0", "false", "no", "off")
+    processed = 0
+    hit_images = 0
+    t0 = time.time() if debug else 0.0
+
+    def _ocr_boxes(rgb: Any) -> list[dict[str, Any]]:
+        if not ocr_ready or rgb.shape[0] * rgb.shape[1] < ocr_min_pixels:
+            return []
+        try:
+            lines = ocr.recognize(Image.fromarray(rgb), should_stop=ctx.stopped) or []
+        except Exception:
+            return []
+        return [{"text": line.text, "rect": tuple(line.box)} for line in lines]
+
+    for item in items:
+        try:
+            pix = page.get_pixmap(clip=item["pdf_rect"], dpi=dpi, alpha=False)
+            if pix.width < 8 or pix.height < 8:
+                continue
+            try:
+                import numpy as np
+
+                arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                    pix.height, pix.width, pix.n)
+            except Exception:
+                continue
+            if arr.shape[2] < 3:
+                continue
+            rgb = np.ascontiguousarray(arr[:, :, :3])
+        except Exception as exc:
+            doc.warnings.append(
+                f"第 {page_index + 1} 页内嵌图片解码跳过（{type(exc).__name__}），"
+                "如为 JPG2000/CMYK/遮罩等异常格式请人工复核")
+            continue
+        processed += 1
+        sensitive: list[dict[str, Any]] = []
+        try:
+            marks, _warn = mediascan.analyze(
+                rgb, page=page_index, dpi=float(dpi),
+                options={"fmt": "pdf_embedded"})
+            sensitive = _embedded_sensitive_hits(marks)
+            if not sensitive:
+                # 文本类目标（证件/聊天/招牌/车牌文字）需要 OCR 图片内文字
+                boxes = _ocr_boxes(rgb)
+                if boxes:
+                    marks2, _warn2 = mediascan.analyze(
+                        rgb, page=page_index, dpi=float(dpi),
+                        options={"fmt": "pdf_embedded", "text_boxes": boxes})
+                    sensitive = _embedded_sensitive_hits(marks2)
+        except Exception as exc:
+            doc.warnings.append(
+                f"第 {page_index + 1} 页内嵌图片扫描跳过（{type(exc).__name__}）")
+            continue
+        if not sensitive:
+            continue
+        display = item["display_rect"]
+        if any(mark.kind == "embedded_image" and mark.page == page_index
+               and _iou_rect(tuple(mark.rect), display) >= 0.85
+               for mark in doc.visual_marks):
+            continue
+        note = (f"engine=embedded_image;n={len(sensitive)};"
+                f"area={float(item['area_ratio']):.3f}")
+        doc.visual_marks.append(VisualMark(
+            kind="embedded_image", page=page_index, rect=display,
+            confidence=0.8, note=note))
+        hit_images += 1
+    if debug:
+        elapsed = (time.time() - t0) * 1000.0
+        doc.warnings.append(
+            f"内嵌图片扫描 第 {page_index + 1} 页：处理 {processed}/{len(items)} 张，"
+            f"命中 {hit_images} 张，{elapsed:.0f}ms")
+
+
+def _verify_embedded_images_black(out_path: Path, entities: Iterable[Entity],
+                                  warnings: list[str]) -> None:
+    """解析器侧成品复检：embedded_image 实体覆盖区域应被实心涂黑（黑像素≥95%）。"""
+    targets: list[tuple[int, Box]] = []
+    for entity in entities or []:
+        try:
+            if getattr(entity, "etype", "") != "EMBEDDED_IMAGE":
+                continue
+            if getattr(entity, "status", "accepted") == "rejected":
+                continue
+            for span in getattr(entity, "spans", None) or []:
+                if not span.rect:
+                    continue
+                page = int(span.page) if span.page is not None else 0
+                targets.append((page, tuple(float(v) for v in span.rect)))
+        except Exception:
+            continue
+    if not targets:
+        return
+    try:
+        pdf = fitz.open(str(out_path))
+    except Exception as exc:
+        warnings.append(f"内嵌图片涂黑复检无法重开成品（{type(exc).__name__}）")
+        return
+    try:
+        for page_no, rect in targets:
+            try:
+                if page_no < 0 or page_no >= pdf.page_count:
+                    continue
+                page = pdf[page_no]
+                clip = _to_pdf_space(rect, page)
+                clip.normalize()
+                clip = clip & page.rect
+                if clip.is_empty or clip.width < 2 or clip.height < 2:
+                    continue
+                pix = page.get_pixmap(clip=clip, dpi=72, alpha=False)
+                import numpy as np
+
+                arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                    pix.height, pix.width, pix.n)
+                rgb = arr[:, :, :3]
+                black = float((rgb.max(axis=2) <= 45).mean())
+                if black < 0.95:
+                    warnings.append(
+                        f"第 {page_no + 1} 页内嵌图片区域未完全涂黑"
+                        f"（黑像素 {black:.0%}），请人工复核")
+            except Exception as exc:
+                warnings.append(
+                    f"第 {page_no + 1} 页内嵌图片涂黑复检失败（{type(exc).__name__}）")
+    finally:
+        try:
+            pdf.close()
+        except Exception:
+            pass
+
+
 def _collect_visual(page: fitz.Page, blocks: list[Block], page_index: int,
-                    doc: Document, scanned: bool = False) -> None:
+                    doc: Document, scanned: bool = False,
+                    ctx: ParseContext | None = None) -> None:
     """在页面上找红章和手写签名候选，结果记进 doc.visual_marks。
 
     这里单独渲染一次（150dpi），不复用 OCR 那张 200dpi 的图：
@@ -593,6 +900,7 @@ def _collect_visual(page: fitz.Page, blocks: list[Block], page_index: int,
             from .. import mediascan
 
             if mediascan.has_enabled():
+                has_images = False
                 if not scanned:
                     try:
                         has_images = bool(page.get_images(full=True))
@@ -627,6 +935,14 @@ def _collect_visual(page: fitz.Page, blocks: list[Block], page_index: int,
                 doc.visual_marks.extend(mediascan.to_visual_marks(
                     marks, scale=72.0 / scan_dpi, page=page_index))
                 doc.warnings.extend(scan_warns)
+                # P1-B：文本层页的内嵌图片逐张扫描；命中敏感目标 → 整块图片区域
+                # 产 embedded_image 视觉标记。纯文本页 / 扫描页不进入这一支。
+                if not scanned and has_images:
+                    try:
+                        _scan_embedded_images(page, page_index, doc, ctx)
+                    except Exception as embedded_exc:
+                        doc.warnings.append(
+                            f"第 {page_index + 1} 页内嵌图片扫描跳过：{embedded_exc}")
         except Exception as scan_exc:
             doc.warnings.append(f"第 {page_index + 1} 页图像目标扫描跳过：{scan_exc}")
     except Exception as exc:  # 视觉检测失败不能影响主流程
@@ -975,7 +1291,8 @@ class PdfParser(registry.Parser):
                     udm_page.blocks = blocks
                     doc.pages.append(udm_page)
                     # OCR 读不出来的东西（红章、手写签名、码类/人脸…）
-                    _collect_visual(page, blocks, page_index, doc, scanned=scanned)
+                    _collect_visual(page, blocks, page_index, doc,
+                                    scanned=scanned, ctx=ctx)
                     ctx.report(page_index + 1, page_count,
                                f"已读取 {page_index + 1}/{page_count} 页")
                 except Exception as exc:
@@ -1098,6 +1415,12 @@ class PdfParser(registry.Parser):
                 except OSError:
                     pass
                 raise ExportError(f"覆盖原 PDF 失败：{exc}") from exc
+        # 解析器侧成品复检：P1-B 内嵌图片区域必须已被实心涂黑（黑像素≥95%）。
+        # 不通过只写 warning，最终由 pipeline.verify 的视觉残留/复检兜底。
+        try:
+            _verify_embedded_images_black(out_path, entities, warnings)
+        except Exception as exc:
+            warnings.append(f"内嵌图片涂黑复检跳过：{type(exc).__name__}")
         # 解析器侧成品复检：默认剥离模式下，附件/批注/表单/JS 必须为 0。
         # （keep_pdf_hidden=True 显式保留时跳过，由 pipeline.verify 按同一 option 放行）
         if not keep_hidden:

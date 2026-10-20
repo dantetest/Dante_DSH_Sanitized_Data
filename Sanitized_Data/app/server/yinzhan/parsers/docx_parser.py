@@ -31,8 +31,11 @@ import shutil
 import time
 import uuid
 import zipfile
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+
+from PIL import Image, ImageDraw
 
 from ..registry import Parser, register_parser
 from ..udm import (
@@ -566,6 +569,726 @@ def _harden_zip(path: Path, warnings: list[str]) -> None:
         )
 
 
+# ═══════════════════ Office 内嵌媒体自动脱敏（P1-B，DOCX/XLSX 共用） ═══════════════════
+#
+# 背景：P0 只检测已加载的 media/embeddings 并让用户二次确认，放行后原图保留。
+# P1-B：
+#   1) 按 zip namelist 全量枚举（media/embeddings/charts/drawings/activeX/…
+#      + 文本框/域/脚注尾注），写 doc.meta["embedded_media"] / ["hidden_objects"]；
+#   2) 导出时对可解码图片自动跑 mediascan（face/id/plate/qr/barcode/chat/sign），
+#      有命中就 PIL 涂黑 → 同格式重编码 → zip 级替换（同一部件名，OOXML 结构不变）；
+#   3) 图表/OLE/activeX/文本框/不可解码图片（emf/wmf/svg…）无法安全自动脱敏：
+#      默认保留并需要用户确认（count>0 触发既有 media_confirmation_required）；
+#      strict_office_media=True 时尽量剥离（删部件 + 清 rels/内容类型 + 去 XML 引用）；
+#   4) 导出后重开成品 zip，对被替换图片重扫 mediascan，命中必须 0，否则 ExportError。
+# 非目标（P1.5）：内嵌图片里的纯文字 OCR 规则脱敏、图片 EXIF/GPS 元数据剥离。
+
+_OFFICE_IMAGE_EXTS = frozenset(
+    {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp"})
+_OFFICE_UNSUPPORTED_IMAGE_EXTS = frozenset(
+    {".emf", ".wmf", ".svg", ".ico", ".tga", ".eps", ".psd", ".heic", ".heif",
+     ".avif", ".jxl", ".pcx", ".pict", ".pct"})
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return bool(default)
+    return str(raw).strip().lower() not in ("0", "false", "no", "off", "none")
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+        return value if value > 0 else int(default)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+#: 单次导出最多自动处理多少张图片（防超大文档拖垮导出；超出会明确 warning）
+OFFICE_MEDIA_MAX_IMAGES = _env_positive_int("YINZHAN_OFFICE_MEDIA_MAX_IMAGES", 60)
+#: 单张图片像素上限（超过则跳过自动处理并 warning）
+OFFICE_MEDIA_MAX_PIXELS = _env_positive_int("YINZHAN_OFFICE_MEDIA_MAX_PIXELS", 40_000_000)
+#: 单次导出累计处理像素上限
+OFFICE_MEDIA_TOTAL_PIXELS = _env_positive_int(
+    "YINZHAN_OFFICE_MEDIA_TOTAL_PIXELS", 300_000_000)
+#: 扫描前缩放上限（Barcode 需要细节，过大时缩放会漏检 → 会 warning）
+OFFICE_MEDIA_SCAN_MAX_SIDE = _env_positive_int("YINZHAN_OFFICE_SCAN_MAX_SIDE", 3000)
+#: 每次导出最多为多少张图片跑 OCR（身份证/车牌/聊天截图类目标需要 OCR 文本框）
+OFFICE_MEDIA_OCR_MAX_IMAGES = _env_positive_int("YINZHAN_OFFICE_OCR_MAX_IMAGES", 30)
+#: 是否默认自动脱敏内嵌图片（导出 option 优先；env 可整体关闭）
+OFFICE_MEDIA_REDACT_DEFAULT = _env_flag("YINZHAN_OFFICE_MEDIA", True)
+#: 是否默认 strict 处理（导出 option 优先）
+OFFICE_MEDIA_STRICT_DEFAULT = _env_flag("YINZHAN_OFFICE_STRICT", False)
+
+
+def _office_media_option(options: dict | None, key: str, default: bool) -> bool:
+    raw = (options or {}).get(key)
+    if raw is None:
+        return bool(default)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in ("0", "false", "no", "off", "none")
+    return bool(raw)
+
+
+def _xml_has_textbox(data: bytes) -> bool:
+    """判断 drawing/容器 XML 里是否有文本框/形状（无法安全自动脱敏的隐藏对象）。"""
+    low = data[:200000].lower()
+    if b"txbxcontent" in low or b"txbx" in low or b"txbody" in low:
+        return True
+    if not _LXML_OK:
+        return False
+    try:
+        root = etree.fromstring(data)
+    except Exception:
+        return False
+    for element in root.iter():
+        try:
+            if _localname(element.tag).lower() in ("txbxcontent", "txbx", "txbody"):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _count_office_textbox_elements(archive: zipfile.ZipFile, fmt: str) -> int:
+    """统计包内 XML 里的文本框元素数量（docx: w:txbxContent；xlsx: xdr:txBody）。"""
+    if not _LXML_OK:
+        return 0
+    targets: list[str] = []
+    for name in archive.namelist():
+        low = name.lower()
+        if fmt == "docx":
+            if low.startswith(("word/document.xml", "word/header", "word/footer",
+                               "word/footnotes.xml", "word/endnotes.xml")):
+                if low.endswith(".xml"):
+                    targets.append(name)
+        else:
+            if low.startswith("xl/drawings/") and low.endswith(".xml"):
+                targets.append(name)
+    total = 0
+    for name in targets:
+        try:
+            data = archive.read(name)
+        except Exception:
+            continue
+        low = data[:200000].lower()
+        if fmt == "docx":
+            total += low.count(b"txbxcontent")
+        else:
+            # 只把“形状/文本框”算隐藏对象；纯图片锚点（xdr:pic）不算
+            if b"txbody" in low or b"<xdr:sp" in low:
+                try:
+                    root = etree.fromstring(data)
+                    total += sum(
+                        1 for element in root.iter()
+                        if _localname(element.tag).lower() in ("txbody", "sp"))
+                except Exception:
+                    total += max(1, low.count(b"txbody"))
+    return total
+
+
+def _classify_office_parts(archive: zipfile.ZipFile, fmt: str) -> dict[str, Any]:
+    """按 zip 全量 namelist 分类：可自动脱敏图片 / 不可解码图片 / 隐藏对象。"""
+    names = [str(name) for name in archive.namelist()]
+    prefix = "word/" if fmt == "docx" else "xl/"
+    media_prefix = prefix + "media/"
+    images: list[str] = []
+    unsupported: list[str] = []
+    hidden: list[str] = []
+    footnotes: list[str] = []
+    endnotes: list[str] = []
+    for name in names:
+        low = name.lower()
+        base = low.rsplit("/", 1)[-1]
+        ext = ("." + base.rsplit(".", 1)[-1]) if "." in base else ""
+        if low.startswith(media_prefix):
+            if ext in _OFFICE_IMAGE_EXTS:
+                images.append(name)
+            else:
+                unsupported.append(name)
+            continue
+        if "/embeddings/" in low:
+            hidden.append(name)
+            continue
+        if low.startswith(prefix + "charts/"):
+            hidden.append(name)
+            continue
+        if "activex" in low:
+            hidden.append(name)
+            continue
+        if fmt == "docx":
+            if low.endswith("word/glossary/document.xml"):
+                hidden.append(name)
+            elif low.startswith("word/drawings/") and low.endswith(".xml"):
+                try:
+                    if _xml_has_textbox(archive.read(name)):
+                        hidden.append(name)
+                except Exception:
+                    continue
+            elif base == "footnotes.xml":
+                footnotes.append(name)
+            elif base == "endnotes.xml":
+                endnotes.append(name)
+        else:
+            if low.startswith("xl/drawings/") and low.endswith(".xml"):
+                try:
+                    if _xml_has_textbox(archive.read(name)):
+                        hidden.append(name)
+                except Exception:
+                    continue
+            elif low.startswith("xl/externallinks/"):
+                hidden.append(name)
+    try:
+        textbox_count = _count_office_textbox_elements(archive, fmt)
+    except Exception:
+        textbox_count = 0
+    return {
+        "images": images,
+        "unsupported_images": unsupported,
+        "hidden_objects": hidden,
+        "footnotes": footnotes,
+        "endnotes": endnotes,
+        "textbox_count": int(textbox_count),
+        "parts": images + unsupported + hidden,
+    }
+
+
+def _build_office_media_meta(classified: dict[str, Any], *, fmt: str,
+                             fields: int = 0) -> dict[str, Any]:
+    """构造 doc.meta["embedded_media"]；空文档返回 {}。"""
+    images = list(classified.get("images") or [])
+    unsupported = list(classified.get("unsupported_images") or [])
+    hidden = list(classified.get("hidden_objects") or []) + unsupported
+    textbox_count = int(classified.get("textbox_count") or 0)
+    if textbox_count:
+        hidden.append(f"textbox:{'word/document.xml' if fmt == 'docx' else 'xl/drawings/*'}#{textbox_count}")
+    # 去重但保持顺序
+    hidden = list(dict.fromkeys(str(item) for item in hidden))
+    redact_enabled = bool(OFFICE_MEDIA_REDACT_DEFAULT)
+    if not redact_enabled:
+        # 全局关闭自动脱敏时：图片全部计入确认数（否则会静默保留原图）
+        hidden = list(dict.fromkeys(hidden + images))
+    footnotes = list(classified.get("footnotes") or [])
+    endnotes = list(classified.get("endnotes") or [])
+    if not any((images, hidden, textbox_count, fields, footnotes, endnotes)):
+        return {}
+    return {
+        "count": len(hidden),
+        "parts": hidden[:50],
+        "images": images[:50],
+        "image_count": len(images),
+        "hidden_objects": hidden[:50],
+        "hidden_object_count": len(hidden),
+        "auto_redact": redact_enabled,
+        "unsupported_images": unsupported[:20],
+        "textboxes": textbox_count,
+        "fields": int(fields or 0),
+        "footnotes": len(footnotes),
+        "endnotes": len(endnotes),
+    }
+
+
+def _append_office_media_warnings(document: Document, meta: dict[str, Any],
+                                  *, fmt: str = "docx") -> None:
+    if not meta:
+        return
+    label = "文档" if fmt == "docx" else "工作簿"
+    image_count = int(meta.get("image_count") or 0)
+    hidden_count = int(meta.get("hidden_object_count") or 0)
+    if image_count:
+        document.warnings.append(
+            f"{label}含 {image_count} 张内嵌图片，导出时将自动扫描并涂黑人脸/证件/"
+            "车牌/二维码/条码/聊天截图等目标（图片内纯文字 OCR 规则脱敏为 P1.5）")
+    if hidden_count:
+        document.warnings.append(
+            f"{label}含 {hidden_count} 个无法自动脱敏的隐藏对象"
+            "（图表/文本框/OLE/activeX/不可解码图片等），导出前需确认；"
+            "strict_office_media=True 可尝试剥离")
+    if meta.get("unsupported_images"):
+        document.warnings.append(
+            f"{label}含 {len(meta['unsupported_images'])} 张不可解码图片"
+            "（emf/wmf/svg 等），已计入隐藏对象")
+    if int(meta.get("textboxes") or 0):
+        document.warnings.append(
+            f"{label}含 {meta['textboxes']} 个文本框（文字未纳入检测），已计入隐藏对象")
+    if int(meta.get("fields") or 0):
+        document.warnings.append(
+            f"{label}含 {meta['fields']} 处域代码（如 HYPERLINK/INCLUDETEXT），未纳入检测")
+
+
+def _office_apply_orientation(image: Image.Image) -> Image.Image:
+    """按 EXIF Orientation 转正（内嵌手机照片常见）；失败原样返回。"""
+    try:
+        from .image_parser import _apply_orientation
+
+        return _apply_orientation(image)
+    except Exception:
+        return image
+
+
+def _office_scan_pil(pil_image: Image.Image, *, ocr: Any,
+                     warnings: list[str]) -> tuple[list[dict], list[str], float]:
+    """对一张内嵌图片跑 mediascan；返回 (marks 全图坐标, warnings, 缩放比例)。"""
+    from .. import mediascan
+
+    if not mediascan.has_enabled():
+        return [], warnings, 1.0
+    try:
+        rgb = pil_image.convert("RGB")
+    except Exception as exc:
+        warnings.append(f"内嵌图片转 RGB 失败：{exc}")
+        return [], warnings, 1.0
+    width, height = rgb.size
+    scan_scale = 1.0
+    scan_image = rgb
+    if max(width, height) > OFFICE_MEDIA_SCAN_MAX_SIDE:
+        scan_scale = OFFICE_MEDIA_SCAN_MAX_SIDE / float(max(width, height))
+        scan_image = rgb.resize(
+            (max(1, int(round(width * scan_scale))), max(1, int(round(height * scan_scale)))),
+            Image.LANCZOS)
+        warnings.append(
+            f"内嵌图片 {width}×{height} 超过扫描上限 {OFFICE_MEDIA_SCAN_MAX_SIDE}px，"
+            "已缩放后扫描（二维码/条码等细节可能漏检）")
+    text_boxes: list[dict] = []
+    if ocr is not None:
+        try:
+            if getattr(ocr, "available", False):
+                lines = ocr.recognize(scan_image, min_score=0.35) or []
+                for line in lines:
+                    box = getattr(line, "box", None)
+                    text = str(getattr(line, "text", "") or "")
+                    if box:
+                        text_boxes.append({"text": text, "rect": box})
+        except Exception as exc:
+            warnings.append(f"内嵌图片 OCR 失败：{exc}")
+    try:
+        marks, scan_warns = mediascan.analyze(
+            scan_image, page=0, dpi=0.0,
+            options={"text_boxes": text_boxes, "fmt": "image",
+                     "context": "office_embedded"})
+    except Exception as exc:
+        warnings.append(f"内嵌图片扫描失败：{exc}")
+        return [], warnings, scan_scale
+    warnings.extend(scan_warns)
+    if scan_scale != 1.0 and marks:
+        inv = 1.0 / scan_scale
+        for mark in marks:
+            try:
+                mark["rect"] = tuple(float(v) * inv for v in mark["rect"])
+            except Exception:
+                continue
+    return marks, warnings, scan_scale
+
+
+def _office_paint_marks(pil_image: Image.Image, marks: list[dict],
+                        warnings: list[str]) -> tuple[Image.Image, list[str]]:
+    """在图片上按命中框涂黑（不透明），返回 (新图, 命中类型列表)。"""
+    if not marks:
+        return pil_image, []
+    try:
+        if pil_image.mode == "RGBA":
+            canvas = pil_image
+            fill = (0, 0, 0, 255)
+        elif pil_image.mode in ("RGB", "L"):
+            canvas = pil_image
+            fill = 0 if pil_image.mode == "L" else (0, 0, 0)
+        else:
+            canvas = pil_image.convert("RGB")
+            fill = (0, 0, 0)
+    except Exception as exc:
+        warnings.append(f"内嵌图片涂黑准备失败：{exc}")
+        return pil_image, []
+    draw = ImageDraw.Draw(canvas)
+    width, height = canvas.size
+    kinds: list[str] = []
+    for mark in marks:
+        try:
+            x0, y0, x1, y1 = (float(v) for v in (mark.get("rect") or ())[:4])
+        except Exception:
+            continue
+        pad = 2
+        x0 = max(0, x0 - pad)
+        y0 = max(0, y0 - pad)
+        x1 = min(width, x1 + pad)
+        y1 = min(height, y1 + pad)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        try:
+            draw.rectangle([int(x0), int(y0), int(x1) - 1, int(y1) - 1], fill=fill)
+            kinds.append(str(mark.get("kind") or "?"))
+        except Exception:
+            continue
+    return canvas, kinds
+
+
+def _office_encode_image(pil_image: Image.Image, part_name: str) -> bytes:
+    """按原扩展名重编码（不携带 EXIF/ICC）；失败抛 ValueError。"""
+    ext = Path(str(part_name)).suffix.lower()
+    buffer = BytesIO()
+    image = pil_image
+    try:
+        if ext in (".jpg", ".jpeg"):
+            if image.mode not in ("RGB", "L"):
+                image = image.convert("RGB")
+            image.save(buffer, format="JPEG", quality=92, optimize=True)
+        elif ext == ".png":
+            image.save(buffer, format="PNG", optimize=True)
+        elif ext == ".gif":
+            image.convert("P", palette=Image.ADAPTIVE).save(buffer, format="GIF")
+        elif ext == ".bmp":
+            image.convert("RGB").save(buffer, format="BMP")
+        elif ext == ".webp":
+            image.save(buffer, format="WEBP", quality=92)
+        elif ext in (".tif", ".tiff"):
+            image.save(buffer, format="TIFF", compression="tiff_lzw")
+        else:
+            raise ValueError(f"不支持的图片扩展名 {ext}")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"重编码失败：{exc}") from exc
+    data = buffer.getvalue()
+    if not data:
+        raise ValueError("重编码结果为空")
+    return data
+
+
+def _office_blank_image(pil_image: Image.Image, part_name: str) -> bytes:
+    """strict 模式：把无命中图片置为纯黑（保留尺寸/格式，内容彻底不可见）。"""
+    mode = "RGBA" if pil_image.mode == "RGBA" else "RGB"
+    color = (0, 0, 0, 255) if mode == "RGBA" else (0, 0, 0)
+    blank = Image.new(mode, pil_image.size, color)
+    return _office_encode_image(blank, part_name)
+
+
+def _office_strip_strict_xml(data: bytes, warnings: list[str]) -> tuple[bytes, int]:
+    """strict：删除 XML 里的文本框/OLE/图表引用元素（best-effort）。"""
+    if not _LXML_OK:
+        return data, 0
+    try:
+        root = etree.fromstring(data)
+    except Exception:
+        return data, 0
+    drop_tags = {"txbxcontent", "object", "oleobject", "chart"}
+    removed = 0
+    for element in list(root.iter()):
+        try:
+            if _localname(element.tag).lower() in drop_tags:
+                parent = element.getparent()
+                if parent is not None:
+                    parent.remove(element)
+                    removed += 1
+        except Exception:
+            continue
+    if not removed:
+        return data, 0
+    try:
+        return (etree.tostring(root, xml_declaration=True, encoding="UTF-8",
+                               standalone=True), removed)
+    except Exception as exc:
+        warnings.append(f"strict XML 清理失败：{exc}")
+        return data, 0
+
+
+def _office_zip_rewrite(path: Path, *, replacements: dict[str, bytes],
+                        removals: set[str], xml_transforms: list | None,
+                        warnings: list[str]) -> int:
+    """zip 级替换图片/删除部件，并同步清理 .rels 与 [Content_Types].xml。"""
+    if not replacements and not removals and not xml_transforms:
+        return 0
+    tmp_path = path.with_name(path.name + ".media.tmp")
+    rels_dropped = 0
+    overrides_dropped = 0
+    xml_changed = 0
+    removed_lower = {str(name).lower() for name in removals}
+    try:
+        with zipfile.ZipFile(path) as source, zipfile.ZipFile(
+                tmp_path, "w", zipfile.ZIP_DEFLATED) as target:
+            for item in source.infolist():
+                name = item.filename
+                low = name.lower()
+                if low in removed_lower:
+                    continue
+                if name in replacements:
+                    target.writestr(item, replacements[name])
+                    continue
+                try:
+                    data = source.read(name)
+                except Exception:
+                    data = b""
+                if name.endswith(".rels") and removals:
+                    data, dropped, _external = _clean_rels(name, data, removals)
+                    rels_dropped += dropped
+                elif name == "[Content_Types].xml" and removals:
+                    data, dropped = _clean_content_types(data, removals)
+                    overrides_dropped += dropped
+                elif xml_transforms:
+                    for predicate, transform in xml_transforms:
+                        try:
+                            if predicate(low):
+                                data, changed = transform(data, warnings)
+                                xml_changed += changed
+                                break
+                        except Exception:
+                            continue
+                target.writestr(item, data)
+        _replace_file(tmp_path, path)
+    except Exception as exc:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise ExportError(f"Office 内嵌媒体 zip 重写失败：{exc}") from exc
+    if rels_dropped or overrides_dropped:
+        warnings.append(
+            f"strict 剥离：已清理 {rels_dropped} 条关系、{overrides_dropped} 条内容类型声明")
+    return xml_changed
+
+
+def _office_verify_images(path: Path, parts: list[str], *, ocr: Any,
+                          warnings: list[str]) -> list[str]:
+    """导出后自检：重新提取被替换图片再跑 mediascan，命中必须为 0。"""
+    issues: list[str] = []
+    if not parts:
+        return issues
+    try:
+        archive = zipfile.ZipFile(path)
+    except Exception as exc:
+        return [f"成品 zip 无法打开：{exc}"]
+    try:
+        for part in parts:
+            try:
+                raw = archive.read(part)
+            except Exception as exc:
+                issues.append(f"{part} 无法读取：{exc}")
+                continue
+            try:
+                with Image.open(BytesIO(raw)) as image:
+                    image.load()
+                    pil = _office_apply_orientation(image)
+            except Exception as exc:
+                issues.append(f"{part} 无法解码：{exc}")
+                continue
+            marks, _scan_warns, _scale = _office_scan_pil(pil, ocr=ocr, warnings=[])
+            if marks:
+                kinds = sorted({str(m.get("kind") or "?") for m in marks})
+                issues.append(f"{part} 仍有 {len(marks)} 个敏感目标（{','.join(kinds)}）")
+    finally:
+        try:
+            archive.close()
+        except Exception:
+            pass
+    return issues
+
+
+def _office_process_media(path: Path, *, fmt: str, options: dict | None,
+                          warnings: list[str]) -> dict[str, Any]:
+    """导出时自动脱敏内嵌图片 +（strict）剥离隐藏对象；含导出后自检。"""
+    options = options or {}
+    redact = _office_media_option(options, "redact_office_media",
+                                  OFFICE_MEDIA_REDACT_DEFAULT)
+    strict = _office_media_option(options, "strict_office_media",
+                                  OFFICE_MEDIA_STRICT_DEFAULT)
+    stats: dict[str, Any] = {
+        "images_total": 0, "images_redacted": 0, "images_clean": 0,
+        "images_blanked": 0, "images_skipped": 0, "images_failed": 0,
+        "hits_by_kind": {}, "hidden_total": 0, "hidden_stripped": 0,
+        "hidden_kept": 0, "redact_office_media": redact,
+        "strict_office_media": strict,
+    }
+    try:
+        archive = zipfile.ZipFile(path)
+    except Exception as exc:
+        warnings.append(f"Office 内嵌媒体处理跳过（zip 无法打开）：{exc}")
+        return stats
+    replacements: dict[str, bytes] = {}
+    replaced_parts: list[str] = []
+    removals: set[str] = set()
+    try:
+        classified = _classify_office_parts(archive, fmt)
+        images = list(classified.get("images") or [])
+        hidden_parts = list(classified.get("hidden_objects") or [])
+        unsupported = list(classified.get("unsupported_images") or [])
+        textbox_count = int(classified.get("textbox_count") or 0)
+        stats["images_total"] = len(images)
+        stats["hidden_total"] = len(hidden_parts) + len(unsupported) + textbox_count
+        ocr = None
+        if redact and images:
+            try:
+                from ..ocr import get_ocr
+
+                ocr = get_ocr()
+                if not getattr(ocr, "available", False):
+                    warnings.append("OCR 不可用：内嵌图片只做人脸/二维码/条码类扫描")
+                    ocr = None
+            except Exception as exc:
+                warnings.append(f"OCR 服务不可用：内嵌图片只做视觉/码类扫描（{exc}）")
+                ocr = None
+        ocr_budget = OFFICE_MEDIA_OCR_MAX_IMAGES
+        total_pixels = 0
+        for index, part in enumerate(images):
+            if index >= OFFICE_MEDIA_MAX_IMAGES:
+                skipped = len(images) - index
+                stats["images_skipped"] += skipped
+                warnings.append(
+                    f"内嵌图片超过自动处理上限 {OFFICE_MEDIA_MAX_IMAGES} 张，"
+                    f"剩余 {skipped} 张未处理，请人工复核")
+                break
+            try:
+                raw = archive.read(part)
+            except Exception as exc:
+                stats["images_failed"] += 1
+                warnings.append(f"内嵌图片 {part} 读取失败，未脱敏：{exc}")
+                continue
+            try:
+                with Image.open(BytesIO(raw)) as image:
+                    image.load()
+                    pil = _office_apply_orientation(image)
+                    pil = pil.copy()
+            except Exception as exc:
+                stats["images_failed"] += 1
+                unsupported.append(part)
+                stats["hidden_total"] += 1
+                warnings.append(f"内嵌图片 {part} 无法解码，已计入隐藏对象：{exc}")
+                continue
+            pixels = int(pil.width) * int(pil.height)
+            if (pixels > OFFICE_MEDIA_MAX_PIXELS
+                    or total_pixels + pixels > OFFICE_MEDIA_TOTAL_PIXELS):
+                stats["images_skipped"] += 1
+                warnings.append(
+                    f"内嵌图片 {part} 尺寸 {pil.width}×{pil.height} 超过自动处理上限，"
+                    "未脱敏，请人工复核")
+                continue
+            total_pixels += pixels
+            allow_ocr = ocr is not None and ocr_budget > 0
+            if allow_ocr:
+                ocr_budget -= 1
+            marks, _scan_warns, _scale = _office_scan_pil(
+                pil, ocr=ocr if allow_ocr else None, warnings=warnings)
+            if marks:
+                painted, kinds = _office_paint_marks(pil, marks, warnings)
+                try:
+                    replacements[part] = _office_encode_image(painted, part)
+                except Exception as exc:
+                    stats["images_failed"] += 1
+                    warnings.append(f"内嵌图片 {part} 重编码失败，未脱敏：{exc}")
+                    continue
+                replaced_parts.append(part)
+                stats["images_redacted"] += 1
+                for kind in kinds:
+                    stats["hits_by_kind"][kind] = stats["hits_by_kind"].get(kind, 0) + 1
+            elif strict:
+                try:
+                    replacements[part] = _office_blank_image(pil, part)
+                    replaced_parts.append(part)
+                    stats["images_blanked"] += 1
+                except Exception as exc:
+                    stats["images_failed"] += 1
+                    warnings.append(f"内嵌图片 {part} strict 置空失败：{exc}")
+            else:
+                stats["images_clean"] += 1
+        # 隐藏对象：strict 剥离，默认保留并 warning
+        for part in hidden_parts + unsupported:
+            if part in archive.namelist():
+                removals.add(part)
+        if strict and removals:
+            xml_transforms = [
+                (lambda low: bool(re.match(
+                    r"^(word|xl)/(document|header\d*|footer\d*|footnotes|endnotes)\.xml$"
+                    r"|^xl/drawings/", low)), _office_strip_strict_xml),
+            ]
+        else:
+            xml_transforms = []
+        if strict and textbox_count:
+            xml_transforms = xml_transforms or [
+                (lambda low: bool(re.match(
+                    r"^(word|xl)/(document|header\d*|footer\d*|footnotes|endnotes)\.xml$"
+                    r"|^xl/drawings/", low)), _office_strip_strict_xml),
+            ]
+        if redact or strict:
+            _office_zip_rewrite(path, replacements=replacements,
+                               removals=removals if strict else set(),
+                               xml_transforms=xml_transforms, warnings=warnings)
+        # 以“成品实际状态”重算保留/剥离的隐藏对象数（python-docx/openpyxl 保存时
+        # 可能已静默丢弃未被引用的部件，不能按源文件计数糊弄用户）
+        try:
+            with zipfile.ZipFile(path) as check_archive:
+                after = _classify_office_parts(check_archive, fmt)
+            left_hidden = (len(after.get("hidden_objects") or [])
+                           + len(after.get("unsupported_images") or [])
+                           + int(after.get("textbox_count") or 0))
+        except Exception as exc:
+            if strict:
+                raise ExportError(f"strict 成品隐藏对象复检失败：{exc}") from exc
+            left_hidden = stats["hidden_total"]
+        if strict:
+            stats["hidden_stripped"] = max(0, stats["hidden_total"] - left_hidden)
+            stats["hidden_kept"] = 0
+            if left_hidden:
+                raise ExportError(
+                    f"strict_office_media=True 但成品仍有 {left_hidden} 个隐藏对象，"
+                    "无法安全剥离，已阻断导出")
+        else:
+            stats["hidden_kept"] = left_hidden
+            if left_hidden:
+                warnings.append(
+                    f"保留 {left_hidden} 个无法自动脱敏的隐藏对象"
+                    "（图表/文本框/OLE/activeX 等），请确认可外发；"
+                    "如需剥离请用 strict_office_media=True")
+    finally:
+        try:
+            archive.close()
+        except Exception:
+            pass
+    # 自检：被替换图片重扫必须 0 命中
+    if redact and replaced_parts:
+        ocr_check = None
+        try:
+            from ..ocr import get_ocr
+
+            ocr_check = get_ocr()
+            if not getattr(ocr_check, "available", False):
+                ocr_check = None
+        except Exception:
+            ocr_check = None
+        leftovers = _office_verify_images(path, replaced_parts, ocr=ocr_check,
+                                          warnings=warnings)
+        if leftovers:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise ExportError("导出后 Office 内嵌图片复检失败：" + "；".join(leftovers))
+    if not redact and stats["images_total"]:
+        warnings.append(
+            f"自动脱敏已关闭（redact_office_media=False）：{stats['images_total']} 张内嵌图片"
+            "原样保留，存在外发泄漏风险")
+    if stats["images_redacted"]:
+        kinds = "、".join(f"{k}×{v}" for k, v in sorted(stats["hits_by_kind"].items()))
+        warnings.append(
+            f"已自动脱敏 {stats['images_redacted']} 张内嵌图片"
+            + (f"（命中：{kinds}）" if kinds else ""))
+    if stats["images_blanked"]:
+        warnings.append(f"strict：{stats['images_blanked']} 张无敏感命中的内嵌图片已置空白")
+    if stats["images_clean"]:
+        warnings.append(
+            f"{stats['images_clean']} 张内嵌图片未检出视觉/码类目标，已保留原样"
+            "（图片内纯文字 OCR 规则脱敏为 P1.5，建议人工复核）")
+    return stats
+
+
+def _office_media_parse_meta(path: Path, fmt: str, *,
+                             fields: int = 0) -> dict[str, Any]:
+    """解析时枚举包内媒体并构造 meta（失败返回 {}，绝不带崩解析）。"""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            classified = _classify_office_parts(archive, fmt)
+    except Exception:
+        return {}
+    return _build_office_media_meta(classified, fmt=fmt, fields=fields)
+
+
 # ══════════════════════════════ 解析辅助 ══════════════════════════════
 
 def _read_app_meta(path: Path) -> dict[str, str]:
@@ -815,44 +1538,36 @@ class DocxParser(Parser):
             document.warnings.append(
                 f"文档含 {counters['hyperlinks']} 处超链接，超链接显示文字未纳入检测（python-docx runs 不含超链接 run）"
             )
-        if field_count:
-            document.warnings.append(f"文档含 {field_count} 处域代码（如 HYPERLINK/INCLUDETEXT），未纳入检测")
-        if textbox_count:
-            document.warnings.append(f"文档含 {textbox_count} 个文本框，文本框文字未纳入检测")
         if counters["nested_tables"]:
             document.warnings.append(
                 f"文档含 {counters['nested_tables']} 个嵌套表格/内容控件表格，未展开检测"
             )
 
-        # 隐藏部件与元数据
+        # P1-B：zip 全量枚举内嵌媒体/隐藏对象（含页眉页脚里的文本框、图表、OLE 等）
+        # 内嵌图片导出时会自动扫描脱敏；图表/文本框/OLE 等无法自动脱敏 → 需确认。
+        media_meta: dict[str, Any] = {}
         try:
-            part_names = [str(part.partname) for part in parsed.part.package.parts]
+            media_meta = _office_media_parse_meta(path, "docx", fields=field_count)
+        except Exception as exc:  # 枚举失败不影响正文解析，但必须告警
+            document.warnings.append(f"内嵌媒体枚举失败：{exc}")
+        try:
+            with zipfile.ZipFile(path) as archive:
+                zip_names = [str(name).lower() for name in archive.namelist()]
         except Exception:
-            part_names = []
-        media_parts = [n for n in part_names if "/word/media/" in n]
-        embed_parts = [n for n in part_names if "/word/embeddings/" in n]
-        if media_parts:
-            document.warnings.append("文档含内嵌图片，图片内容未做 OCR/脱敏")
-        if embed_parts:
-            document.warnings.append("文档含内嵌对象（OLE/附件），其中内容未做脱敏")
-        if any("/word/charts/" in name for name in part_names):
-            document.warnings.append("文档含图表，图表标题/数据标签文字未纳入检测")
-        if any("glossary" in name for name in part_names):
+            zip_names = []
+        if any("glossary" in name for name in zip_names):
             document.warnings.append("文档含词汇表（构建基块），其中文字未纳入检测")
-        if any("footnotes" in name or "endnotes" in name for name in part_names):
+        if any(name.endswith("footnotes.xml") or name.endswith("endnotes.xml")
+               for name in zip_names):
             document.warnings.append("文档含脚注/尾注，其中文字未纳入检测")
 
         meta = _collect_core_meta(parsed)
         meta.update(_read_app_meta(path))
-        # P0 安全默认：内嵌图片/对象当前不会自动脱敏，导出时必须二次确认
-        # （见 docs/red-lines.md 扩展点 E3）。re_parse 成品时这段同样生效，
-        # Verify 据此判断"成品里还有未处理媒体"。
-        if media_parts or embed_parts:
-            meta["embedded_media"] = {
-                "count": len(media_parts) + len(embed_parts),
-                "parts": (media_parts + embed_parts)[:20],
-            }
+        if media_meta:
+            meta["embedded_media"] = media_meta
+            meta["hidden_objects"] = list(media_meta.get("hidden_objects") or [])
         document.meta = meta
+        _append_office_media_warnings(document, media_meta, fmt="docx")
         return document
 
     # ── 导出 ──
@@ -986,6 +1701,17 @@ class DocxParser(Parser):
             )
 
         _harden_zip(out_path, warnings)
+        # P1-B：内嵌图片自动脱敏 + （strict）隐藏对象剥离 + 导出后自检
+        try:
+            stats = _office_process_media(out_path, fmt="docx",
+                                          options=options or {}, warnings=warnings)
+            doc.extra["office_media"] = stats
+        except ExportError:
+            try:
+                out_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
         return ExportResult(
             path=str(out_path), warnings=warnings, size=out_path.stat().st_size
         )

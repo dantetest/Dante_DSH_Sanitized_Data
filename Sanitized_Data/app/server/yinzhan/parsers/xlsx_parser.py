@@ -306,21 +306,20 @@ class XlsxParser(Parser):
                 document.warnings.append(
                     f"工作簿含 {object_count} 个图表/图片/透视对象，其中文字未纳入检测"
                 )
-            # P0 安全默认：内嵌图片不会自动脱敏，导出时必须二次确认
-            # （见 docs/red-lines.md 扩展点 E3）；re_parse 成品时这段同样生效，
-            # Verify 据此判断"成品里还有未处理媒体"。
-            media_parts: list[str] = []
+            # P1-B：zip 全量枚举内嵌媒体/隐藏对象（内嵌图片导出时自动扫描脱敏；
+            # 图表/OLE/文本框等无法自动脱敏 → 计入 hidden_objects 需确认）
+            media_meta: dict[str, Any] = {}
             try:
-                with zipfile.ZipFile(path) as archive:
-                    media_parts = [name for name in archive.namelist()
-                                   if name.lower().startswith("xl/media/")]
-            except Exception:
-                media_parts = []
-            if media_parts:
-                meta["embedded_media"] = {
-                    "count": len(media_parts),
-                    "parts": media_parts[:20],
-                }
+                from .docx_parser import (_append_office_media_warnings,
+                                          _office_media_parse_meta)
+
+                media_meta = _office_media_parse_meta(path, "xlsx")
+                if media_meta:
+                    meta["embedded_media"] = media_meta
+                    meta["hidden_objects"] = list(media_meta.get("hidden_objects") or [])
+                _append_office_media_warnings(document, media_meta, fmt="xlsx")
+            except Exception as exc:
+                document.warnings.append(f"内嵌媒体枚举失败：{exc}")
             document.meta = meta
         except Exception as exc:  # 结构异常时保留已解析页
             document.warnings.append(f"XLSX 工作表遍历中断，已保留部分内容：{exc}")
@@ -628,6 +627,20 @@ class XlsxParser(Parser):
 
         # 公式缓存丢失提示（无论原文是否有公式，导出语义都依赖重算）
         warnings.append("成品不保留公式缓存值（openpyxl 语义），Excel 打开时会自动重算")
+
+        # P1-B：内嵌图片自动脱敏 + （strict）隐藏对象剥离 + 导出后自检
+        try:
+            from .docx_parser import _office_process_media
+
+            stats = _office_process_media(out_path, fmt="xlsx",
+                                          options=options or {}, warnings=warnings)
+            doc.extra["office_media"] = stats
+        except ExportError:
+            try:
+                out_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
         # ── 5. 防御性检查：确认没有意外保留的注释/缩略图部件 ──
         try:

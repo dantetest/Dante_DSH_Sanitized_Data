@@ -46,6 +46,7 @@ const TYPE_CN = {
   CHAT_AVATAR: '聊天头像', CHAT_NAME: '聊天昵称', CHAT_GROUP: '群名称',
   CHAT_TIME: '聊天时间', CHAT_INPUT: '输入框',
   SHOP_SIGN: '店招/门头', ORG_PLAQUE: '单位铭牌',
+  EMBEDDED_IMAGE: '内嵌图片（敏感）',
   OTHER: '其他敏感',
 };
 const TYPE_ORDER = [
@@ -54,6 +55,7 @@ const TYPE_ORDER = [
   'CHAT_AVATAR', 'CHAT_NAME', 'CHAT_GROUP', 'CHAT_TIME', 'CHAT_INPUT',
   'PLATE', 'ROAD_SIGN', 'DOOR_ADDRESS', 'SHOP_SIGN', 'ORG_PLAQUE',
   'SEAL', 'SIGNATURE', 'SIG_BLOCK', 'HANDWRITING', 'QRCODE', 'BARCODE',
+  'EMBEDDED_IMAGE',
   'OTHER',
 ];
 const TYPE_COLOR = {
@@ -72,6 +74,7 @@ const TYPE_COLOR = {
   CHAT_AVATAR: '#7A5A6B', CHAT_NAME: '#6B5A7A', CHAT_GROUP: '#5A4A6B',
   CHAT_TIME: '#4A6B62', CHAT_INPUT: '#7A6A5A',
   SHOP_SIGN: '#8A5A2F', ORG_PLAQUE: '#5A6B5A',
+  EMBEDDED_IMAGE: '#3A4A3F',
   OTHER: '#8C8272',
 };
 const STRICT_CN = { loose: '宽松', standard: '标准', strict: '最严' };
