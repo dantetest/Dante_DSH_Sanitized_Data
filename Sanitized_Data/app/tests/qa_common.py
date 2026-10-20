@@ -910,6 +910,51 @@ def wait_health(url: str, timeout: float = 90) -> bool:
     return False
 
 
+def _wait_job(base: str, jid: str, timeout: float = 180):
+    """轮询任务到 ready/error，返回 (snapshot, stage, elapsed)。"""
+    t0 = time.time()
+    snap: dict = {}
+    stage = ""
+    while time.time() - t0 < timeout:
+        rg = http_json(base + f"/api/jobs/{jid}")
+        try:
+            snap = json.loads(rg["body"] or b"{}")
+        except Exception:
+            snap = {}
+        stage = snap.get("stage") or ""
+        if stage in ("ready", "error"):
+            break
+        time.sleep(0.25)
+    return snap, stage, round(time.time() - t0, 2)
+
+
+def _capture_id_card_modes(base: str, sample: Path) -> dict:
+    """身份证档位 API 契约：默认 fields、非法值回退 fields、whole 原样。"""
+    out: dict = {}
+    cases = (
+        ("default", {"path": str(sample)}),
+        ("invalid", {"path": str(sample), "id_card_mode": "bogus"}),
+        ("whole", {"path": str(sample), "id_card_mode": "whole"}),
+    )
+    for label, body in cases:
+        r = http_json(base + "/api/jobs", "POST", body)
+        try:
+            jb = json.loads(r["body"] or b"{}")
+        except Exception:
+            jb = {}
+        jid = jb.get("job_id")
+        rec = {"create_status": r["status"],
+               "create_id_card_mode": jb.get("id_card_mode"),
+               "job_id": jid}
+        if jid:
+            snap, stage, poll_s = _wait_job(base, jid)
+            rec.update({"stage": stage, "poll_s": poll_s,
+                        "id_card_mode": snap.get("id_card_mode"),
+                        "warnings": (snap.get("warnings") or [])[:3]})
+        out[label] = rec
+    return out
+
+
 def capture_http() -> dict:
     """启动真实服务（带启动校验与端口重试），返回冒烟 + 主路径事实。
 
@@ -1231,6 +1276,11 @@ def _capture_http_once(port: int) -> dict:
                        "coverage": cover,
                        "page": [page_w, page_h], "boxes": boxes[:4]})
             mp["mark_full"] = mf
+            # 身份证档位 API 契约（默认 fields / 非法值回退 / whole）
+            try:
+                mp["id_card_mode_api"] = _capture_id_card_modes(base, sample)
+            except Exception as exc:  # noqa: BLE001
+                mp["id_card_mode_api"] = {"error": f"{type(exc).__name__}: {exc}"}
         except Exception as exc:  # noqa: BLE001
             mp["mark"] = {"error": f"{type(exc).__name__}: {exc}"}
         exp = mp["exports"]
@@ -1736,6 +1786,324 @@ def table_numeric_fixture_test() -> dict:
         return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
 
 
+# ════════════════════════ 身份证 A 方案（fields / whole）夹具与真实链路 ════════════════════════
+IDCARD_PAGE = (1160, 760)
+IDCARD_CARD = (30, 25, 1130, 725)
+_IDCARD_FONT_PATHS = (r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\simhei.ttf",
+                      r"C:\Windows\Fonts\simsun.ttc",
+                      "/System/Library/Fonts/PingFang.ttc",
+                      "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+
+
+class _FakeCascade:
+    """只实现 detectMultiScale 的假级联（引擎 test hook 用，按调用顺序返回预设框）。"""
+
+    def __init__(self, dets_per_call):
+        self.dets = list(dets_per_call)
+        self.calls = 0
+
+    def detectMultiScale(self, gray, **kwargs):
+        self.calls += 1
+        if not self.dets:
+            return []
+        d = self.dets[-1] if self.calls >= len(self.dets) \
+            else self.dets[self.calls - 1]
+        return [list(d)] if d else []
+
+
+def _idc_font(size: int):
+    from PIL import ImageFont
+    for path in _IDCARD_FONT_PATHS:
+        try:
+            if Path(path).exists():
+                return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _idc_rel(card, nx: float, ny: float) -> tuple[float, float]:
+    cw = card[2] - card[0]
+    ch = card[3] - card[1]
+    return (card[0] + nx * cw, card[1] + ny * ch)
+
+
+def _idc_face_det() -> tuple[int, int, int, int]:
+    """注入级联框（scan 坐标）：落在期望证件照区中心，供确定性人脸命中。"""
+    w, h = IDCARD_PAGE
+    card = IDCARD_CARD
+    cw, ch = card[2] - card[0], card[3] - card[1]
+    scale = 640.0 / max(w, h)
+    px = card[0] + 0.75 * cw
+    py = card[1] + 0.45 * ch
+    fw, fh = 150.0 / scale, 180.0 / scale
+    return (int(round((px - fw / 2) * scale)),
+            int(round((py - fh / 2) * scale)),
+            int(round(fw * scale)), int(round(fh * scale)))
+
+
+def _build_id_front(path: Path, photo: bool = True) -> dict:
+    """合成身份证正面（虚构信息）：模板块位置与 #85 校准一致。"""
+    from PIL import Image, ImageDraw
+    w, h = IDCARD_PAGE
+    card = IDCARD_CARD
+    cw, ch = card[2] - card[0], card[3] - card[1]
+    img = Image.new("RGB", (w, h), (120, 130, 125))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle(card, radius=28, fill=(250, 250, 248),
+                        outline=(90, 90, 90), width=4)
+    photo_rect = None
+    if photo:
+        photo_rect = (*_idc_rel(card, 0.55, 0.15), *_idc_rel(card, 0.96, 0.78))
+        d.rectangle([round(v) for v in photo_rect], fill=(205, 205, 205))
+        cx = (photo_rect[0] + photo_rect[2]) / 2
+        cy = (photo_rect[1] + photo_rect[3]) / 2
+        d.ellipse([cx - 90, cy - 140, cx + 90, cy + 40], fill=(235, 220, 205))
+        d.ellipse([cx - 26, cy - 80, cx - 6, cy - 58], fill=(60, 50, 45))
+        d.ellipse([cx + 6, cy - 80, cx + 26, cy - 58], fill=(60, 50, 45))
+        d.arc([cx - 40, cy - 55, cx + 40, cy + 5], 20, 160, fill=(150, 90, 90), width=5)
+    lines = (
+        ("姓名 张三", 0.08, 0.135, 40, "id_name"),
+        ("性别 男", 0.08, 0.305, 32, "retained_gender"),
+        ("民族 汉", 0.34, 0.305, 32, "retained_gender"),
+        ("出生 1990年1月1日", 0.08, 0.405, 30, "retained_birth"),
+        ("住址 上海市浦东新区测试路1号2栋3单元401室", 0.08, 0.545, 28, "id_address"),
+        ("公民身份号码 310101199001011234", 0.08, 0.805, 30, "id_number"),
+    )
+    layout: dict[str, list] = {}
+    for text, nx, ny, size, group in lines:
+        pos = (round(card[0] + nx * cw), round(card[1] + ny * ch))
+        font = _idc_font(size)
+        d.text(pos, text, font=font, fill=(25, 25, 25))
+        bbox = tuple(float(v) for v in d.textbbox(pos, text, font=font))
+        layout.setdefault(group, []).append(bbox)
+    img.save(path)
+    return {"path": path, "photo_rect": photo_rect,
+            "protected": layout.get("id_name", []) + layout.get("id_address", [])
+                         + layout.get("id_number", [])
+                         + ([photo_rect] if photo_rect else []),
+            "retained": layout.get("retained_gender", [])
+                        + layout.get("retained_birth", []),
+            "fake_det": _idc_face_det()}
+
+
+def _build_id_noface(path: Path) -> dict:
+    return _build_id_front(path, photo=False)
+
+
+def _build_id_back(path: Path) -> dict:
+    """合成身份证反面（虚构信息）：只有签发机关/有效期限，无正面字段。"""
+    from PIL import Image, ImageDraw
+    w, h = IDCARD_PAGE
+    card = IDCARD_CARD
+    img = Image.new("RGB", (w, h), (120, 130, 125))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle(card, radius=28, fill=(250, 250, 248),
+                        outline=(90, 90, 90), width=4)
+    d.text(_idc_rel(card, 0.30, 0.14), "中华人民共和国居民身份证",
+           font=_idc_font(38), fill=(25, 25, 25))
+    d.text(_idc_rel(card, 0.12, 0.52), "签发机关 上海市公安局浦东分局",
+           font=_idc_font(32), fill=(25, 25, 25))
+    d.text(_idc_rel(card, 0.12, 0.68), "有效期限 2020.01.01-2040.01.01",
+           font=_idc_font(28), fill=(25, 25, 25))
+    img.save(path)
+    return {"path": path}
+
+
+def _black_ratio(img, rect, inset: float = 0.12) -> float:
+    """矩形区域内黑色像素占比（用于 human 导出后的遮/未遮断言）。"""
+    x0, y0, x1, y1 = rect
+    dx = (x1 - x0) * inset
+    dy = (y1 - y0) * inset
+    box = (round(x0 + dx), round(y0 + dy), round(x1 - dx), round(y1 - dy))
+    if box[2] <= box[0] or box[3] <= box[1]:
+        return 0.0
+    crop = img.crop(box)
+    pixels = list(crop.getdata())
+    if not pixels:
+        return 0.0
+    black = sum(1 for p in pixels
+                if p[0] < 45 and p[1] < 45 and p[2] < 45)
+    return round(black / len(pixels), 3)
+
+
+def id_card_chain_test() -> dict:
+    """身份证 A 方案真链路：jobs(id_card_mode) → 实体档位 → human 导出 → verify。
+
+    合成虚构身份证正面/反面夹具；通过引擎 test hook ``_FACE_CASCADES_OVERRIDE``
+    注入确定性人脸命中（仓库无真人证件照片，不可用真实 Haar 正样本）。
+    """
+    ensure_ready()
+    try:
+        import time as _time
+        from PIL import Image
+        from yinzhan import registry, visual_targets
+        from yinzhan.jobs import MANAGER
+
+        registry.load_plugins()
+        d = WORK / "fixtures_idcard"
+        d.mkdir(parents=True, exist_ok=True)
+        front = _build_id_front(d / "idfront.png")
+        back = _build_id_back(d / "idback.png")
+        noface = _build_id_noface(d / "idfront_noface.png")
+
+        def _override(dets):
+            visual_targets._FACE_CASCADES_OVERRIDE = (
+                [("frontal", _FakeCascade(dets), 0.92)] if dets is not None else None)
+
+        def _run(path, mode: str, dets):
+            _override(dets)
+            job = MANAGER.create(Path(path), id_card_mode=mode)
+            t0 = _time.time()
+            while _time.time() - t0 < 120:
+                if getattr(job, "stage", "") in ("ready", "error"):
+                    break
+                _time.sleep(0.1)
+            return job
+
+        def _ent_rect(e):
+            for s in (e.spans or []):
+                if s.rect:
+                    return tuple(float(v) for v in s.rect)
+            return None
+
+        def _export_human(job):
+            # 导出/verify 阶段：字段已被涂黑，用"无脸"注入让重解析走整卡回退，
+            # 避免假级联把黑块又"检测"成字段（真实产品黑块不会命中 Haar）。
+            _override([[]])
+            return MANAGER.export(job.id, "human")
+
+        def _types(ents):
+            out: dict[str, int] = {}
+            for e in ents:
+                out[e.etype] = out.get(e.etype, 0) + 1
+            return out
+
+        old = visual_targets._FACE_CASCADES_OVERRIDE
+        res: dict = {}
+        try:
+            # 1) fields 档正面
+            job = _run(front["path"], "fields", [front["fake_det"]])
+            ents = list(job.entities)
+            rects = {e.etype: _ent_rect(e) for e in ents
+                     if _ent_rect(e) is not None}
+            f = {"stage": job.stage, "types": _types(ents),
+                 "warnings": list(job.warnings)[:6], "has_doc": "ID_DOCUMENT" in rects,
+                 "field_kinds": [k for k in ("ID_PHOTO", "ID_NAME", "ID_NUMBER",
+                                             "ID_ADDRESS") if k in rects]}
+            try:
+                rec = _export_human(job)
+                out = Path(rec["out"])
+                img = Image.open(out).convert("RGB")
+                ratios = {kind: _black_ratio(img, rects[kind]) for kind in f["field_kinds"]}
+                f["protected_ratios"] = ratios
+                f["retained_ratios"] = [_black_ratio(img, r) for r in front["retained"]]
+
+                def _overlap_frac(inner, outer) -> float:
+                    x0 = max(inner[0], outer[0])
+                    y0 = max(inner[1], outer[1])
+                    x1 = min(inner[2], outer[2])
+                    y1 = min(inner[3], outer[3])
+                    inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+                    area = max(1e-6, (inner[2] - inner[0]) * (inner[3] - inner[1]))
+                    return inter / area
+
+                field_rects = [r for k, r in rects.items() if k.startswith("ID_")]
+                f["retained_max_overlap"] = [
+                    round(max((_overlap_frac(r, pr) for pr in field_rects),
+                              default=0.0), 3)
+                    for r in front["retained"]]
+                f["verify"] = dict(rec.get("verify") or {})
+                f["export_ok"] = out.is_file() and out.stat().st_size > 0
+                f["out_name"] = out.name
+            except Exception as exc:  # noqa: BLE001
+                f["export_error"] = f"{type(exc).__name__}: {exc}"
+            res["fields_front"] = f
+
+            # 2) whole 档正面（同一夹具）
+            job = _run(front["path"], "whole", [front["fake_det"]])
+            ents = list(job.entities)
+            rects = {e.etype: _ent_rect(e) for e in ents if _ent_rect(e) is not None}
+            w = {"stage": job.stage, "types": _types(ents),
+                 "warnings": list(job.warnings)[:6],
+                 "has_doc": "ID_DOCUMENT" in rects}
+            try:
+                rec = _export_human(job)
+                out = Path(rec["out"])
+                img = Image.open(out).convert("RGB")
+                thumb = img.resize((160, max(1, int(160 * img.height / img.width))))
+                w["full_black_ratio"] = _black_ratio(thumb, (0, 0, *thumb.size), inset=0.02)
+                w["verify"] = dict(rec.get("verify") or {})
+                w["export_ok"] = out.is_file() and out.stat().st_size > 0
+            except Exception as exc:  # noqa: BLE001
+                w["export_error"] = f"{type(exc).__name__}: {exc}"
+            res["whole_front"] = w
+
+            # 3) 反面：fields 不遮字段但提示切整卡；whole 有整卡
+            job = _run(back["path"], "fields", None)
+            ents = list(job.entities)
+            bf = {"stage": job.stage, "types": _types(ents),
+                  "warnings": list(job.warnings)[:6],
+                  "id_types": [e.etype for e in ents if e.etype.startswith("ID_")]}
+            res["back_fields"] = bf
+            job = _run(back["path"], "whole", None)
+            ents = list(job.entities)
+            rects = {e.etype: _ent_rect(e) for e in ents if _ent_rect(e) is not None}
+            bw = {"stage": job.stage, "types": _types(ents),
+                  "has_doc": "ID_DOCUMENT" in rects}
+            try:
+                rec = _export_human(job)
+                out = Path(rec["out"])
+                img = Image.open(out).convert("RGB")
+                thumb = img.resize((160, max(1, int(160 * img.height / img.width))))
+                bw["full_black_ratio"] = _black_ratio(thumb, (0, 0, *thumb.size),
+                                                      inset=0.02)
+                bw["verify"] = dict(rec.get("verify") or {})
+            except Exception as exc:  # noqa: BLE001
+                bw["export_error"] = f"{type(exc).__name__}: {exc}"
+            res["back_whole"] = bw
+
+            # 4) 无脸/无法定向的正面 → fields 回退整卡 + 提示
+            job = _run(noface["path"], "fields", [])
+            ents = list(job.entities)
+            res["noface_fields"] = {
+                "stage": job.stage, "types": _types(ents),
+                "has_doc": any(e.etype == "ID_DOCUMENT" for e in ents),
+                "warnings": list(job.warnings)[:6],
+            }
+        finally:
+            visual_targets._FACE_CASCADES_OVERRIDE = old
+
+        ff = res.get("fields_front") or {}
+        wf = res.get("whole_front") or {}
+        bf = res.get("back_fields") or {}
+        bw = res.get("back_whole") or {}
+        nf = res.get("noface_fields") or {}
+        protected = ff.get("protected_ratios") or {}
+        retained = ff.get("retained_ratios") or []
+        retained_ov = ff.get("retained_max_overlap") or []
+        ok = bool(
+            ff.get("stage") == "ready"
+            and set(ff.get("field_kinds") or []) == {"ID_PHOTO", "ID_NAME",
+                                                     "ID_NUMBER", "ID_ADDRESS"}
+            and not ff.get("has_doc")
+            and protected and all(v >= 0.6 for v in protected.values())
+            and retained and all(v <= 0.5 for v in retained)
+            and retained_ov and all(v <= 0.2 for v in retained_ov)
+            and (ff.get("verify") or {}).get("residual") == 0
+            and wf.get("has_doc") and (wf.get("full_black_ratio") or 0) >= 0.98
+            and (wf.get("verify") or {}).get("residual") == 0
+            and not bf.get("id_types")
+            and any("反面" in str(x) for x in (bf.get("warnings") or []))
+            and bw.get("has_doc")
+            and nf.get("has_doc")
+            and any("整卡" in str(x) for x in (nf.get("warnings") or []))
+        )
+        return {"ok": ok, **res}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
 # ════════════════════════ 已知边界软记录 ════════════════════════
 def capture_known_limits() -> dict:
     ensure_ready()
@@ -1763,6 +2131,7 @@ def capture_known_limits() -> dict:
     georef_src = read(SERVER / "yinzhan" / "georef.py")
     tiff_local_mode = LOCAL_CRS_MARKER in georef_src.lower()
     image_src = read(SERVER / "yinzhan" / "parsers" / "image_parser.py")
+    visual_src = read(SERVER / "yinzhan" / "visual_targets.py")
     appjs_src = read(REPO / "app" / "web" / "app.js")
     hidden_keys = [k for k in ("embedded_files", "pdf_annotations",
                                "pdf_forms", "pdf_js") if k in pdf_src]
@@ -1787,10 +2156,27 @@ def capture_known_limits() -> dict:
                                 or "rect: [0, 0, 1, 1]" in appjs_src
                                 or "rect:[0,0,1,1]" in appjs_src),
         },
+        # 身份证 A 方案（默认关键字段 / 可选整卡）
+        "id_card_modes": {
+            "default": "fields",
+            "optional": ["fields", "whole"],
+            "field_kinds": ["id_photo", "id_name", "id_number", "id_address"],
+            "jobs_impl": "id_card_mode" in jobs_src,
+            "visual_targets_fields": all(k in visual_src for k in
+                                         ("id_photo", "id_name", "id_number",
+                                          "id_address")),
+            "ocr_text_entities_dropped_in_card":
+                "_drop_text_entities_in_id_cards" in jobs_src,
+            "frontend_selector": ("id_card_mode" in appjs_src
+                                  or "idCardMode" in appjs_src
+                                  or "整卡" in appjs_src),
+        },
         "known_gaps_not_fixed": {
             "side_face_low_head_miss": "用户测试集 83 双人低头侧脸仍漏（Haar 模型上限，"
                                        "已写 docs/impl/visual.md，P1 YuNet 建议；本轮不修）",
-            "id_card_back_no_id_document": "身份证反面不触发 id_document（已知，本轮不修）",
+            "id_card_back_fields_not_masked":
+                "身份证反面在 fields 档不遮字段（反面无姓名/号码/住址），只提示切"
+                "「整卡涂黑」；这是产品语义不是缺陷（whole 档仍可整卡遮）",
         },
         "pdf_text_layer_pages_skipped_ocr": {
             "min_text_chars": int(m.group(1)) if m else None,
@@ -2130,6 +2516,14 @@ def write_snapshot(base: dict, path: Path) -> None:
     A(f"- 图片 EXIF Orientation 转正：{kl.get('image_exif_orientation')}")
     A(f"- 前端整图涂黑（rect=[0,0,1,1] → black 实体）："
       f"{kl.get('frontend_full_image_black')}")
+    idm = kl.get("id_card_modes") or {}
+    A(f"- **身份证 A 方案**：默认 `{idm.get('default')}`（只遮头像/姓名/身份证号/住址），"
+      f"可选 `{idm.get('optional')}` 整卡涂黑；字段 kind={idm.get('field_kinds')}；"
+      f"jobs id_card_mode={idm.get('jobs_impl')}，"
+      f"证件内 OCR 文字实体让位={idm.get('ocr_text_entities_dropped_in_card')}，"
+      f"前端选择器={idm.get('frontend_selector')}")
+    A("- **边界（产品语义，非缺陷）**：身份证反面在 `fields` 档不遮字段（反面没有"
+      "姓名/号码/住址），会提示切「整卡涂黑」；`whole` 档仍整卡遮。")
     gaps = kl.get("known_gaps_not_fixed") or {}
     if gaps:
         A("- **已知不修（本轮确认，不当作回归）**：")

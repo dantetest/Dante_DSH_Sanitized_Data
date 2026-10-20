@@ -41,6 +41,7 @@
 | F16 | **表格表头列级检测**（`table-cn` 11 条，XLSX/DOCX 整列覆盖） | `test_table_column.py` + 回归 xlsx 列级覆盖夹具 |
 | F17 | **前端整图涂黑**按钮（后端 `/mark` rect=[0,0,1,1] → black 实体铺满页面） | 回归 API 级断言（black/coverage） |
 | F18 | 判决书类文本检测（跨行案号/地址、标签姓名、竖排审判员、带空格金额） | `test_legal_detect.py` |
+| F19 | **身份证 A 方案**：默认 `fields` 档只遮头像/姓名/身份证号/住址（性别/民族/出生保持可见），可选 `whole` 整卡涂黑；`POST /api/jobs` 默认 fields、非法值回退 fields；反面 fields 不遮并提示切整卡、无法定向时回退整卡 | `test_visual`（47 项）+ 回归真链路合成证件夹具（5 组档位断言：API 默认/非法、fields 四字段+保留行、whole 整页、反面、无脸回退） |
 
 > 允许的"变化"：新增识别类型/更多实体（例如以后人脸、条码、PIPL/表格规则被检出）**不算破坏**；但"原有必须命中的变少 / 导出失败 / 残留>0 / 元数据或隐藏数据回来了 / 服务外呼"一律算破坏。
 > 新增实体必须逐条解释：预期覆盖增强视为合理新增（软提示）；无法解释的才按误报处理（需 owner 修规则）。
@@ -58,8 +59,10 @@
 4. **新增规则/依赖**必须额外过：
    - 新规则在既有样例上的**误报检查**（对比基线，新增命中要逐条解释）；
    - 新依赖：离线 wheel 可用、许可证（免费/安全优先：MIT/BSD/Apache-2.0/PSF）、打包体积与 PyInstaller 收集验证；不引入需要运行时联网或许可证不清晰的组件。
-5. **新增能力必须有回归夹具**：PDF 隐藏数据、EXIF 朝向、表格列级/数值写回、整图涂黑等，由 `regression.py`
-   在临时目录构造**虚构**夹具真实跑通「解析→导出→verify」，不得只做静态检查。
+5. **新增能力必须有回归夹具**：PDF 隐藏数据、EXIF 朝向、表格列级/数值写回、整图涂黑、
+   身份证 fields/whole 档位等，由 `regression.py` 在临时目录构造**虚构**夹具真实跑通
+   「解析→导出→verify」，不得只做静态检查（身份证人脸检测用引擎 test hook 注入确定性命中，
+   仓库不放真人证件照片）。
 6. **CONTRACT 先行**：改数据结构/契约（`udm.py`、`registry.py`、`pipeline.py`）必须先更新 `app/server/CONTRACT.md`，再改实现。
 7. **基线更新纪律**：`--update-baseline --reason "..."` 仅在确认是"改进而非回归"、且全套绿后执行；
    理由与差异写入 `app/tests/baseline/SNAPSHOT.md` §8/§9，并在交接说明；不得为让门禁变绿而重录。
@@ -140,18 +143,19 @@
 - 回归：虚构 xlsx 夹具断言表头列级覆盖 + openpyxl 读回单元格类型为数字；样例 `对账单.xlsx` 新增
   「人名×1、表格账号列×1、金额（数值）×4」共 6 实体属**预期覆盖增强**（软提示，不算回归）。
 
-## 五、当前基线（2026-10-20 P0 二波收口）
+## 五、当前基线（2026-10-20 身份证 A 方案收口）
 
 | 项 | 数值 |
 |---|---|
 | 基线文件 | `app/tests/baseline/baseline.json` + `SNAPSHOT.md`（版本化，`--update-baseline --reason` 重录） |
-| 代码状态 | HEAD `8bacbeb` + P0 二波未提交工作树（`engine_clean=false` 已如实记录） |
+| 代码状态 | HEAD `e78d2be` + 身份证 A 方案未提交工作树（`engine_clean=false` 已如实记录） |
 | 规则包 | **8 个**（common/finance-cn/legal-cn/medical-cn/geo-cn/trade-cn/pipl-cn/table-cn），自有规则 **103 条** |
 | 编译规则数 | pdf/text 88、docx 99、xlsx 102、image/tiff 85、mesh 13 |
-| 5 个既有样例 | 实体 52 个（对账单 13→19 为预期新增），双导出 residual 全 0，元数据/隐藏数据全清 |
-| 红线门禁 | `regression.py` **177 项硬检查**全绿（+N 软提示）；退出码 0 |
-| 全套测试 | `run_all.py` **10 个套件**全绿：regression + barcodes/finance/trade/visual/legal/pipl/table/pdfhidden/tiff |
-| 已知不修 | 用户测试集 83 双人低头侧脸仍漏（Haar 上限，P1 YuNet）；身份证反面不触发 `id_document` |
+| 5 个既有样例 | 实体 52 个（对账单 13→19 为预期新增），双导出 residual 全 0，元数据/隐藏数据全清（本轮无证件样例，**功能基线数值不变**） |
+| 红线门禁 | `regression.py` **199 项检查全绿（硬项失败 0）**（+N 软提示）；退出码 0 |
+| 全套测试 | `run_all.py` **10 个套件**全绿：regression + barcodes/finance/trade/visual/legal/pipl/table/pdfhidden/tiff（test_visual 47 项） |
+| 身份证 A 方案 | `fields` 默认（头像/姓名/号码/住址；性别/民族/出生保持可见）、`whole` 可选整卡；API 默认/非法值回退 fields；反面 fields 不遮并提示切整卡、无法定向回退整卡 |
+| 已知不修 | 用户测试集 83 双人低头侧脸仍漏（Haar 上限，P1 YuNet）；身份证反面 fields 档不遮（产品语义，提示切整卡） |
 
 ## 六、变更记录
 
@@ -161,3 +165,4 @@
 | 2026-10-20 | P0 第一波落地（底座/条码/财务/图像/贸易/前端/TIF），回归门禁 + 正式基线机制建立；keep 策略不再被判残留、MCP 映射落盘、USCC 校验启用、Office 内嵌媒体二次确认、仅清理导出、LOCAL_CS 中性化语义 | Lead + 5 域开发 + qa |
 | 2026-10-20 | 真实判决书漏识别修复（跨行案号/地址、标签姓名、竖排审判员、带空格金额）；新增 `joined_regex` 检测器与 `test_legal_detect.py`；基线规则 66→71 | Lead + qa |
 | 2026-10-20 | **P0 第二波（PIPL 收口）**：PDF 隐藏数据剥离 + verify 拦截、图片 EXIF Orientation 转正、`pipl-cn`(21)/`table-cn`(11) 规则包 + 校验器、`numeric_cell` 数值写回、10 条规则 scope 扩 image/tiff、前端整图涂黑；基线规则 71→103（8 包）、对账单 +6 实体（预期）、`regression.py` 177 项硬检查、`run_all.py` 10 套件全绿 | Lead + 6 域开发 + qa |
+| 2026-10-20 | **身份证 A 方案**（用户追加要求）：默认 `fields` 只遮头像/姓名/身份证号/住址，`whole` 可选整卡；jobs `id_card_mode` + `_visual_entities` 按档过滤 + 证件内 OCR 文字实体让位 + 照片较大 warning；API/前端选择器；`pipeline._RECT_ETYPE_KIND` 字段复检映射；回归新增 17 项真链路检查（API 默认/非法、fields 四字段+保留行、whole 整页、反面、无脸回退），`regression.py` **199 项**；5 样例无证件，规则/实体基线数值不变 | Lead + faces + designer + qa |

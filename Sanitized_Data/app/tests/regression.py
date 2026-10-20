@@ -756,6 +756,22 @@ def check_http(gate: Gate, base: dict) -> dict:
             hidden_bad.append(f"{mode}:{ph}")
     gate.hard("主路径 PDF 隐藏数据已剥离（verify pdf_hidden 为空）",
               not hidden_bad, _fmt_val(hidden_bad) if hidden_bad else "pdf_hidden={}")
+    # 身份证档位 API 契约：默认 fields / 非法值回退 fields / whole 原样
+    idm = mp.get("id_card_mode_api") or {}
+    gate.hard("身份证档位 API：默认 id_card_mode=fields",
+              (idm.get("default") or {}).get("id_card_mode") == "fields",
+              _fmt_val(idm.get("default")))
+    gate.hard("身份证档位 API：非法值回退 fields",
+              (idm.get("invalid") or {}).get("id_card_mode") == "fields",
+              _fmt_val(idm.get("invalid")))
+    gate.hard("身份证档位 API：whole 原样接受",
+              (idm.get("whole") or {}).get("id_card_mode") == "whole",
+              _fmt_val(idm.get("whole")))
+    gate.hard("身份证档位 API：三个任务均 ready",
+              all((idm.get(k) or {}).get("stage") == "ready"
+                  for k in ("default", "invalid", "whole")),
+              _fmt_val({k: (idm.get(k) or {}).get("stage")
+                        for k in ("default", "invalid", "whole")}))
     gate.hard("主路径有实体命中",
               (mp.get("job_entities") or {}).get("total", 0) > 0,
               _fmt_val((mp.get("job_entities") or {}).get("types")))
@@ -798,6 +814,68 @@ def check_new_capabilities(gate: Gate) -> None:
     gaps = limits.get("known_gaps_not_fixed") or {}
     for key, text in gaps.items():
         gate.soft(f"已知不修：{key}", text)
+
+
+# ══════════════════════════ 5.6 身份证 A 方案（fields 默认 / whole 可选） ══════════════════════════
+def check_id_card_capabilities(gate: Gate) -> None:
+    """身份证 A 方案真链路断言（合成虚构证件 + 引擎 test hook 注入确定性人脸）。"""
+    gate.set_current("功能红线 · 身份证 A 方案")
+    gate.group("功能红线 · 身份证 A 方案（fields 默认 / whole 可选）")
+    r = qa.id_card_chain_test()
+    if not r.get("ok") and r.get("err"):
+        gate.hard("身份证 A 方案链路可执行", False, _fmt_val(r.get("err")))
+        return
+    ff = r.get("fields_front") or {}
+    wf = r.get("whole_front") or {}
+    bf = r.get("back_fields") or {}
+    bw = r.get("back_whole") or {}
+    nf = r.get("noface_fields") or {}
+    field_kinds = set(ff.get("field_kinds") or [])
+    want = {"ID_PHOTO", "ID_NAME", "ID_NUMBER", "ID_ADDRESS"}
+    gate.hard("fields 档正面：四字段实体齐全（头像/姓名/号码/住址）",
+              field_kinds == want, _fmt_val(ff.get("types")))
+    gate.hard("fields 档正面：不含 ID_DOCUMENT 整页实体",
+              ff.get("has_doc") is not True, _fmt_val(ff.get("types")))
+    prot = ff.get("protected_ratios") or {}
+    gate.hard("fields 档 human：头像/姓名/号码/住址区域已遮盖",
+              bool(prot) and set(prot) == want
+              and all(float(v) >= 0.6 for v in prot.values()),
+              _fmt_val(prot))
+    ret = ff.get("retained_ratios") or []
+    gate.hard("fields 档 human：性别/民族/出生行未被完全遮盖",
+              bool(ret) and all(float(v) <= 0.5 for v in ret),
+              _fmt_val(ret))
+    ret_ov = ff.get("retained_max_overlap") or []
+    gate.hard("fields 档 human：保留行不与任何证件字段框重叠",
+              bool(ret_ov) and all(float(v) <= 0.2 for v in ret_ov),
+              _fmt_val(ret_ov))
+    gate.hard("fields 档 human：verify residual=0",
+              (ff.get("verify") or {}).get("residual") == 0,
+              _fmt_val(ff.get("verify") or ff.get("export_error")))
+    gate.hard("whole 档正面：实体含 ID_DOCUMENT", wf.get("has_doc") is True,
+              _fmt_val(wf.get("types")))
+    gate.hard("whole 档 human：整页黑覆盖率≈100%",
+              float(wf.get("full_black_ratio") or 0) >= 0.98,
+              _fmt_val({"ratio": wf.get("full_black_ratio"),
+                        "err": wf.get("export_error")}))
+    gate.hard("whole 档 human：verify residual=0",
+              (wf.get("verify") or {}).get("residual") == 0,
+              _fmt_val(wf.get("verify") or wf.get("export_error")))
+    gate.hard("反面 fields 档：无 ID_* 字段实体（反面不遮）",
+              not (bf.get("id_types") or []), _fmt_val(bf.get("types")))
+    gate.hard("反面 fields 档：提示切「整卡涂黑」",
+              any("反面" in str(x) for x in (bf.get("warnings") or [])),
+              _fmt_val(bf.get("warnings")))
+    gate.hard("反面 whole 档：实体含 ID_DOCUMENT", bw.get("has_doc") is True,
+              _fmt_val(bw.get("types")))
+    gate.hard("无脸/无法定向正面 fields：回退整卡并提示",
+              nf.get("has_doc") is True
+              and any("整卡" in str(x) for x in (nf.get("warnings") or [])),
+              _fmt_val({"types": nf.get("types"),
+                        "warnings": nf.get("warnings")}))
+    gate.soft("身份证 A 方案细节",
+              _fmt_val({"fields_warnings": ff.get("warnings"),
+                        "whole_warnings": wf.get("warnings")}))
 
 
 # ══════════════════════════ 6. MCP 工具（F9） ══════════════════════════
@@ -1081,6 +1159,12 @@ def run_checks() -> int:
         check_new_capabilities(gate)
     except Exception:
         gate.hard("P0 二波新能力检查异常", False, traceback.format_exc(limit=2))
+
+    # 4.6 身份证 A 方案（fields 默认 / whole 可选）
+    try:
+        check_id_card_capabilities(gate)
+    except Exception:
+        gate.hard("身份证 A 方案检查异常", False, traceback.format_exc(limit=2))
 
     # 5 HTTP 服务 + 主路径
     http_bundle: dict = {}

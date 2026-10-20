@@ -1,8 +1,8 @@
 # 数据隐站 · 基线快照（BASELINE SNAPSHOT）
 
-- 冻结时间：2026-10-20T13:40:08+0800
-- git HEAD：`7b74f58`（7b74f583ca121305ee3d36e04a040cd6e882f4f1）  分支 `main`
-- 引擎源码改动：无（干净）
+- 冻结时间：2026-10-20T19:18:42+0800
+- git HEAD：`e78d2be`（e78d2be935318adaf997653e00bd634ea625d201）  分支 `main`
+- 引擎源码改动：有未提交改动，基线需复核
 - Python：3.12.9  · 平台：win32
 - 无 GDAL：True  · 无 trimesh：True
 
@@ -22,7 +22,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 |---|---|---|
 | H1 | 基线样例全部解析成功 | 5/5 |
 | H2 | 两种导出全部成功、residual=0、成品存在非空、元数据已清 | exports_ok=10/10，residual_total=0 |
-| H3 | e2e 退出码 0 | exit=0，7.72s |
+| H3 | e2e 退出码 0 | exit=0，8.82s |
 | H4 | 规则包完整、无 load_errors、id 全局唯一、必填字段/scope/策略合法 | packs=8，defined=103，load_errors=0，violations=0 |
 | H5 | 解析器/检测器全部注册成功 | parsers=docx,image,mesh,pdf,text,tiff,xlsx；detectors=dict,joined_regex,ner,numeric_cell,regex,table_column |
 | H6 | 服务只监听 127.0.0.1 | runtime.host=127.0.0.1；代码 HOST=127.0.0.1 |
@@ -38,7 +38,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 | # | 软参考项 | 基线值 | 说明 |
 |---|---|---|---|
-| S1 | 性能：e2e 总耗时 / OCR 页耗时 | e2e 7.72s | 超过基线 50% 报警（red-lines F12）|
+| S1 | 性能：e2e 总耗时 / OCR 页耗时 | e2e 8.82s | 超过基线 50% 报警（red-lines F12）|
 | S2 | 已知边界现状 | 见 §6 | 后续 P0 会改，**不得断言永远如此** |
 | S3 | 新增命中 | 基线实体总数 52 | 新增类型/数量只提示，不判失败 |
 
@@ -104,7 +104,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 - 注册：parsers=['docx', 'image', 'mesh', 'pdf', 'text', 'tiff', 'xlsx']；detectors=['dict', 'joined_regex', 'ner', 'numeric_cell', 'regex', 'table_column']；replacers={'surrogate': True, 'black': True, 'mask': True}
 - OCR：available=True，backend=ppocrv6，error=None
 - `/api/health`：status=200，net=**blocked**，version=1.0.0，ocr=True
-- runtime.json：host=127.0.0.1，port=18772；netstat 监听行=['TCP    127.0.0.1:18772        0.0.0.0:0              LISTENING       12240']
+- runtime.json：host=127.0.0.1，port=18776；netstat 监听行=['TCP    127.0.0.1:18776        0.0.0.0:0              LISTENING       15176']
 - 外呼静态扫描：hits=[]，URL 字面量上下文 [('https://cka.blctek.com:8443，', 'documentation_or_comment'), ('http://{shown}:{port}', 'templated_local_url'), ('http://{public}:{port}', 'templated_local_url')]；本地浏览器拉起=[{'file': 'app\\server\\yinzhan\\app.py', 'line': 112, 'text': 'threading.Timer(0.6, lambda: webbrowser.open(url)).start()'}]
 - 审计 INSERT 列：['ts', 'job_id', 'doc_name', 'doc_hash', 'fmt', 'counts', 'rule_pack', 'mode', 'out_hash', 'out_name', 'prev_sig', 'sig']；疑似原值列=[]
 - 依赖：requirements=['pillow', 'lxml', 'pymupdf', 'python-docx', 'openpyxl', 'rapidocr', 'rapidocr-onnxruntime', 'onnxruntime', 'opencv-python-headless', 'zxing-cpp', 'rasterio', 'pyproj', 'cryptography']；网络客户端依赖=无
@@ -125,7 +125,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 ### 5.2 真实 HTTP 主路径（上传 → 任务 → ready → 双导出 → 下载）
 
 - 样例：委托代理合同.pdf（2959 bytes）
-- 上传：status=200；任务：j_f0a643ee；stage=ready
+- 上传：status=200；任务：j_669110ab；stage=ready
 - 实体类型：{'手机号': 1, '固定电话': 1, '案号': 1, '统一社会信用代码': 1, '地址': 1, '律师事务所': 1, '金额': 2, '当事人/代理人': 2, '人名': 2, '机构名称': 1, '身份证号': 1, '银行卡号': 1}
 - 预览：{'status': 200, 'kind': 'raster', 'pages': 2, 'blocks': 25, 'entities': 15}；渲染：{'status': 200, 'ctype': 'image/png', 'bytes': 92728, 'png_magic': True}
 - ai：status=200，bytes=7203，verify={'verified': True, 'residual': 0, 'checked': 15, 'visual_residual': 0, 'media': {'count': 0, 'confirmed': False}, 'pdf_hidden': {}, 'issues': []}，下载 status=200，magic=%PDF-1.7，非空=True
@@ -148,9 +148,11 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 - PDF 隐藏数据（附件/批注/表单/JS）：默认剥离（meta 键 ['embedded_files', 'pdf_annotations', 'pdf_forms', 'pdf_js']），verify 拦截未清理=True，保留开关=keep_pdf_hidden
 - 图片 EXIF Orientation 转正：{'applied': True, 'exif_transpose': True}
 - 前端整图涂黑（rect=[0,0,1,1] → black 实体）：{'backend_mark_normalized_rect': True, 'frontend_button': True}
+- **身份证 A 方案**：默认 `fields`（只遮头像/姓名/身份证号/住址），可选 `['fields', 'whole']` 整卡涂黑；字段 kind=['id_photo', 'id_name', 'id_number', 'id_address']；jobs id_card_mode=True，证件内 OCR 文字实体让位=True，前端选择器=True
+- **边界（产品语义，非缺陷）**：身份证反面在 `fields` 档不遮字段（反面没有姓名/号码/住址），会提示切「整卡涂黑」；`whole` 档仍整卡遮。
 - **已知不修（本轮确认，不当作回归）**：
   - `side_face_low_head_miss`：用户测试集 83 双人低头侧脸仍漏（Haar 模型上限，已写 docs/impl/visual.md，P1 YuNet 建议；本轮不修）
-  - `id_card_back_no_id_document`：身份证反面不触发 id_document（已知，本轮不修）
+  - `id_card_back_fields_not_masked`：身份证反面在 fields 档不遮字段（反面无姓名/号码/住址），只提示切「整卡涂黑」；这是产品语义不是缺陷（whole 档仍可整卡遮）
 - **正射 TIF 中性化（D3 已批准）**：成品物理上仍保留 LOCAL_CS 本地任意 CRS 的 GeoTIFF 结构标签（34264/34735/34737，GIS 可打开）。红线是**没有真实世界坐标**：源 ModelPixelScale / ModelTiepoint / EPSG / GDAL_METADATA / RPC / ICC / EXIF / GPS 一旦残留即 FAIL；LOCAL_CS 结构本身不算残留（详见 `docs/impl/tiff.md §10`）。
 
 ## 7. 采集环境说明
@@ -161,7 +163,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 ## 8. 本次基线更新理由（人工填写）
 
-> P0 二波收口后干净 HEAD 基线：PDF 隐藏数据/EXIF 朝向/pipl-cn+table-cn/numeric/整图涂黑；规则 71→103、样例 46→52（对账单 +6 属预期）
+> 身份证 A 方案收口：默认 fields（只遮头像/姓名/身份证号/住址）+ whole 可选；API 默认/非法值回退 fields、反面 fields 提示切整卡、无脸回退整卡；5 样例无证件，规则 103/实体 52 功能基线不变；新增 16 项真链路门禁
 
 ## 9. 基线更新记录（最近 10 次）
 
@@ -172,4 +174,5 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 | 2026-10-20T11:17:16+0800 | e84b9d2 | True | 真实判决书漏识别修复：跨行案号/地址、标签姓名、竖排审判员、带空格金额；新增 joined_regex 检测器与 test_legal_detect（18项） |
 | 2026-10-20T13:32:33+0800 | 8bacbeb | False | P0 第二波（PIPL 收口）：PDF 隐藏数据剥离+verify 拦截、图片 EXIF Orientation 转正、pipl-cn(21)/table-cn(11) 规则+校验器、numeric_cell 数值写回、10 条规则 scope 扩 image/tiff、前端整图涂黑；对账单新增 6 实体属预期（table 列级 2 + pipl numeric AMOUNT 4），红线全绿 |
 | 2026-10-20T13:40:08+0800 | 7b74f58 | True | P0 二波收口后干净 HEAD 基线：PDF 隐藏数据/EXIF 朝向/pipl-cn+table-cn/numeric/整图涂黑；规则 71→103、样例 46→52（对账单 +6 属预期） |
+| 2026-10-20T19:18:42+0800 | e78d2be | False | 身份证 A 方案收口：默认 fields（只遮头像/姓名/身份证号/住址）+ whole 可选；API 默认/非法值回退 fields、反面 fields 提示切整卡、无脸回退整卡；5 样例无证件，规则 103/实体 52 功能基线不变；新增 16 项真链路门禁 |
 

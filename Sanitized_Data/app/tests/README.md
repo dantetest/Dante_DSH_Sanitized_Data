@@ -28,14 +28,15 @@ python -X utf8 app/tests/run_all.py
 每次改动**前后都跑**：开工前确认全绿 → 改完再跑，红了立刻修/回滚。
 `app/tests/e2e.py` 仍保留作为最短冒烟；regression 会把它作为硬项跑一遍，并额外覆盖
 元数据/隐藏数据、安全、契约、HTTP 主路径、MCP、桌面入口，以及 P0 二波新能力
-（PDF 隐藏数据、EXIF 朝向、表格列级/数值写回、整图涂黑）。
+（PDF 隐藏数据、EXIF 朝向、表格列级/数值写回、整图涂黑）与身份证 A 方案档位
+（fields 默认 / whole 可选 / 反面/无脸回退）。
 
 ## 1. 硬 vs 软：什么算"破坏"
 
 | 类别 | 判定 |
 |---|---|
 | **硬（HARD）** | 原有必须命中的实体变少；解析/导出失败；`residual > 0`；元数据回来了；**PDF 隐藏数据/EXIF 朝向/数值类型回退**；Geo tag 回来了；服务外呼；只监听范围扩大；审计记原值；规则包加载错误/id 冲突/既有规则被静默删除；解析器检测器缺失；静态站点/图标异常；HTTP 主路径失败；MCP 工具坏；映射库不可还原 → **FAIL，必须修** |
-| **软（SOFT）** | 新增识别类型/新增规则/多识别实体；性能波动（>50% 报警）；已知边界现状变化（Office 内嵌图仅告警、PDF 文本层不 OCR、`--no-ocr` 未接线、无实体不可导出等）；已知不修项（83 双人低头侧脸 Haar 上限、身份证反面不触发 id_document）→ **只提示，不算回归** |
+| **软（SOFT）** | 新增识别类型/新增规则/多识别实体；性能波动（>50% 报警）；已知边界现状变化（Office 内嵌图仅告警、PDF 文本层不 OCR、`--no-ocr` 未接线、无实体不可导出等）；已知不修项（83 双人低头侧脸 Haar 上限；身份证反面 fields 档不遮、提示切整卡）→ **只提示，不算回归** |
 
 **新增识别/新增规则导致多出实体永远不算回归**；判断"少了"用基线里的
 `required.samples.*.required_types`（每样例"必须至少命中"的类型与最低数量）。
@@ -49,12 +50,13 @@ OCR 类样例（image/tiff）留 ±1 容差，避免同名 OCR 抖动误报。
 | 功能红线 · e2e | e2e 退出码 0、汇总 5/5、无失败行；耗时软报警 |
 | 功能红线 · 样例 | 5/5 解析、页数不回退、关键实体至少命中、双导出成功、residual=0、成品存在非空、PDF/Office 成品"独立复核"无原文残留、元数据清理（PDF author/XMP、DOCX core/company/缩略图、XLSX 属性、图片 EXIF、**TIF 无真实地理参考残留**/sidecar；LOCAL_CS 中性化结构按 D3 允许，见 SNAPSHOT §6） |
 | 功能红线 · P0 二波新能力 | 构造**虚构**夹具真实跑通：PDF 隐藏数据（附件/批注/表单/JS）默认剥离 + verify 拦截未清理（keep 不绕过文本残留复检）；图片 EXIF Orientation=6 解析/渲染/导出转正且导出无 EXIF；表格列级覆盖 + 纯数值金额导出写回数字（openpyxl 断言）；已知不修项只做软记录 |
+| 功能红线 · 身份证 A 方案 | 合成虚构证件 + 引擎 test hook 注入确定性命中，真跑 jobs→导出→verify：**API 默认 fields / 非法值回退 fields / whole 原样**；fields 档四字段实体（ID_PHOTO/ID_NAME/ID_NUMBER/ID_ADDRESS）且**无 ID_DOCUMENT**，human 导出四区域已遮盖、**性别/民族/出生行未遮**（像素+几何重叠双断言）、residual=0；whole 档含 ID_DOCUMENT、整页黑覆盖率≈100%、residual=0；反面 fields 无 ID_* 实体+提示切整卡，whole 有整卡；无脸/无法定向正面 fields 回退整卡+提示 |
 | 安全红线 · 静态 | 无出站网络（`requests`/`urllib.request`/`http.client`/socket 外呼白名单=回环）、无调用上下文外部 URL、默认监听 127.0.0.1、requirements 无网络客户端依赖、PDF `apply_redactions`、图片重编码不带 EXIF/ICC（含临时夹具实测）、TIFF 剥离+复检、DOCX/XLSX 属性清理、审计 INSERT 无原值列 |
 | 契约完整性 · 规则/注册表 | 基线规则包仍在、load_errors=0、id 全局唯一/字段/scope/策略合法、已有规则不减少（迁移需白名单+替代规则）、各格式编译数不减少、**10 条规则 scope 已扩 image+tiff**、**pipl-cn(≥21)/table-cn(≥11) 完整且 id 唯一/命名空间正确**、插件/解析器/检测器不回退、替换器注册、OCR 可用性一致 |
 | 契约完整性 · 服务/主路径 | health 200/net=blocked、runtime host=127.0.0.1、netstat 监听行只有回环、`/api/packs`、4 页面+3 图标 200+MIME、CSRF 跨站写 403、上传→job→ready→双导出→下载（sha/size 一致/%PDF）、**verify.pdf_hidden 为空**、审计计数含类型且无原值、审计链 verify、预览、PNG 渲染、框选补漏（rect 归一化）、逐条确认、accept-all、**整图涂黑（rect=[0,0,1,1]→black/coverage≈1.0）**、映射库可解密还原 |
 | 契约完整性 · MCP | 4 工具齐全；stdio 协议端到端；list_rules / check_support / redact_text（不泄露合成原值）/ sanitize_document（residual=0）；MCP 存映射为软提示 |
 | 功能红线 · 桌面/构建 | 桌面入口/服务入口/MCP/rehydrate 语法 OK、spec/iss/前端资源仍在、`app.spec` 仍收集 web |
-| 软参考 | e2e/逐样例耗时、已知边界现状是否变化（变化只报告，不判回归）、已知不修项（83 双人低头侧脸 Haar 上限、身份证反面不触发 id_document） |
+| 软参考 | e2e/逐样例耗时、已知边界现状是否变化（变化只报告，不判回归）、已知不修项（83 双人低头侧脸 Haar 上限；身份证反面 fields 档不遮、提示切整卡） |
 
 ## 3. 如何新增检查
 
@@ -108,10 +110,10 @@ python -X utf8 app/tests/regression.py --update-baseline
 * `app/tests/baseline/SNAPSHOT.md` —— 人读摘要（硬/软断言、每样例最低命中、
   元数据矩阵、规则包、服务与安全、已知边界）。
 
-**当前基线（2026-10-20 P0 二波收口）**：8 个规则包 / 自有规则 103 条；5 个既有样例
-实体 52 个、双导出 residual 0；`regression.py` 177 项硬检查；`run_all.py` 10 套件全绿；
-对账单新增 6 实体（table 列级 2 + pipl numeric AMOUNT 4）已在 SNAPSHOT §3.3 说明为预期。
-基线在 `engine_clean=false` 的 P0 二波工作树上采集（SNAPSHOT 已标注），提交后如需干净
+**当前基线（2026-10-20 身份证 A 方案收口）**：8 个规则包 / 自有规则 103 条；5 个既有样例
+实体 52 个、双导出 residual 0（本轮无证件样例，功能基线数值不变）；`regression.py` **199 项检查全绿（硬项失败 0）**；
+`run_all.py` 10 套件全绿；身份证 A 方案（fields 默认/whole 可选、反面 fields 边界）已记录到 SNAPSHOT §6。
+基线在 `engine_clean=false` 的身份证 A 方案工作树上采集（SNAPSHOT 已标注），提交后如需干净
 HEAD 基线，再跑一次 `--update-baseline`。
 
 **什么时候可以重录**：确认是**改进**而不是回归（例如新增规则让实体变多、
@@ -157,7 +159,7 @@ python -X utf8 app/tests/run_all.py
 
 | # | 测试 | 内容 | 实测耗时 |
 |---|---|---|---|
-| 1 | `regression.py` | **红线门禁（硬）**：功能/安全/契约/主路径/P0 二波新能力 | 25.7s |
+| 1 | `regression.py` | **红线门禁（硬）**：功能/安全/契约/主路径/P0 二波新能力/身份证 A 方案 | 30.4s |
 | 2 | `test_barcodes.py` | 条码/二维码识别、不可再解码自检、样例零误报 | 4.3s |
 | 3 | `test_finance.py` | finance-cn v2 规则、校验器、金额一致性 | 5.6s |
 | 4 | `test_trade.py` | trade-cn 规则、贸易号码校验器、样例零误报 | 5.4s |
