@@ -356,3 +356,14 @@ verify(exported, entities, parser, ctx, *, doc=None, options=None) -> dict
 - 新增检测器：`table_column`（xlsx/docx 表头列级）、`numeric_cell`（xlsx 数值单元格）；新增校验器 `pipl_validators.py`（`pipl_*` 前缀）。
 - 10 条敏感规则 scope 补 `image, tiff`：`cn.amount_cn`、`cn.credit_line`、`cn.iban`、`cn.reg_capital`、`cn.bank_routing_no`、`cn.pay_platform_id`、`cn.lawyer_license`、`cn.legal_party`、`cn.department`、`cn.sensitive_diagnosis`。
 - xlsx 导出：`numeric_cell` 写数字类型、保留 number_format；账号写字符串；公式保留并置 fullCalcOnLoad。
+
+### 11.6 P1-A（2026-10-20，进行中）
+
+- 聊天截图逐项：isual_targets 新 kind chat_avatar/chat_name/chat_group/chat_time/chat_input；仅 mt=image 且 OCR 具备时启用；判定用布局信号（状态栏/标题/左右头像列/气泡/底部输入条）；jobs._VISUAL_SPEC 对应 CHAT_* etype，默认 accepted、逐项不整屏；PDF/文档页跳过。
+- 招牌扫描器：新模块 yinzhan/sign_targets.py（mediascan 注册 door_address/road_sign/shop_sign/org_plaque，priority 55）；基于 OCR 文本框锚点+合并+外扩，白纸门控；jobs._VISUAL_SPEC 对应 DOOR_ADDRESS/ROAD_SIGN/SHOP_SIGN/ORG_PLAQUE（默认 pending L2）；egistry._SCANNER_MODULES 已含该模块。
+- 解析器：mediascan.analyze 的 options 增加 mt（image/tiff/pdf），供扫描器做格式门控。
+- 未成年人：Job.minor_detected（身份证生日推断 <14，仅身份证号，不做人脸年龄）；snapshot 返回 minor_detected/minor_strict；POST /api/jobs/{id}/minor-strict：人工启用后证件整卡 + 全部实体强制涂黑（不可换名），未检出时 400。
+- 时间模糊：Job.time_blur（创建参数，默认 false）；只处理「完整日期+时刻」中的时刻，生成 TIME 实体，AI 替换为时段（凌晨/上午/中午/下午/晚上），日期保留；human 模式涂黑。
+- 组合风险：Job.combination_risk={level,categories}（位置/证件/人脸/车辆/联系人/时间 ≥2 类），只写 warning，不自动改。
+- 前端：投放台/对照台时间模糊开关、未成年红条+严格模式按钮、组合风险黄条+整图涂黑、聊天/招牌类型映射；创建 job body 增加 	ime_blur。
+- 已知限制：聊天截图需 OCR 且为微信式布局；招牌无 OCR/白底不承诺；未成年人仅身份证生日推断；时间模糊默认关；组合风险只提示不消除重识别。
