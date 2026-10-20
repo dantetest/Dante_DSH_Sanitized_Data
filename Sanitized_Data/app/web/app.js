@@ -588,11 +588,20 @@ function totalPages(job) {
 function readCounts(job, entities) {
   const c = job && job.counts;
   if (c && Number.isFinite(Number(c.total))) {
-    return { total: Math.max(0, num(c.total)), done: Math.max(0, num(c.done)), pending: Math.max(0, num(c.pending)) };
+    // 撤销（reject）的条目不再算「要隐去处」，与右侧清单保持一致
+    const rejected = Math.max(0, num(c.rejected));
+    return {
+      total: Math.max(0, num(c.total) - rejected),
+      done: Math.max(0, num(c.done) - rejected),
+      pending: Math.max(0, num(c.pending)),
+    };
   }
   const list = (entities || []).filter((e) => e && e.status !== 'rejected');
   const pending = list.filter((e) => e.status === 'pending').length;
   return { total: list.length, done: list.length - pending, pending };
+}
+function activeEntityCount() {
+  return state.entities.filter((e) => e && e.status !== 'rejected').length;
 }
 function updateConsoleHead() {
   ui.cntAll.textContent = String(state.counts.total);
@@ -601,8 +610,9 @@ function updateConsoleHead() {
   ui.reviewCount.textContent = String(state.counts.pending);
   ui.btnAcceptAll.disabled = state.counts.pending <= 0;
   ui.btnReview.disabled = state.counts.pending <= 0;
-  ui.railCount.textContent = String(state.entities.length);
+  ui.railCount.textContent = String(activeEntityCount());
   ui.docName.textContent = state.fileName || (state.job && state.job.name) || '未命名文件';
+  syncWholePageButton();
 }
 function updatePager() {
   ui.pageLabel.textContent = (state.page + 1) + ' / ' + state.pages;
@@ -645,6 +655,7 @@ async function enterConsole() {
     updateConsoleHead();
     updatePager();
     buildRail();
+    syncFootHint();
     await loadPage(0, { keepScroll: false });
     const warnings = state.job && state.job.warnings;
     if (Array.isArray(warnings) && warnings.length) {
@@ -1238,6 +1249,128 @@ async function submitMark(draft, rect, norm, etype) {
   }
 }
 
+/* ─────────────── ④b 整图涂黑（P0：照片/场景图漏检时的一次性兜底） ───────────────
+   用途：人脸大图、场景照片等自动识别不到时，用户一键把「当前页」整页涂黑。
+   接口：沿用现有 POST /api/jobs/{id}/mark，rect 传整页 [0,0,1,1]，etype=OTHER，
+   label=整图脱敏，propagate=false；成功后复用 mark 后的 refreshLive 刷新实体/清单/预览。
+   入口按钮由本文件动态插到「框选补漏」后面（不改 index.html）。 */
+const WHOLE_PAGE_LABEL = '整图脱敏';
+const FOOT_HINT_DEFAULT = '按住黑条 300 毫秒可透视原值 · 松手复原';
+
+function imageLikeFormat() {
+  const fmt = String((state.job && state.job.fmt) || '').toLowerCase();
+  return fmt === 'image' || fmt === 'tiff';
+}
+function pageEntityCount() {
+  const preview = state.previews.orig.get(state.page);
+  const list = preview && Array.isArray(preview.entities) ? preview.entities : null;
+  if (list) return list.filter((ent) => ent && ent.status !== 'rejected').length;
+  return state.entities.filter((ent) => ent && ent.status !== 'rejected').length;
+}
+function syncFootHint() {
+  const el = $('.foot-hint');
+  if (!el) return;
+  el.textContent = imageLikeFormat()
+    ? '照片/扫描件：自动识别不到的内容，用「整图涂黑」一次盖掉 · 按住黑条 300 毫秒可透视'
+    : FOOT_HINT_DEFAULT;
+}
+function mountWholePageButton() {
+  if (ui.btnWholePage || !ui.btnSelect || !ui.btnSelect.parentNode) return;
+  const btn = mk('button', 'btn danger', '⊘ 整图涂黑');
+  btn.type = 'button';
+  btn.id = 'btnWholePage';
+  btn.title = '把当前页整页涂黑：照片、场景图里自动识别不到的隐私内容，用这一招一次性盖掉';
+  btn.setAttribute('aria-label', '整图涂黑：把当前页整页涂黑，导出后不可还原');
+  btn.addEventListener('click', onWholePageClick);
+  ui.btnSelect.insertAdjacentElement('afterend', btn);
+  ui.btnWholePage = btn;
+}
+/* 整图涂黑只对「能按页渲染」的格式有意义（图片/TIFF/PDF）；
+   DOCX/XLSX/TXT 是文字排版（flow），整页矩形盖不到文字，禁用并说明，避免静默失效。 */
+function wholePageAvailable() {
+  if (!state.jobId) return false;
+  const preview = state.previews.orig.get(state.page);
+  if (!preview) return false;
+  return (preview.kind || 'raster') === 'raster';
+}
+function syncWholePageButton() {
+  const btn = ui.btnWholePage;
+  if (!btn) return;
+  const raster = wholePageAvailable();
+  btn.disabled = !raster;
+  btn.classList.toggle('unavailable', !raster);
+  btn.title = raster
+    ? '把当前页整页涂黑：照片、场景图里自动识别不到的隐私内容，用这一招一次性盖掉'
+    : '整页涂黑只对图片、扫描件、PDF 有效：当前是文字排版格式（如 DOCX/XLSX），请用「框选补漏」标出要隐去的文字';
+  btn.setAttribute('aria-label', raster
+    ? '整图涂黑：把当前页整页涂黑，导出后不可还原'
+    : '整图涂黑不可用：当前格式不是图片、扫描件或 PDF');
+}
+function wholePageConfirmText() {
+  const parts = ['整页涂黑：这一页会全部变黑，AI 读不到任何内容，导出后不可还原。'];
+  if (imageLikeFormat()) parts.push('照片 / 场景图里自动识别不到的隐私内容，用这一招最稳。');
+  const n = pageEntityCount();
+  if (n > 0) parts.push('本页已有 ' + n + ' 处标记，整页涂黑会覆盖本页所有内容。');
+  return parts.join(' ');
+}
+function onWholePageClick() {
+  if (!state.jobId || state.busy) return;
+  if (ui.btnWholePage && ui.btnWholePage.disabled) return;
+  if (!wholePageAvailable()) {
+    toast('这个文件是文字排版格式，整页涂黑用不上；请用「框选补漏」标出要隐去的文字。');
+    return;
+  }
+  toast(wholePageConfirmText(), [
+    { label: '确认涂黑整页', fn: doWholePageMark },
+    { label: '取消', fn: () => toast('已取消，这一页没有被改动。') },
+  ], 12000);
+}
+async function doWholePageMark() {
+  if (!state.jobId || state.busy) return;
+  state.busy = true;
+  const btn = ui.btnWholePage;
+  if (btn) { btn.disabled = true; btn.classList.add('busy'); }
+  try {
+    const res = await api('/api/jobs/' + jobPath() + '/mark', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        page: state.page,
+        rect: [0, 0, 1, 1],
+        etype: 'OTHER',
+        label: WHOLE_PAGE_LABEL,
+        propagate: false,
+      }),
+    });
+    toast('整页已加入涂黑，可在右侧清单撤销');
+    await refreshLive();
+    const eid = res && res.entity && res.entity.id;
+    if (eid) flashEntity(eid);
+  } catch (err) {
+    toast((err && err.human) || '这一页没能整页涂黑，请再试一次。');
+  } finally {
+    state.busy = false;
+    if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
+  }
+}
+async function rejectEntity(ent) {
+  if (!ent || !ent.id || state.busy) return;
+  state.busy = true;
+  try {
+    await api('/api/jobs/' + jobPath() + '/entities/' + encodeURIComponent(ent.id), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reject' }),
+    });
+    toast('已撤销「' + labelOf(ent) + '」，这一处不再涂黑。');
+    await refreshLive();
+  } catch (err) {
+    toast((err && err.human) || '这一处没能撤销，请再试一次。');
+  } finally {
+    state.busy = false;
+  }
+}
+
 /* ─────────────── 实体清单 / 定位 / 逐条确认 ─────────────── */
 function buildRail() {
   clear(ui.railList);
@@ -1271,13 +1404,23 @@ function buildRail() {
       } else {
         row.title = '点一下定位';
       }
+      // 手动补记/整图涂黑的条目可以撤销（后端 update_entity action=reject 已支持）
+      if (ent.origin === 'manual') {
+        const undo = mk('button', 'row-undo', '撤销');
+        undo.type = 'button';
+        undo.title = '撤销这一处，不再涂黑';
+        undo.setAttribute('aria-label', '撤销「' + labelOf(ent) + '」');
+        undo.addEventListener('click', (ev) => { ev.stopPropagation(); rejectEntity(ent); });
+        row.appendChild(undo);
+        row.title = '点一下定位 · 手动添加，可撤销';
+      }
       row.addEventListener('click', () => onRailRow(ent));
       group.appendChild(row);
     });
     ui.railList.appendChild(group);
   });
   if (!keys.length) ui.railList.appendChild(mk('div', 'rail-empty', '这一份文件没有需要隐去的内容。'));
-  ui.railCount.textContent = String(state.entities.length);
+  ui.railCount.textContent = String(activeEntityCount());
 }
 function onRailRow(ent) {
   if (!ent) return;
@@ -1686,6 +1829,7 @@ function bindModal() {
 }
 function init() {
   cacheDom();
+  mountWholePageButton();
   state.cardTpl = { ai: ui.cardAi.innerHTML, human: ui.cardHuman.innerHTML };
   state.docNo = makeDocNo();
   ui.docNo.textContent = state.docNo;

@@ -43,7 +43,7 @@ rules:
     entity: LICENSE
     label: 律师执业证号
     level: L2
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 80
     detect:
       - type: regex
@@ -85,7 +85,7 @@ rules:
     entity: PERSON
     label: 当事人/代理人
     level: L2
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 75
     detect:
       - type: ner

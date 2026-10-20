@@ -263,6 +263,21 @@ def _role_of(entity, rule) -> str:
     return "line"
 
 
+def _numeric_amount_meta(entity) -> dict | None:
+    """纯数值单元格（numeric_det 识别）的元数据；非数值金额返回 None。"""
+    if str(getattr(entity, "origin", "") or "") != "numeric_cell":
+        return None
+    try:
+        from ..detectors import numeric_det
+
+        meta = numeric_det.get_numeric_meta(getattr(entity, "id", ""))
+    except Exception:
+        return None
+    if not meta or str(meta.get("kind") or "") != "amount":
+        return None
+    return meta
+
+
 def _parse_token(entity, rule) -> _Token | None:
     """把一个实体解析成 _Token；无法识别为金额返回 None。"""
     value = str(getattr(entity, "value", "") or "").strip()
@@ -273,6 +288,28 @@ def _parse_token(entity, rule) -> _Token | None:
     etype = str(getattr(entity, "etype", "") or "").upper()
     if etype not in AMOUNT_ETYPES:
         return None
+
+    # 0) 纯数值单元格金额（xlsx numeric_cell）：无"元/万元"文本，按元处理，
+    #    小数位来自 number_format（numeric_det 元数据）。
+    numeric_meta = _numeric_amount_meta(entity)
+    if numeric_meta is not None:
+        cleaned = value.replace(",", "").replace("，", "").strip()
+        try:
+            canonical = Decimal(cleaned)
+        except (InvalidOperation, ValueError):
+            return None
+        decimals = int(numeric_meta.get("decimals") or 0)
+        return _Token(
+            entity_id=getattr(entity, "id", ""),
+            etype=etype, raw=value,
+            role=_role_of(entity, rule),
+            rule_id=str(getattr(rule, "id", "") or ""),
+            lead="", int_text=value, dec_text="",
+            has_comma="," in value, decimals=decimals,
+            unit_text="", unit_scale=1,
+            sign=-1 if canonical < 0 else 1,
+            canonical=canonical,
+        )
 
     # 1) 中文大写金额
     if not re.search(r"\d", value) and _CN_UPPER_RE.search(value):
@@ -528,8 +565,9 @@ def build_amount_plan(entities, rules, session) -> dict[str, str]:
         quantum = quanta.get(value, _CENT)
         original = value.quantize(quantum, rounding=_ROUND)
         scaled_value = (value * factor).quantize(quantum, rounding=_ROUND)
-        if scaled_value == original:       # 粗单位下不能"等于没变"
+        if scaled_value == original and value != 0:  # 粗单位下不能"等于没变"
             scaled_value = original + quantum
+        # 0 保持 0（零金额不携带信息，改成 1 会破坏合计/勾稽）
         scaled[value] = scaled_value
 
     # ── 合计识别 ──

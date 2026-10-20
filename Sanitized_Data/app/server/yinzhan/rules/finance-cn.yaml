@@ -46,7 +46,7 @@ rules:
     entity: CREDIT_LINE
     label: 授信额度/余额
     level: L2
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 82
     detect:
       - type: regex
@@ -70,7 +70,7 @@ rules:
     entity: IBAN
     label: 国际银行账号
     level: L3
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 100
     detect:
       - type: regex
@@ -175,7 +175,7 @@ rules:
     entity: AMOUNT
     label: 注册资本
     level: L1
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 78
     detect:
       - type: regex
@@ -222,7 +222,7 @@ rules:
     entity: ROUTING_NO
     label: 联行号
     level: L2
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 77
     detect:
       - type: regex
@@ -235,7 +235,7 @@ rules:
     entity: PAY_ID
     label: 支付平台账号/商户号
     level: L3
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 76
     detect:
       - type: regex

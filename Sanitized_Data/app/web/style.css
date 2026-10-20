@@ -381,6 +381,15 @@ main{flex:1; min-height:0; position:relative;}
   font:400 8.5px/1 var(--font-mono); letter-spacing:.06em; color:var(--seal);
   border:1px solid rgba(178,58,46,.4); padding:2px 3px; border-radius:2px; flex:0 0 auto;
 }
+/* 手动补记 / 整图涂黑条目的「撤销」小按钮（app.js buildRail 动态添加） */
+.row .row-undo{
+  margin-left:auto; flex:0 0 auto; cursor:pointer;
+  font:400 9px/1 var(--font-mono); letter-spacing:.08em; color:var(--seal);
+  border:1px solid rgba(178,58,46,.4); background:transparent; border-radius:2px;
+  padding:2px 4px;
+}
+.row .row-undo:hover{background:var(--seal); color:#FBF7EC;}
+.row .row-undo:focus-visible{outline:2px solid var(--seal); outline-offset:1px;}
 .rail-empty{padding:16px 6px; font:400 10.5px/1.8 var(--font-mono); color:var(--ink-3); letter-spacing:.06em;}
 
 /* ───────── 底栏 / 按钮 ───────── */
@@ -400,6 +409,10 @@ main{flex:1; min-height:0; position:relative;}
 .btn.ghost{border-style:dashed; color:var(--ink-3);}
 .btn.on{background:var(--seal); color:#FBF7EC; border-color:var(--seal);}
 .btn.on:hover{background:#9c3126;}
+/* 整图涂黑（P0 兜底，按钮由 app.js 动态插在「框选补漏」后面）：虚线红边，和普通按钮区分 */
+.btn.danger{border-style:dashed; border-color:rgba(178,58,46,.55); color:var(--seal); background:rgba(178,58,46,.045);}
+.btn.danger:hover:not(:disabled){background:var(--seal); color:#FBF7EC; border-color:var(--seal);}
+.btn.danger.busy{opacity:.6;}
 .foot-hint{font:400 10.5px/1.6 var(--font-mono); color:var(--ink-3); letter-spacing:.04em;}
 
 /* 模式开关 */

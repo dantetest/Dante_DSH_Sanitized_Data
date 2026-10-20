@@ -1,0 +1,364 @@
+# PIPL 补充 · 账号 / 设备 / 交通 / 准标识符 / 表格数值（P0）
+# 写作用域：PIPL 域新增包（docs/red-lines.md 扩展点 E4）；不修改其它规则包。
+#
+# 设计原则：
+# - 弱特征（昵称/SN/座位/票号/快递/门牌等）必须 near + 校验器；宁漏勿错。
+# - 日期默认不处理（避免改变病历/财务日期），精确时间规则默认 enabled: false（P1）。
+# - 编号/账号替代仍走 surrogate；格式校验只用于"检测"，假值是否为合法校验位
+#   属于替换器工厂扩展（Lead 所有，未在本批范围）。
+# - 与 trade/finance 的校验器命名空间隔离：校验函数统一 pipl_ 前缀。
+pack: pipl-cn
+name: 隐私 · 账号/设备/交通/准标识符
+version: 1
+include: [common]
+
+rules:
+  # ═══════════ A. 文本直接标识 ═══════════
+
+  # 社交账号 / 聊天 ID：微信 wxid、QQ/微博/抖音/小红书/快手/钉钉/Telegram/Skype
+  - id: pipl.social_id
+    entity: SOCIAL_ID
+    label: 社交账号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 112
+    detect:
+      - type: regex
+        pattern: '(?<![A-Za-z0-9_])wxid_[A-Za-z0-9_\-]{6,20}(?![A-Za-z0-9_])'
+        validate: pipl_social_wxid
+      - type: regex
+        pattern: '(?:QQ|微信|WeChat|微博|抖音|小红书|快手|钉钉|Telegram|Skype)\s*(?:号|ID|账号|帐号)?\s*[:：]\s*(?P<value>[A-Za-z0-9_.\-]{4,32})'
+        validate: pipl_social_generic
+    replace: {strategy: surrogate}
+
+  # 昵称 / 群名（谨慎：默认低置信度 → 标准档进"待确认"）
+  - id: pipl.nickname
+    entity: NICKNAME
+    label: 昵称/群名
+    level: L2
+    scope: [pdf, docx, xlsx, text]
+    priority: 108
+    detect:
+      - type: regex
+        pattern: '(?:昵称|网名|用户名|微信名|群昵称|群名)\s*[:：]\s*(?P<value>[\u4e00-\u9fa5A-Za-z0-9_\-]{2,24})'
+        validate: pipl_nickname
+        confidence: 0.78
+    replace: {strategy: surrogate}
+
+  # 带空格/短横线分组的手机号（common.cn.phone 只认连续 11 位）
+  - id: pipl.phone_grouped
+    entity: PHONE
+    label: 手机号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 101
+    detect:
+      - type: regex
+        pattern: '(?<!\d)1[3-9]\d(?:[ \-]?\d){8}(?!\d)'
+        validate: pipl_phone_digits
+    replace: {strategy: surrogate}
+
+  # ═══════════ B. 交易 / 票务 ═══════════
+
+  # 快递 / 物流单号：前缀白名单 + 数字；或纯数字 near 标签
+  - id: pipl.express_no
+    entity: EXPRESS_NO
+    label: 快递/物流单号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 106
+    detect:
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])(?:SF|JD|JTSD|JT|YT|YD|ZTO|STO|EMS|DPD|DBL|HT)[0-9]{8,16}(?![0-9A-Za-z])'
+        validate: pipl_express_no
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])\d{10,20}(?![0-9A-Za-z])'
+        near: [快递单号, 物流单号, 运单号, 快递, 物流, 面单]
+        near_before: 18
+        near_after: 4
+        validate: pipl_express_no
+    replace: {strategy: surrogate}
+
+  # 机票/火车票/行程单票号（10–13 位数字，near 强约束）
+  - id: pipl.ticket_no
+    entity: TICKET_NO
+    label: 票号
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 104
+    detect:
+      - type: regex
+        pattern: '(?<!\d)\d{3}[ \-]?\d{10}(?!\d)'
+        near: [票号, 客票, 机票, 行程单, 电子客票, 火车票, 车票]
+        near_before: 14
+        near_after: 4
+        exclude_near: [发票, 发票号码, 发票代码]
+        validate: pipl_ticket_no
+      - type: regex
+        pattern: '(?<!\d)\d{8,12}(?!\d)'
+        near: [火车票, 车票, 票号, 客票]
+        near_before: 12
+        near_after: 4
+        # "发票号码" 里也含 "票号" 子串，必须排除发票上下文，否则会抢走 cn.invoice_no
+        exclude_near: [发票, 发票号码, 发票代码]
+        validate: pipl_ticket_no
+    replace: {strategy: surrogate}
+
+  # 信用卡安全码 CVV/CVC（必须标签锚点）
+  - id: pipl.card_cvv
+    entity: CARD_CVV
+    label: 信用卡安全码
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 110
+    detect:
+      - type: regex
+        pattern: '(?:CVV2?|CVC2?|安全码|卡背面三位|信用卡校验码)\s*[:：]?\s*(?P<value>\d{3,4}(?![0-9]))'
+        validate: pipl_cvv
+    replace: {strategy: surrogate}
+
+  # ═══════════ C. 车辆 / 设备 ═══════════
+
+  # 车架号 VIN（ISO 3779 校验位；17 位、不含 I/O/Q）
+  - id: pipl.vin
+    entity: VIN
+    label: 车架号 VIN
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 103
+    detect:
+      - type: regex
+        pattern: '(?<![A-HJ-NPR-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-HJ-NPR-Z0-9])'
+        near: [车架号, VIN, 车辆识别代号, 整车编码, 车辆识别代码]
+        near_before: 14
+        near_after: 4
+        validate: pipl_vin
+    replace: {strategy: surrogate}
+
+  # IMEI / MEID（15 位 + Luhn）
+  - id: pipl.imei
+    entity: DEVICE_ID
+    label: IMEI/设备号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 102
+    detect:
+      - type: regex
+        pattern: '(?<!\d)\d{15}(?!\d)'
+        near: [IMEI, MEID, 串号, 设备号, 手机串号]
+        near_before: 12
+        near_after: 4
+        validate: pipl_imei
+    replace: {strategy: surrogate}
+
+  # MAC 地址（格式强特征，无需 near）
+  - id: pipl.mac
+    entity: MAC
+    label: MAC 地址
+    level: L2
+    scope: [pdf, docx, xlsx, text]
+    priority: 96
+    detect:
+      - type: regex
+        pattern: '(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:])'
+        validate: pipl_mac
+    replace: {strategy: surrogate}
+
+  # 设备序列号 / SN（标签锚点 + 低置信度 → 标准档待确认）
+  - id: pipl.device_sn
+    entity: DEVICE_SN
+    label: 设备序列号
+    level: L2
+    scope: [pdf, docx, xlsx, text]
+    priority: 95
+    detect:
+      - type: regex
+        pattern: '(?:SN|S/N|序列号|设备序列号|设备编号|机身码)\s*[:：]?\s*(?P<value>[A-Za-z0-9\-_.]{6,24})'
+        validate: pipl_device_sn
+        confidence: 0.78
+    replace: {strategy: surrogate}
+
+  # ═══════════ D. 准标识符：IP / 门牌 / 交通 / 时间 ═══════════
+
+  # IP 地址（IPv4/IPv6，near 约束降低版本号误报）
+  - id: pipl.ip_addr
+    entity: IP_ADDR
+    label: IP 地址
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 97
+    detect:
+      - type: regex
+        pattern: '(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\d.])'
+        near: [IP, IP地址, 登录, 来源, 客户端]
+        near_before: 16
+        near_after: 6
+        validate: pipl_ipv4
+      - type: regex
+        pattern: '(?<![0-9A-Fa-f:])(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,7}:|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}|(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}|[0-9A-Fa-f]{1,4}:(?::[0-9A-Fa-f]{1,4}){1,6}|:(?:(?::[0-9A-Fa-f]{1,4}){1,7}|:))(?![0-9A-Fa-f:])'
+        near: [IPv6, IP, IP地址, 登录, 来源, 客户端]
+        near_before: 16
+        near_after: 6
+        validate: pipl_ipv6
+    replace: {strategy: surrogate}
+
+  # 独立门牌/楼栋/单元/室（要求 栋/幢/号楼/座 层级，避免把"12号"当门牌）
+  - id: pipl.address_unit
+    entity: ADDRESS
+    label: 门牌/楼栋/单元/室
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 99
+    detect:
+      - type: regex
+        pattern: '[\u4e00-\u9fa5A-Za-z0-9]{1,10}(?:栋|幢|号楼|座)(?:[\u4e00-\u9fa5A-Za-z0-9]{1,10}(?:单元|层))?(?:[\u4e00-\u9fa5A-Za-z0-9]{1,10}(?:室|户|号))?'
+        near: [地址, 住址, 门牌, 房间, 工位, 送货, 收货, 寄件, 收件, 小区]
+        near_before: 16
+        near_after: 6
+        validate: pipl_address_unit
+        confidence: 0.85
+    replace: {strategy: surrogate}
+
+  # 标签式门牌 / 房间号 / 工位（如"房间号：1203"）
+  - id: pipl.doorplate
+    entity: ADDRESS
+    label: 门牌/房间号/工位
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 98
+    detect:
+      - type: regex
+        pattern: '(?:门牌号|门牌|房间号|房间|工位号|工位)\s*[:：]?\s*(?P<value>[^\s。；;，,]{2,30})'
+        validate: pipl_doorplate
+        confidence: 0.85
+    replace: {strategy: surrogate}
+
+  # 航班号（行踪轨迹：L3；命中时优先于 trade.vessel_voyage 的 keep）
+  - id: pipl.flight_no
+    entity: FLIGHT_NO
+    label: 航班号
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 118
+    detect:
+      - type: regex
+        pattern: '(?<![A-Za-z0-9])[A-Z0-9]{2}\d{3,4}(?![0-9])'
+        near: [航班, 登机, 行程, 机票, 值机, FLIGHT]
+        near_before: 12
+        near_after: 4
+        validate: pipl_flight_no
+    replace: {strategy: surrogate}
+
+  # 车次（行踪轨迹：L3）
+  - id: pipl.train_no
+    entity: TRAIN_NO
+    label: 车次
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 117
+    detect:
+      - type: regex
+        pattern: '(?<![A-Za-z0-9])[GDCZTK]\d{1,4}(?![0-9])'
+        near: [车次, 列车, 高铁, 动车, 火车]
+        near_before: 12
+        near_after: 4
+        validate: pipl_train_no
+    replace: {strategy: surrogate}
+
+  # 座位号（行踪轨迹辅助：L2）
+  - id: pipl.seat_no
+    entity: SEAT_NO
+    label: 座位号
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 98
+    detect:
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])\d{1,3}[A-F](?![0-9A-Za-z])'
+        near: [座位, 座号, 舱位, 铺位]
+        near_before: 10
+        near_after: 4
+        validate: pipl_seat_no
+    replace: {strategy: surrogate}
+
+  # 工牌 / 工号（标签锚点）
+  - id: pipl.badge
+    entity: EMPLOYEE_NO
+    label: 工号/工牌
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 94
+    detect:
+      - type: regex
+        pattern: '(?:工牌号|工牌|工号|员工号|员工编号)\s*[:：]?\s*(?P<value>[A-Za-z0-9\-_]{2,20})'
+        validate: pipl_employee_no
+        confidence: 0.85
+    replace: {strategy: surrogate}
+
+  # 精确时间（P1，默认关闭；启用需配合 replacers/time_blur.py 做"时刻→时段"）
+  # 日期本身默认不处理：避免改变病历/财务日期与基线。
+  - id: pipl.datetime
+    entity: TIME
+    label: 精确时间
+    level: L2
+    scope: [pdf, docx, xlsx, text]
+    enabled: false
+    priority: 45
+    detect:
+      - type: regex
+        pattern: '(?:19|20)\d{2}[-/年]\d{1,2}[-/月]\d{1,2}日?[ T]?\d{1,2}[:：时]\d{1,2}(?:[:：分]\d{1,2}秒?)?'
+      - type: regex
+        pattern: '(?<!\d)(?:[01]?\d|2[0-3])[:：][0-5]\d(?:[:：][0-5]\d)?(?!\d)'
+        near: [时间, 登录, 打卡, 发送, 记录]
+    replace: {strategy: mask}
+
+  # ═══════════ E. 表格纯数值单元格（P0，数字写回见 xlsx_parser） ═══════════
+
+  # 纯数值金额列：表头含 金额/余额/工资/收入/成本/利润/税额… 时整列识别
+  - id: pipl.numeric_amount
+    entity: AMOUNT
+    label: 金额（数值）
+    level: L2
+    scope: [xlsx]
+    priority: 20
+    detect:
+      - type: numeric_cell
+        headers: [金额, 余额, 工资, 应发, 实发, 应发工资, 实发工资, 薪酬,
+                  收入, 成本, 费用, 利润, 净利润, 税额, 合计, 小计,
+                  授信额度, 贷款金额, 交易金额, 转账金额, 发生额,
+                  本期金额, 上期金额, 期初余额, 期末余额, 本年累计]
+        mode: amount
+    replace: {strategy: surrogate}
+
+  # 纯数值账号列（长数字，账号一般以文本存；数值形态也要处理）
+  - id: pipl.numeric_account
+    entity: ACCOUNT
+    label: 账号（数值）
+    level: L3
+    scope: [xlsx]
+    priority: 21
+    detect:
+      - type: numeric_cell
+        headers: [账号, 银行账号, 帐号, 卡号, 银行卡号, 客户号, 客户编号, 账户号]
+        mode: account
+        min_digits: 6
+    replace: {strategy: surrogate}
+
+  # 纯数值日期列：默认 keep（日期业务常需要；P1 再提供严格模式模糊化）
+  - id: pipl.numeric_date
+    entity: DATE
+    label: 日期（数值）
+    level: L1
+    scope: [xlsx]
+    priority: 22
+    detect:
+      - type: numeric_cell
+        headers: [日期, 时间, 入职日期, 出生日期, 交易日期, 记账日期, 开票日期]
+        mode: date
+    replace: {strategy: keep}
+
+# TODO（P1，见 docs/impl/pipl.md）：
+# - 精确时间模糊化：replacers/time_blur.py（时刻→时段/整组偏移），开启 pipl.datetime；
+# - 假值合法校验位：VIN/IMEI/信用卡等需要 surrogate 增加对应工厂（Lead 所有）；
+# - 表格表头列级（文本列）由 trade 的 table_det 负责，本包只做纯数值/日期单元格；
+# - 护照/港澳台通行证/社保号等 P1 再补（08b A8）。

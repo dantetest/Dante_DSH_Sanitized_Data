@@ -7,8 +7,10 @@ parse
 
 export
     复制原文件后用 openpyxl 修改：black → 单元格清空 + 纯黑填充；surrogate/mask →
-    直接写入 replacement（公式单元格会被替换成文本）；随后清空文档属性、自定义
-    属性、定义名称、批注、外部链接，删除隐藏工作表，并打开全量重算。
+    直接写入 replacement（公式单元格会被替换成文本）；数值单元格（origin=
+    ``numeric_cell``，见 detectors/numeric_det.py）按数值写回，保留 number_format，
+    使 Excel 公式/求和仍可重算；随后清空文档属性、自定义属性、定义名称、批注、
+    外部链接，删除隐藏工作表，并打开全量重算。
     另做一次「值级传播」：检测器漏掉的单元格里若仍出现同一实体值，也按同一决策
     覆盖（防漏），并写 warning。
 
@@ -20,9 +22,11 @@ export
 """
 from __future__ import annotations
 
+import datetime as _dt
 import shutil
 import uuid
 import zipfile
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +96,29 @@ def _replacement_text(decision: Decision, length: int) -> str | None:
     if decision.black or decision.strategy == "black" or decision.replacement is None:
         return BLACK_CHAR * max(0, length)
     return decision.replacement
+
+
+def _cell_attrs(cell: Any, formula: bool) -> dict[str, Any]:
+    """单元格元数据（只读，供 numeric_cell 检测器使用；不改变单元格值）。"""
+    value = getattr(cell, "value", None)
+    numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
+    is_date = isinstance(value, (_dt.datetime, _dt.date, _dt.time))
+    return {
+        "formula": bool(formula),
+        "numeric": bool(numeric),
+        "date": bool(is_date),
+        "number_format": str(getattr(cell, "number_format", "") or ""),
+    }
+
+
+def _numeric_meta(entity: Entity) -> dict[str, Any] | None:
+    """读取数值单元格实体在 numeric_det 里登记的元数据（不存在返回 None）。"""
+    try:
+        from ..detectors import numeric_det
+
+        return numeric_det.get_numeric_meta(entity.id)
+    except Exception:
+        return None
 
 
 def _propagation_rules(
@@ -251,7 +278,7 @@ class XlsxParser(Parser):
                                 "col": col,
                             },
                             page=page_index,
-                            attrs={"formula": formula},
+                            attrs=_cell_attrs(cell, formula),
                         )
                     )
                     block_counter += 1
@@ -333,6 +360,8 @@ class XlsxParser(Parser):
         block_by_id = {block.id: block for _page, block in doc.all_blocks()}
         black_cells: set[tuple[str, str]] = set()
         cell_edits: dict[tuple[str, str], list[tuple[int, int, str]]] = {}
+        # 数值单元格（numeric_det 识别）：写回数字而不是字符串，保留 number_format
+        numeric_writes: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {}
         unresolved = 0
         for entity in entities:
             if entity.status == "rejected" or not entity.value:
@@ -368,6 +397,11 @@ class XlsxParser(Parser):
                     else:
                         cell_edits.setdefault(key, []).append((0, 10**12, ""))
                 else:
+                    numeric_meta = _numeric_meta(entity)
+                    if entity.origin == "numeric_cell" and numeric_meta is not None:
+                        # 数值列：整格写回数字/字符串，不做字符级替换
+                        numeric_writes[key] = (replacement, numeric_meta)
+                        continue
                     cell_edits.setdefault(key, []).append(
                         (int(span.start), int(span.end), replacement)
                     )
@@ -388,7 +422,7 @@ class XlsxParser(Parser):
                 if not sheet_name or not coordinate:
                     continue
                 key = (sheet_name, coordinate)
-                if key in black_cells:
+                if key in black_cells or key in numeric_writes:
                     continue
                 edits = cell_edits.setdefault(key, [])
                 for value, replacement in ordered:
@@ -424,6 +458,41 @@ class XlsxParser(Parser):
                 cell.fill = fill
             except Exception:
                 unresolved += 1
+        # 数值单元格：写回数字（AMOUNT/其他金额类）或字符串（账号类）
+        numeric_written = 0
+        for (sheet_name, coordinate), (replacement, meta) in numeric_writes.items():
+            if sheet_name not in sheet_names:
+                unresolved += 1
+                continue
+            try:
+                cell = workbook[sheet_name][coordinate]
+            except Exception:
+                unresolved += 1
+                continue
+            kind = str(meta.get("kind") or "amount")
+            try:
+                if kind in ("account", "date"):
+                    cell.value = str(replacement)
+                else:
+                    cleaned = str(replacement).replace(",", "").replace("，", "").strip()
+                    dec = Decimal(cleaned)
+                    decimals = int(meta.get("decimals") or 0)
+                    if decimals == 0 and "." not in cleaned:
+                        cell.value = int(dec)
+                    else:
+                        cell.value = float(dec)
+                numeric_written += 1
+            except (InvalidOperation, ValueError, TypeError):
+                # 解析不出数字：退回按文本写入，绝不静默丢值
+                try:
+                    cell.value = str(replacement)
+                    numeric_written += 1
+                except Exception:
+                    unresolved += 1
+        if numeric_written:
+            warnings.append(
+                f"已按数值写回 {numeric_written} 个单元格（保留 number_format，公式可重算）"
+            )
         for (sheet_name, coordinate), edits in cell_edits.items():
             if sheet_name not in sheet_names:
                 unresolved += 1

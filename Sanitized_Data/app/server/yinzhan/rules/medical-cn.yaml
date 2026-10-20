@@ -38,7 +38,7 @@ rules:
     entity: DEPT
     label: 科室
     level: L2
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 60
     detect:
       - type: dict
@@ -57,7 +57,7 @@ rules:
     entity: DIAGNOSIS
     label: 敏感诊断
     level: L2
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 70
     detect:
       - type: dict

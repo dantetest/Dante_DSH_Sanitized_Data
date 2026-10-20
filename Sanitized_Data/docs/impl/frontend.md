@@ -197,3 +197,88 @@
 - P1（自动脱敏 Office 内嵌图片）落地后，本二次确认可从「阻断」降级为「默认自动处理 + 结果说明」，`allow_unprocessed_media` 字段保留向后兼容。
 - 手动框选菜单的新类型扩展（见 §6.8）。
 - 若用户希望确认条更「重」（模态确认而不是 toast），可复用 `#modalExport` 的弹层结构另做一版；本批按任务要求优先用现有 toast 样式。
+
+---
+
+# 第二轮（P0）：整图涂黑一键按钮
+
+> 状态：已实现 · 2026-10-20 · 负责人：designer-icon（task-19）
+> 背景：用户已批准 P0「头/整图」策略——人脸大图、场景照片等自动识别不到时，用户可一键把**当前页**整页不透明涂黑。
+> 代码：`app/web/app.js`（+150/−3）、`app/web/style.css`（+13）；**HTML / 后端 / 规则 / 解析器全部未改**；未 push。
+
+## 8.1 改动点
+
+| 位置 | 改动 |
+|---|---|
+| `mountWholePageButton()` | 在 `init()` 里动态创建 `<button id="btnWholePage" class="btn danger" type="button">⊘ 整图涂黑</button>`，用 `insertAdjacentElement('afterend')` 插到「框选补漏」按钮后面（**不改 index.html**）；带 `title` 与 `aria-label` |
+| `onWholePageClick()` | 二次确认：复用现有 `#toast` + `.toast-actions` 两个按钮「确认涂黑整页 / 取消」，12 秒无操作自动消失（视为未确认，不涂黑）。文案：不可还原 + 图片模式提示 + 「本页已有 N 处标记，整页涂黑会覆盖本页所有内容」（N>0 时） |
+| `doWholePageMark()` | `POST /api/jobs/{id}/mark`，body 精确为 `{page, rect:[0,0,1,1], etype:"OTHER", label:"整图脱敏", propagate:false}`；成功 toast「整页已加入涂黑，可在右侧清单撤销」，随后复用现有 `refreshLive()`（刷新实体/清单/预览）并 `flashEntity()` 高亮 |
+| `rejectEntity()` + `buildRail()` | 给 `origin === "manual"` 的条目（整图涂黑、框选补漏）加「撤销」小按钮 → 调现有 `POST /api/jobs/{id}/entities/{eid} {"action":"reject"}` → 刷新。这样 toast 里「可在右侧清单撤销」是**真的能撤销**，不是空话 |
+| `wholePageAvailable()` / `syncWholePageButton()` | **格式门禁**：按当前页预览的 `kind`（raster/flow）判断——图片/TIFF/PDF 可用；DOCX/XLSX/TXT 是文字排版（flow），整页矩形盖不到文字，按钮**禁用**并在 title/aria 里说明原因，避免「点了没效果」的静默失效 |
+| `syncFootHint()` | 进入对照台时：image/tiff 文件的底栏提示换成「照片/扫描件：自动识别不到的内容，用「整图涂黑」一次盖掉 · 按住黑条 300 毫秒可透视」 |
+| `updateConsoleHead()` / `readCounts()` / `activeEntityCount()` | 撤销后计数一致：`total/done` 扣除 `rejected`，rail 计数只算未撤销条目（既有流程不产生 rejected，结果不变） |
+| `style.css` | `.btn.danger`（虚线朱红边，与普通按钮区分）、`.btn.danger.busy`、`.row .row-undo`（清单里的撤销小按钮） |
+
+**未改**：`index.html`（按钮由 JS 动态插入）、`api.py` / `jobs.py` / `pipeline.py` / 规则包 / 解析器；未新增依赖、未外呼、未 push。
+
+## 8.2 接口契约（均为现有接口，后端零改动）
+
+```jsonc
+// POST /api/jobs/{id}/mark  （整图涂黑）
+{"page": 0, "rect": [0, 0, 1, 1], "etype": "OTHER", "label": "整图脱敏", "propagate": false}
+// → 200 {"added": 1, "propagated": 0, "entity": {id, etype:"OTHER", label:"整图脱敏", origin:"manual",
+//        status:"accepted", spans:[{"rect":[0,0,W,H],"page":0}]}}
+```
+
+- 服务端把归一化 rect 换算成页面坐标，实体 `origin="manual"`、`status="accepted"`；`GET /preview/{page}?mode=out` 的 `entities[].boxes = [[0,0,W,H]]`。
+- 撤销：`POST /api/jobs/{id}/entities/{eid}` body `{"action":"reject"}` → `entity.status="rejected"`（后端已有能力，本批只补前端入口）。
+- 导出：human 模式整页填充 `--black #0D0B09` 不透明块（导出器统一黑块色），成品整页不可读。
+
+## 8.3 实测（真实 HTTP + CDP 驱动真实 Edge，28 项断言 ALL PASS）
+
+| 断言 | 实测 |
+|---|---|
+| 按钮挂载 | 位于「框选补漏」之后、`.console-foot` 内；`type=button` + title + aria-label |
+| 键盘可访问 | 真实 CDP `Input.dispatchKeyEvent`：Enter / Space 均能打开二次确认（配 `Emulation.setFocusEmulationEnabled` 模拟聚焦） |
+| 二次确认 | 文案含「导出后不可还原」「照片 / 场景图…用这一招最稳」；按钮 `["确认涂黑整页","取消"]`；取消后 **0 次 /mark**、清单不变 |
+| 请求体 | `{"page":0,"rect":[0,0,1,1],"etype":"OTHER","label":"整图脱敏","propagate":false}` 逐字段匹配 |
+| 成功 toast | 「整页已加入涂黑，可在右侧清单撤销」 |
+| 清单 | 出现「整图脱敏 ×1」+「撤销」按钮；撤销后回到 0 处 |
+| 预览 | 「可外发版」出现覆盖整页（≈100%）的框；切到「涂黑」模式为不透明整页黑框（99.6% × 99.5%，背景 `rgb(13,11,9)`、opacity 1）；原件侧也有整页虚框 |
+| 后端数据 | 实体 `type=OTHER / origin=manual / label=整图脱敏 / status=accepted`；预览整页框 `[0,0,1200,900]` |
+| **导出成品不可读** | 下载 human 成品 PNG：1200×900，**100% 像素亮度 < 40**（均值 11.28/255，唯一颜色 1 种，alpha 全 255，四角/中央均为 `#0D0B09`） |
+| 格式门禁 | DOCX（文字排版）→ 按钮禁用 + title 说明原因 + 点击不发起 /mark；PDF（按页渲染）→ 可用 |
+| 多实体提示 | 名片 6 实体时：「本页已有 6 处标记，整页涂黑会覆盖本页所有内容。」 |
+| 页面回归 | `/`、`/download`、`/mcp`、`/console` 全部加载，全程 **0 JS 异常** |
+| 语法 | `node --check app/web/app.js` → exit 0 |
+
+证据截图（临时目录 `%TEMP%\yz_wholepage_test\`，供复核）：
+
+- `ui_wholepage_confirm.png`：二次确认条 + 底栏按钮位置
+- `ui_wholepage_black.png`：涂黑模式下右栏整页黑、左栏整页虚框、清单「整图脱敏 / 撤销」
+- `ui_wholepage_multi.png`：多实体覆盖提示
+- `ui_wholepage_export.png`：导出成功卡片
+- `evidence_before_after.png`：原图 vs 导出成品（整页全黑）
+
+## 8.4 手动测试步骤
+
+1. 起服务（`cd app/server && python run.py --port 8760`），把任意照片/场景图 PNG（或 `samples/名片.png`）拖进投放台，等识别完成进入对照台。
+2. 点底栏「⊘ 整图涂黑」→ 出现确认条；若本页已有 N 处标记，会显示「整页涂黑会覆盖本页所有内容」。
+3. 点「取消」：无任何变化；再点按钮 →「确认涂黑整页」：右侧清单出现「整图脱敏」，可切到「涂黑」模式查看右栏整页黑、左栏整页虚框。
+4. 「交付 → 给人看」导出，下载成品：整页不可读（可再用图片查看器确认纯黑）。
+5. 右侧清单「整图脱敏」行 →「撤销」：回到 0 处、可重新导出（未涂黑版）。
+6. 打开一个 DOCX：按钮为禁用态，悬停提示「整页涂黑只对图片、扫描件、PDF 有效…」；PDF 则可用。
+7. 键盘：Tab 聚焦按钮 → Enter 或 Space 打开确认 → Tab 到「确认涂黑整页」→ Enter。
+
+## 8.5 红线 / 兼容与风险
+
+- **无外呼 / 无 CDN / 无第三方库 / 无新依赖**：纯原生 JS + 少量 CSS；新代码只调同源 `/api/*`；toast 文案为固定字符串或后端 message（经 `cleanMessage`），无 HTML 注入。
+- **不改后端/规则/HTML**：复用现有 `/mark` 与 `/entities/{eid}`；按钮动态插入，图标行与页面结构未动。
+- **既有功能不回退**：首次导出、媒体二次确认、框选补漏、类型映射、4 页面加载均不受影响；`regression.py` 实测 **164 项硬检查全绿**（e2e 5/5、4 页面+3 图标 200、主路径导出/下载/审计/还原全过），仅 5 条与机器负载有关的软提示（e2e 37.05s、名片解析 9933ms 等，功能结果一致）。
+- 兼容风险：
+  1. **格式门禁依赖预览 `kind`**：若未来新解析器返回 flow 但实际可渲染，按钮会保守禁用（不会造成误涂）；在 parser 上声明 `can_render` 后自动放开。
+  2. **撤销只对 `origin="manual"` 的条目显示**（整图涂黑 / 框选补漏）；自动识别条目仍保持原行为（无撤销 UI）。
+  3. **计数口径**：`readCounts` 现在扣除 `rejected`——只有通过本功能撤销时才会出现 rejected，既有流程数字不变。
+  4. **单页操作**：整图涂黑只作用于当前页；多页文件需逐页点击（符合 P0「头/整图」的最小实现）。
+  5. **黑块颜色**为导出器统一的 `--black #0D0B09`（非纯 #000），与品牌一致且同样不可读。
+  6. **PDF / 图片重编码**：沿用现有导出路径（PDF apply_redactions、图片重编码去 EXIF），未新增改动。

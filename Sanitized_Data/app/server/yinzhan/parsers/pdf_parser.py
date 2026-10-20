@@ -1,12 +1,16 @@
 """PDF 解析器。
 
 解析：有文本层的页用 rawdict 提取「block -> 逐字符 bbox」；扫描页按 200dpi 渲染后 OCR。
+      同时统计隐藏数据（附件/批注/表单控件/JavaScript）写进 doc.meta 与 warning。
 导出：用 PyMuPDF 的 redaction 真正移除内容（不是叠黑框），再写回替换文字，
-      并清空文档元数据与 XMP。redaction 必须先 apply 再 insert。
+      清空文档元数据与 XMP；默认**剥离 PDF 隐藏数据**（附件/批注/表单/JS/页面缩略图），
+      导出后可复检成品必须为 0（`keep_pdf_hidden=True` 时保留并由 verify 放行）。
+      redaction 必须先 apply 再 insert。
 """
 from __future__ import annotations
 
 import os
+import re
 import uuid
 import unicodedata
 from pathlib import Path
@@ -136,6 +140,361 @@ def _document_meta(pdf: fitz.Document) -> dict[str, Any]:
     except Exception:
         pass
     return meta
+
+
+# ───────────────────────── PDF 隐藏数据（附件/批注/表单/JS）P0 ─────────────────────────
+#
+# 实测缺口（docs/research/08a C3、08b F3/F4）：旧版导出只做 redaction + metadata/XMP，
+# 成品仍能提取附件 secret.txt、批注原文原样保留，而 pipeline.verify 判通过。
+# 本段实现：解析统计 →（默认）导出前剥离 → 保存后成品复检；`keep_pdf_hidden=True` 保留。
+
+#: 写进 doc.meta 的隐藏数据键；pipeline.verify 按这些键名检查，勿改名。
+HIDDEN_META_KEYS = ("embedded_files", "pdf_annotations", "pdf_forms", "pdf_js")
+#: JS 全量扫描的 xref 上限（超大 PDF 保护；不影响已识别对象的清理）
+_JS_SCAN_MAX = max(1000, int(os.environ.get("YINZHAN_PDF_JS_SCAN_MAX", "50000") or 50000))
+_JS_XREF_RE = re.compile(r"/JS(?![A-Za-z0-9])")
+_JS_FULL_RE = re.compile(r"/JavaScript")
+
+
+def _pdf_embfile_names(pdf: fitz.Document) -> list[str]:
+    """附件名列表（不读内容）。"""
+    try:
+        return [str(name) for name in (pdf.embfile_names() or [])]
+    except Exception:
+        return []
+
+
+def _pdf_annotation_stats(pdf: fitz.Document) -> tuple[int, dict[str, int]]:
+    """全部页面注释计数 + 类型摘要（不读内容）。"""
+    total = 0
+    types: dict[str, int] = {}
+    for page in pdf:
+        try:
+            annots = page.annots() or ()
+        except Exception:
+            continue
+        try:
+            for annot in annots:
+                total += 1
+                name = "?"
+                try:
+                    pair = annot.type
+                    if isinstance(pair, (tuple, list)) and len(pair) > 1:
+                        name = str(pair[1])
+                    else:
+                        name = str(pair)
+                except Exception:
+                    pass
+                types[name] = types.get(name, 0) + 1
+        except Exception:
+            continue
+    return total, types
+
+
+def _pdf_widget_count(pdf: fitz.Document) -> int:
+    """表单控件（widget）数量。"""
+    total = 0
+    for page in pdf:
+        try:
+            total += len(list(page.widgets() or []))
+        except Exception:
+            continue
+    return total
+
+
+def _xref_value_has_js(pdf: fitz.Document, typ: str, value: Any) -> bool:
+    """xref_get_key 的返回值里是否含 JavaScript 动作。"""
+    text = str(value or "")
+    if _JS_FULL_RE.search(text) or _JS_XREF_RE.search(text):
+        return True
+    if str(typ) == "xref":
+        try:
+            xref = int(text.split()[0])
+        except Exception:
+            return False
+        try:
+            obj = pdf.xref_object(xref, compressed=False) or ""
+        except Exception:
+            return False
+        return bool(_JS_FULL_RE.search(obj) or _JS_XREF_RE.search(obj))
+    return False
+
+
+def _pdf_has_js(pdf: fitz.Document) -> bool:
+    """检测 PDF 里是否还有 JavaScript（目录动作/名称树/页面动作/xref 全扫）。"""
+    try:
+        catalog = pdf.pdf_catalog()
+        keys = set(pdf.xref_get_keys(catalog) or ())
+        for key in ("OpenAction", "AA"):
+            if key not in keys:
+                continue
+            typ, value = pdf.xref_get_key(catalog, key)
+            if _xref_value_has_js(pdf, typ, value):
+                return True
+        if "Names" in keys:
+            typ, value = pdf.xref_get_key(catalog, "Names")
+            if _xref_value_has_js(pdf, typ, value):
+                return True
+            if str(typ) == "xref":
+                try:
+                    names_xref = int(str(value).split()[0])
+                    if "JavaScript" in set(pdf.xref_get_keys(names_xref) or ()):
+                        return True
+                except Exception:
+                    pass
+            if "JavaScript" in str(value):
+                return True
+        for page in pdf:
+            try:
+                if "AA" not in set(pdf.xref_get_keys(page.xref) or ()):
+                    continue
+                typ, value = pdf.xref_get_key(page.xref, "AA")
+                if _xref_value_has_js(pdf, typ, value):
+                    return True
+            except Exception:
+                continue
+        limit = min(pdf.xref_length(), _JS_SCAN_MAX + 1)
+        for xref in range(1, limit):
+            try:
+                obj = pdf.xref_object(xref, compressed=False) or ""
+            except Exception:
+                continue
+            if _JS_FULL_RE.search(obj) or _JS_XREF_RE.search(obj):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _pdf_hidden_stats(pdf: fitz.Document) -> dict[str, Any]:
+    """统计 PDF 隐藏数据（附件/批注/表单/JS）；不含任何原文内容。"""
+    names = _pdf_embfile_names(pdf)
+    annot_total, annot_types = _pdf_annotation_stats(pdf)
+    stats: dict[str, Any] = {
+        "embedded_files": len(names),
+        "pdf_annotations": int(annot_total),
+        "pdf_forms": int(_pdf_widget_count(pdf)),
+        "pdf_js": bool(_pdf_has_js(pdf)),
+    }
+    if names:
+        stats["embedded_file_names"] = names
+    if annot_types:
+        stats["pdf_annotation_types"] = annot_types
+    return stats
+
+
+def _pdf_hidden_positive(stats: dict[str, Any]) -> bool:
+    for key in HIDDEN_META_KEYS:
+        try:
+            if int(stats.get(key) or 0):
+                return True
+        except (TypeError, ValueError):
+            if stats.get(key):
+                return True
+    return False
+
+
+def _pdf_hidden_summary(stats: dict[str, Any]) -> str:
+    parts: list[str] = []
+    try:
+        count = int(stats.get("embedded_files") or 0)
+        if count:
+            names = stats.get("embedded_file_names") or []
+            shown = "、".join(str(n) for n in names[:5])
+            parts.append(f"附件 {count} 个" + (f"（{shown}）" if shown else ""))
+    except (TypeError, ValueError):
+        pass
+    try:
+        count = int(stats.get("pdf_annotations") or 0)
+        if count:
+            parts.append(f"批注 {count} 条")
+    except (TypeError, ValueError):
+        pass
+    try:
+        count = int(stats.get("pdf_forms") or 0)
+        if count:
+            parts.append(f"表单字段 {count} 个")
+    except (TypeError, ValueError):
+        pass
+    if stats.get("pdf_js"):
+        parts.append("JavaScript")
+    return "、".join(parts)
+
+
+def _strip_pdf_js(pdf: fitz.Document, warnings: list[str]) -> int:
+    """删除 PDF JavaScript（目录/名称树/页面动作/孤立动作对象），返回清理处数。"""
+    removed = 0
+    try:
+        catalog = pdf.pdf_catalog()
+    except Exception:
+        return removed
+    # 1) 目录级 OpenAction / AA
+    try:
+        keys = set(pdf.xref_get_keys(catalog) or ())
+        for key in ("OpenAction", "AA"):
+            if key not in keys:
+                continue
+            try:
+                typ, value = pdf.xref_get_key(catalog, key)
+                if _xref_value_has_js(pdf, typ, value):
+                    pdf.xref_set_key(catalog, key, "null")
+                    removed += 1
+            except Exception as exc:
+                warnings.append(f"清除 PDF 目录 {key} 失败：{exc}")
+    except Exception as exc:
+        warnings.append(f"读取 PDF 目录动作失败：{exc}")
+    # 2) Names / JavaScript 名称树
+    try:
+        keys = set(pdf.xref_get_keys(catalog) or ())
+        if "Names" in keys:
+            typ, value = pdf.xref_get_key(catalog, "Names")
+            if str(typ) == "xref":
+                try:
+                    names_xref = int(str(value).split()[0])
+                except Exception:
+                    names_xref = 0
+                if names_xref:
+                    if "JavaScript" in set(pdf.xref_get_keys(names_xref) or ()):
+                        pdf.xref_set_key(names_xref, "JavaScript", "null")
+                        removed += 1
+            if "JavaScript" in str(value):
+                # 内联 Names 字典：P0 直接清空名称树（可能丢命名目标，写 warning）
+                pdf.xref_set_key(catalog, "Names", "null")
+                removed += 1
+                warnings.append("已清空 PDF 名称树（含 JavaScript；命名目标/书签可能丢失）")
+    except Exception as exc:
+        warnings.append(f"清除 PDF 名称树 JavaScript 失败：{exc}")
+    # 3) 页面级 Additional Actions
+    for page in pdf:
+        try:
+            if "AA" not in set(pdf.xref_get_keys(page.xref) or ()):
+                continue
+            typ, value = pdf.xref_get_key(page.xref, "AA")
+            if _xref_value_has_js(pdf, typ, value):
+                pdf.xref_set_key(page.xref, "AA", "null")
+                removed += 1
+        except Exception:
+            continue
+    # 4) 其余孤立 JavaScript 动作对象
+    limit = min(pdf.xref_length(), _JS_SCAN_MAX + 1)
+    for xref in range(1, limit):
+        if xref == catalog:
+            continue
+        try:
+            obj = pdf.xref_object(xref, compressed=False) or ""
+        except Exception:
+            continue
+        if not (_JS_FULL_RE.search(obj) or _JS_XREF_RE.search(obj)):
+            continue
+        if "/Type /Catalog" in obj or "/Type /Page" in obj:
+            warnings.append(f"对象 {xref} 含 JS 但疑似目录/页面对象，未自动清空，请人工复核")
+            continue
+        try:
+            keys = set(pdf.xref_get_keys(xref) or ())
+            if "JavaScript" in keys:
+                pdf.xref_set_key(xref, "JavaScript", "null")
+                removed += 1
+            elif "JS" in keys:
+                pdf.xref_set_key(xref, "JS", "null")
+                removed += 1
+            else:
+                pdf.update_object(xref, "<<>>")
+                removed += 1
+        except Exception:
+            try:
+                pdf.update_object(xref, "<<>>")
+                removed += 1
+            except Exception as exc:
+                warnings.append(f"清空 JS 对象 {xref} 失败：{exc}")
+    return removed
+
+
+def _strip_pdf_hidden(pdf: fitz.Document, warnings: list[str]) -> dict[str, int]:
+    """默认导出清理：附件 / 表单控件 / 批注 / JavaScript / 页面缩略图。"""
+    removed = {"embedded_files": 0, "pdf_annotations": 0, "pdf_forms": 0,
+               "pdf_js": 0, "thumbnails": 0}
+    # 1) 附件（embfile_del；内容不再打包）
+    for name in _pdf_embfile_names(pdf):
+        try:
+            pdf.embfile_del(name)
+            removed["embedded_files"] += 1
+        except Exception as exc:
+            warnings.append(f"删除 PDF 附件 {name!r} 失败：{exc}")
+    # 2) 表单控件：清值 + 删 widget；随后清 AcroForm（字段字典/值/动作一起没）
+    for page in pdf:
+        try:
+            widgets = list(page.widgets() or [])
+        except Exception:
+            widgets = []
+        for widget in widgets:
+            try:
+                widget.field_value = ""
+                widget.update()
+                page.delete_widget(widget)
+                removed["pdf_forms"] += 1
+            except Exception:
+                try:
+                    page.delete_widget(widget)
+                    removed["pdf_forms"] += 1
+                except Exception as exc:
+                    warnings.append(f"删除 PDF 表单控件失败：{exc}")
+    try:
+        if removed["pdf_forms"] or pdf.is_form_pdf:
+            pdf.xref_set_key(pdf.pdf_catalog(), "AcroForm", "null")
+    except Exception as exc:
+        warnings.append(f"清除 PDF AcroForm 失败：{exc}")
+    # 3) 批注（含 Text/FreeText/Highlight/Stamp/Link 等）
+    for page in pdf:
+        try:
+            annots = list(page.annots() or [])
+        except Exception:
+            annots = []
+        for annot in annots:
+            try:
+                page.delete_annot(annot)
+                removed["pdf_annotations"] += 1
+            except Exception as exc:
+                warnings.append(f"删除 PDF 批注失败：{exc}")
+    # 4) JavaScript
+    removed["pdf_js"] = _strip_pdf_js(pdf, warnings)
+    # 5) 附加：页面缩略图（可能保存了未脱敏画面）与附件模式标记
+    for page in pdf:
+        try:
+            typ, _value = pdf.xref_get_key(page.xref, "Thumb")
+            if typ not in ("null", None):
+                pdf.xref_set_key(page.xref, "Thumb", "null")
+                removed["thumbnails"] += 1
+        except Exception:
+            continue
+    try:
+        typ, value = pdf.xref_get_key(pdf.pdf_catalog(), "PageMode")
+        if typ != "null" and "UseAttachments" in str(value):
+            pdf.xref_set_key(pdf.pdf_catalog(), "PageMode", "UseNone")
+    except Exception:
+        pass
+    return removed
+
+
+def _verify_pdf_hidden_cleared(path: Path) -> dict[str, Any]:
+    """重新打开成品，返回仍存在的隐藏数据计数（空 dict = 干净）。"""
+    pdf = fitz.open(str(path))
+    try:
+        stats = _pdf_hidden_stats(pdf)
+    finally:
+        try:
+            pdf.close()
+        except Exception:
+            pass
+    leftovers: dict[str, Any] = {}
+    for key in HIDDEN_META_KEYS:
+        value = stats.get(key)
+        try:
+            count = int(value or 0)
+        except (TypeError, ValueError):
+            count = 1 if value else 0
+        if count:
+            leftovers[key] = count
+    return leftovers
 
 
 def _page_text_blocks(page: fitz.Page, page_index: int) -> list[Block]:
@@ -557,6 +916,24 @@ class PdfParser(registry.Parser):
         pdf = _open_pdf(path)
         doc = Document(doc_id=_new_doc_id(), path=str(path), fmt="pdf",
                        meta=_document_meta(pdf))
+        # P0 隐藏数据统计（附件/批注/表单/JS）：写 meta 供 pipeline.verify 复检，
+        # 导出时默认剥离；显式 keep_pdf_hidden=True 才保留。
+        try:
+            hidden = _pdf_hidden_stats(pdf)
+            for key in ("embedded_files", "pdf_annotations", "pdf_forms"):
+                doc.meta[key] = int(hidden.get(key) or 0)
+            if hidden.get("embedded_file_names"):
+                doc.meta["embedded_file_names"] = list(hidden["embedded_file_names"])
+            if hidden.get("pdf_annotation_types"):
+                doc.meta["pdf_annotation_types"] = dict(hidden["pdf_annotation_types"])
+            doc.meta["pdf_js"] = bool(hidden.get("pdf_js"))
+            hidden_summary = _pdf_hidden_summary(hidden)
+            if hidden_summary:
+                doc.warnings.append(
+                    f"检测到 PDF 隐藏数据（{hidden_summary}），导出时将默认剥离；"
+                    "如需保留请显式使用 keep_pdf_hidden=True")
+        except Exception as exc:
+            doc.warnings.append(f"PDF 隐藏数据统计失败：{exc}")
         try:
             try:
                 encryption = str((pdf.metadata or {}).get("encryption") or "")
@@ -632,6 +1009,34 @@ class PdfParser(registry.Parser):
             target = out_path.with_suffix(".tmp" + (out_path.suffix or ".pdf"))
 
         pdf = _open_pdf_for_export(source)
+
+        # P0 隐藏数据：默认先剥离再 redaction（避免批注/控件干扰 redaction 与成品复检）。
+        keep_hidden = bool((options or {}).get("keep_pdf_hidden"))
+        hidden_before: dict[str, Any] = {}
+        removed_hidden: dict[str, int] = {}
+        try:
+            hidden_before = _pdf_hidden_stats(pdf)
+        except Exception as exc:
+            warnings.append(f"PDF 隐藏数据统计失败：{exc}")
+        if keep_hidden:
+            if _pdf_hidden_positive(hidden_before):
+                warnings.append(
+                    "keep_pdf_hidden=True：按调用方要求保留 PDF 隐藏数据（"
+                    + _pdf_hidden_summary(hidden_before)
+                    + "）；附件/批注/表单/JS 可能含原文，存在外发泄漏风险")
+        else:
+            try:
+                removed_hidden = _strip_pdf_hidden(pdf, warnings)
+                removed_summary = _pdf_hidden_summary(removed_hidden)
+                if removed_summary:
+                    warnings.append("已剥离 PDF 隐藏数据：" + removed_summary)
+                if removed_hidden.get("thumbnails"):
+                    warnings.append(
+                        f"已删除 {removed_hidden['thumbnails']} 个页面缩略图"
+                        "（缩略图可能残留未脱敏画面）")
+            except Exception as exc:
+                warnings.append(f"PDF 隐藏数据剥离失败：{exc}")
+
         try:
             for page_no in sorted(ops_by_page):
                 try:
@@ -693,6 +1098,31 @@ class PdfParser(registry.Parser):
                 except OSError:
                     pass
                 raise ExportError(f"覆盖原 PDF 失败：{exc}") from exc
+        # 解析器侧成品复检：默认剥离模式下，附件/批注/表单/JS 必须为 0。
+        # （keep_pdf_hidden=True 显式保留时跳过，由 pipeline.verify 按同一 option 放行）
+        if not keep_hidden:
+            try:
+                leftovers = _verify_pdf_hidden_cleared(out_path)
+            except Exception as exc:
+                leftovers = {"error": f"{type(exc).__name__}: {exc}"}
+            if leftovers:
+                if not same_file:
+                    try:
+                        out_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise ExportError(
+                    "导出后 PDF 隐藏数据复检失败："
+                    + "；".join(f"{k}={v}" for k, v in leftovers.items()))
+        try:
+            doc.extra["pdf_hidden"] = {
+                "before": {key: hidden_before.get(key) for key in HIDDEN_META_KEYS},
+                "removed": dict(removed_hidden),
+                "kept": keep_hidden,
+            }
+        except Exception:
+            pass
+
         doc.extra["out_path"] = str(out_path)
         try:
             size = out_path.stat().st_size

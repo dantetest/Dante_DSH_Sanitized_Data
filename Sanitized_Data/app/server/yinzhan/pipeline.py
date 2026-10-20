@@ -584,6 +584,10 @@ def has_cleanup_targets(doc: Document) -> bool:
     meta = getattr(doc, "meta", None) or {}
     if meta.get("geo_tags"):
         return True
+    # PDF 隐藏数据（附件/批注/表单/JS）：即使正文没有可涂实体，也允许「仅清理导出」
+    if any(meta.get(key) for key in
+           ("embedded_files", "pdf_annotations", "pdf_forms", "pdf_js")):
+        return True
     if (getattr(doc, "extra", None) or {}).get("geo_transform"):
         return True
     if (getattr(doc, "extra", None) or {}).get("geo_params"):
@@ -711,6 +715,27 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
     if media_count and not options.get("allow_unprocessed_media"):
         issues.append(f"文件里仍有 {media_count} 张未脱敏的内嵌图片")
 
+    # PDF 隐藏数据（附件/批注/表单/JS）：默认必须被剥离；显式 keep_pdf_hidden 才放行
+    pdf_hidden: dict[str, int] = {}
+    if getattr(re_doc, "fmt", "") == "pdf":
+        try:
+            meta = (getattr(re_doc, "meta", None) or {})
+            for key in ("embedded_files", "pdf_annotations", "pdf_forms", "pdf_js"):
+                value = meta.get(key)
+                if isinstance(value, (int, float)):
+                    count = int(value)
+                elif isinstance(value, (list, tuple, dict)):
+                    count = len(value)
+                else:
+                    count = 1 if value else 0
+                if count:
+                    pdf_hidden[key] = count
+        except Exception:
+            pdf_hidden = {}
+        if pdf_hidden and not options.get("keep_pdf_hidden"):
+            issues.append("PDF 隐藏数据未清理：" + ", ".join(
+                f"{k}={v}" for k, v in pdf_hidden.items()))
+
     ok = not issues
     if not ok:
         raise VerifyError("；".join(issues))
@@ -721,6 +746,7 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
         "visual_residual": len(visual_bad),
         "media": {"count": media_count,
                   "confirmed": bool(options.get("allow_unprocessed_media"))},
+        "pdf_hidden": pdf_hidden,
         "issues": [],
     }
 

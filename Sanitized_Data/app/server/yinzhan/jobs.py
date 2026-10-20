@@ -268,9 +268,12 @@ class JobManager:
                     level="L3", confidence=0.95, origin="visual", status="accepted",
                     decision=Decision(strategy="black", black=True, replacement=None),
                 ))
+            warn_before = len(doc.warnings or [])
             visual_ents = _visual_entities(doc, sig_blocks)
             if visual_ents:
                 job.entities.extend(visual_ents)
+            # 视觉层可能新增「低置信码类候选未自动处理」等提示，补进 job.warnings
+            job.warnings.extend((doc.warnings or [])[warn_before:])
             low_conf = _low_confidence_entities(doc, job.entities)
             if low_conf:
                 job.entities.extend(low_conf)
@@ -491,13 +494,17 @@ class JobManager:
 
             counts = job.counts()
             out_hash = sha256_file(out)
+            pdf_hidden = (job.doc.extra or {}).get("pdf_hidden") if job.doc else None
             audit.append(
                 job_id=job.id, doc_name=job.name, doc_hash=sha256_file(job.path),
                 fmt=job.fmt,
                 counts={"total": counts["total"], "by_type": counts["by_type"],
                         # 未处理媒体被用户二次确认放行时，审计留下痕迹
                         "media_count": media_count,
-                        "media_confirmed": bool(options.get("allow_unprocessed_media"))},
+                        "media_confirmed": bool(options.get("allow_unprocessed_media")),
+                        # PDF 隐藏数据（附件/批注/表单/JS）剥离/保留痕迹
+                        "pdf_hidden": pdf_hidden or {},
+                        "keep_pdf_hidden": bool(options.get("keep_pdf_hidden"))},
                 rule_pack=job.pack_label, mode=mode,
                 out_hash=out_hash, out_name=out.name,
             )
@@ -623,11 +630,28 @@ def _visual_entities(doc: Document, sig_blocks: list | None = None) -> list[Enti
     for pg, rect in (sig_blocks or []):
         sig_by_page.setdefault(pg, []).append(rect)
 
+    def page_area(page: int) -> float:
+        try:
+            pg = doc.pages[page]
+            return max(1.0, float(pg.width) * float(pg.height))
+        except Exception:
+            return 1.0
+
     out: list[Entity] = []
     for vm in (getattr(doc, "visual_marks", None) or []):
         spec = _VISUAL_SPEC.get(vm.kind)
         if spec is None:
             continue
+        # 码类「仅检测未解码（/detect）」的高置信度不可信：实测发票/合同页面上
+        # 木纹、图标等会被误检成二维码，最大一处覆盖 35% 页面；自动涂黑会误伤整块
+        # 正文。这里对面积 >5% 页面的 detect-only 候选不自动处理，只提示人工确认。
+        if vm.kind in ("qrcode", "barcode") and "/detect" in (getattr(vm, "note", "") or ""):
+            rect = vm.rect
+            area = max(0.0, rect[2] - rect[0]) * max(0.0, rect[3] - rect[1])
+            if area / page_area(vm.page) > 0.05:
+                doc.warnings.append(
+                    "检测到疑似二维码/条码但面积异常，未自动打码，请人工框选确认")
+                continue
         # 已经落在「签署区」黑框里的印章，不用再单独列一次
         if vm.kind == "seal" and any(_inside(vm.rect, r) for r in sig_by_page.get(vm.page, [])):
             continue

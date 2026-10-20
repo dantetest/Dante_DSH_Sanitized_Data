@@ -12,7 +12,7 @@ from typing import Any
 import unicodedata
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .. import registry
 from ..udm import (
@@ -325,6 +325,28 @@ def _to_export_image(image: Image.Image) -> Image.Image:
     return image.convert("RGBA" if has_alpha else "RGB")
 
 
+def _apply_orientation(image: Image.Image, frames: int = 1) -> Image.Image:
+    """按 EXIF Orientation 转正像素（手机照片常见 3/6/8）。
+
+    OCR/人脸检测都在像素上跑，不转正会把竖版照片当横放，检测不到脸/字；
+    导出重编码又不写 EXIF，成品也会变成横躺。这里只对单帧图处理，
+    多帧图片保持原帧结构（相机连拍/GIF 少见 orientation）。
+    """
+    if frames > 1:
+        return image
+    try:
+        exif = image.getexif() or {}
+        orientation = int(exif.get(274, 1) or 1)
+    except Exception:
+        return image
+    if orientation in (1, 0):
+        return image
+    try:
+        return ImageOps.exif_transpose(image)
+    except Exception:
+        return image
+
+
 def _output_format(out_path: Path, doc: Document) -> str:
     """按输出扩展名决定编码格式，未知时回退原图格式。"""
     suffix = out_path.suffix.lower()
@@ -373,7 +395,7 @@ def _render_image_bytes(doc: Document, page: int, mode: str) -> bytes | None:
                 return None
             if index:
                 image.seek(index)
-            frame = image.convert("RGB")
+            frame = _apply_orientation(image, frames).convert("RGB")
         frame.thumbnail((MAX_RENDER_EDGE, MAX_RENDER_EDGE), _LANCZOS)
         buffer = BytesIO()
         frame.save(buffer, format="PNG")
@@ -410,10 +432,14 @@ class ImageParser(registry.Parser):
         path = Path(path)
         try:
             with Image.open(path) as image:
-                width, height = float(image.size[0]), float(image.size[1])
                 pil_format = (image.format or "").upper()
                 mode = image.mode
                 frames = int(getattr(image, "n_frames", 1) or 1)
+                # 手机照片 EXIF Orientation=6/8 很常见：先在像素上转正，OCR/人脸/
+                # 导出坐标才会和用户看到的画面一致；导出重编码不写 EXIF，不转正
+                # 成品会横躺（实测用户测试集 82 号照片即此问题）。
+                image = _apply_orientation(image, frames)
+                width, height = float(image.size[0]), float(image.size[1])
                 rgb = image.convert("RGB")
         except Exception as exc:
             raise ParseError(f"无法打开图片：{exc}") from exc
@@ -453,6 +479,8 @@ class ImageParser(registry.Parser):
         try:
             with Image.open(doc.path) as source:
                 source.load()
+                frames = int(getattr(source, "n_frames", 1) or 1)
+                source = _apply_orientation(source, frames)
                 base = _to_export_image(source)
         except Exception as exc:
             raise ExportError(f"无法打开图片：{exc}") from exc

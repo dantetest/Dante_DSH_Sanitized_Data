@@ -132,7 +132,7 @@ rules:
     entity: AMOUNT
     label: 大写金额
     level: L2
-    scope: [pdf, docx, xlsx, text]
+    scope: [pdf, docx, xlsx, text, image, tiff]
     priority: 65
     detect:
       - type: regex

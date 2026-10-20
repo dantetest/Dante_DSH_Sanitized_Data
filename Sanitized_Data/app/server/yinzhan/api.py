@@ -206,6 +206,8 @@ def export(ctx, jid):
     body = ctx.json()
     options = {
         "allow_unprocessed_media": bool(body.get("allow_unprocessed_media")),
+        # P0：PDF 附件/批注/表单默认剥离；高级用户可显式保留（写审计/告警）
+        "keep_pdf_hidden": bool(body.get("keep_pdf_hidden")),
     }
     return MANAGER.export(jid, body.get("mode", "ai"), options=options)
 

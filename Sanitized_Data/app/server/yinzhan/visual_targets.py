@@ -109,11 +109,41 @@ def _clamp_box(box: Box, width: float, height: float) -> Box:
 
 
 def _expand_box(box: Box, ratio: float, width: float, height: float) -> Box:
-    """按宽/高比例外扩（人脸 0.12=12%，车牌 0.08）。"""
+    """按宽/高比例外扩（车牌 0.08，通用）。"""
     x0, y0, x1, y1 = box
     dx = max(0.0, (x1 - x0)) * ratio
     dy = max(0.0, (y1 - y0)) * ratio
     return _clamp_box((x0 - dx, y0 - dy, x1 + dx, y1 + dy), width, height)
+
+
+# ────────────────────── 人脸：整头外扩 + 大图分块（P0） ──────────────────────
+
+#: 整头遮盖：Haar 框通常只到眉/颧/下巴；上含发际线、左右含耳廓、下含下颌。
+#: 数值相对人脸检测框的 宽/高。
+_HEAD_PAD_SIDES = 0.25
+_HEAD_PAD_TOP = 0.35
+_HEAD_PAD_BOTTOM = 0.15
+
+#: 长边超过该值就分块检测（每块 cap 640/960），避免 640 全图缩放把中小脸缩没。
+_FACE_TILE_TRIGGER = 1600
+
+#: 检测被缩小时写入 ctx.warnings 的漏检提示（mediascan 会并入 doc.warnings）。
+_FACE_DOWNSCALE_WARNING = "照片较大，小脸可能漏检，请人工复核/整图涂黑"
+
+
+def _expand_head(box: Box, width: float, height: float) -> Box:
+    """按「整个头」非对称外扩：上 35% 脸高（发际线）、左右各 25% 脸宽（耳廓）、
+    下 15% 脸高（下颌）。仍返回矩形，具体绘制由上层决定。"""
+    x0, y0, x1, y1 = box
+    face_w = max(0.0, x1 - x0)
+    face_h = max(0.0, y1 - y0)
+    return _clamp_box((
+        x0 - face_w * _HEAD_PAD_SIDES,      # 左耳廓
+        y0 - face_h * _HEAD_PAD_TOP,        # 发际线
+        x1 + face_w * _HEAD_PAD_SIDES,      # 右耳廓
+        y1 + face_h * _HEAD_PAD_BOTTOM,     # 下颌
+    ), float(width), float(height))
+
 
 
 def _norm_text(value: Any) -> str:
@@ -275,10 +305,69 @@ def _face_confidence(base: float, face_px: float, label: str) -> float:
 
 
 def _face_scan_side() -> int:
-    """人脸检测的长边上限。默认 640：1000×620 名片 ≈ 0.6 倍，单页 <100ms。"""
+    """单块人脸检测的长边上限。默认 640：1000×620 名片 ≈ 0.6 倍，单页 <100ms。"""
     cap = _env_int("YINZHAN_SCAN_FACE_MAX_SIDE", 640, minimum=320, maximum=6000)
     generic = _env_int("YINZHAN_SCAN_MAX_SIDE", 3000, minimum=320, maximum=10000)
     return min(cap, generic)
+
+
+def _face_tile_plan(width: int, height: int) -> tuple[str, list[tuple[int, int, int, int, float]]]:
+    """人脸检测的页面分块计划。
+
+    返回 ``(label, [(x0, y0, x1, y1, scale), ...])``：
+
+    - 长边 ≤1600：整图一次（scale = min(1, 640/长边)）；
+    - 1600 < 长边 ≤3200：2×2 分块、每块长边缩到 ≤640；
+    - 长边 >3200：3×3 分块、每块长边缩到 ≤960；
+    - ``YINZHAN_SCAN_FACE_TILE=0`` 关闭分块（退回整图 cap），=2/3 强制块数；
+    - ``YINZHAN_SCAN_FACE_TILE_CAP`` 可覆盖每块检测长边。
+    """
+    mode = str(os.environ.get("YINZHAN_SCAN_FACE_TILE", "auto")).strip().lower()
+    cap = _face_scan_side()
+    long_edge = max(int(width), int(height))
+    forced = 0
+    if mode in ("0", "false", "no", "off", "single"):
+        forced = 1
+    elif mode in ("2", "3"):
+        forced = int(mode)
+    grid = forced
+    if grid == 0:
+        if long_edge <= _FACE_TILE_TRIGGER:
+            grid = 1
+        elif long_edge <= 4800:
+            grid = 2
+        else:
+            grid = 3
+    if grid <= 1:
+        scale = min(1.0, cap / float(long_edge)) if long_edge else 1.0
+        return f"single/scale={scale:.3f}", [(0, 0, int(width), int(height), scale)]
+    tile_cap = 640 if grid == 2 else 960
+    tile_cap = _env_int("YINZHAN_SCAN_FACE_TILE_CAP", tile_cap,
+                        minimum=320, maximum=4000)
+    try:
+        overlap = float(os.environ.get("YINZHAN_SCAN_FACE_TILE_OVERLAP", "0.0") or 0.0)
+    except (TypeError, ValueError):
+        overlap = 0.0
+    overlap = max(0.0, min(0.45, overlap))
+    # 分块重叠：防止人脸正好压在块边界上被切成两半（84 号双人照实测有此类漏检）
+    tile_w = width / float(max(1.0, grid - (grid - 1) * overlap))
+    tile_h = height / float(max(1.0, grid - (grid - 1) * overlap))
+    step_x = tile_w * (1.0 - overlap)
+    step_y = tile_h * (1.0 - overlap)
+    tiles: list[tuple[int, int, int, int, float]] = []
+    for gy in range(grid):
+        for gx in range(grid):
+            x0 = int(round(gx * step_x))
+            y0 = int(round(gy * step_y))
+            x0 = min(max(0, x0), max(0, int(round(width - tile_w))))
+            y0 = min(max(0, y0), max(0, int(round(height - tile_h))))
+            x1 = min(int(width), int(round(x0 + tile_w)))
+            y1 = min(int(height), int(round(y0 + tile_h)))
+            tw = max(1, x1 - x0)
+            th = max(1, y1 - y0)
+            scale = min(1.0, tile_cap / float(max(tw, th)))
+            tiles.append((x0, y0, x1, y1, scale))
+    return f"{grid}x{grid}/cap{tile_cap}", tiles
 
 
 def _detect_faces(rgb: np.ndarray, ctx: ScanContext) -> list[ScanHit]:
@@ -290,91 +379,131 @@ def _detect_faces(rgb: np.ndarray, ctx: ScanContext) -> list[ScanHit]:
         return []
     if height < 32 or width < 32:
         return []
-    cap = _face_scan_side()
-    long_edge = max(height, width)
-    scale = min(1.0, cap / float(long_edge))
-    if scale < 1.0:
-        scan = cv2.resize(
-            rgb,
-            (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
-            interpolation=cv2.INTER_AREA,
-        )
-    else:
-        scan = rgb
+    # 整页灰阶快速判断（缩略图）：纯色页/黑页直接跳过，不进入分块循环
     try:
-        raw_gray = cv2.cvtColor(scan, cv2.COLOR_RGB2GRAY)
+        preview_scale = min(1.0, 320.0 / float(max(height, width)))
+        preview = (cv2.resize(rgb, (max(1, int(width * preview_scale)),
+                                    max(1, int(height * preview_scale))),
+                              interpolation=cv2.INTER_AREA)
+                   if preview_scale < 1.0 else rgb)
+        preview_gray = cv2.cvtColor(preview, cv2.COLOR_RGB2GRAY)
     except Exception:
         return []
-    if float(raw_gray.std()) < 2.0:      # 纯色页/黑页：没有可检测的内容
+    if float(preview_gray.std()) < 2.0:
         return []
-    doc_like = _document_like(raw_gray)
-    gray = cv2.equalizeHist(raw_gray)
-    flipped = cv2.flip(gray, 1) if gray is not None else None
+    doc_like = _document_like(preview_gray)
+
+    mode_label, plan = _face_tile_plan(width, height)
+    # 只有「原图本身较大」时才提示可能漏检（小图缩到 640 检测是常态，不打扰用户）
+    if max(width, height) > _FACE_TILE_TRIGGER:
+        try:
+            ctx.warnings.append(_FACE_DOWNSCALE_WARNING)
+        except Exception:
+            pass
 
     profile_mode = str(os.environ.get("YINZHAN_SCAN_FACE_PROFILE", "auto")).strip().lower()
     profile_allowed = profile_mode not in ("0", "false", "no", "off", "none")
-    # auto：先跑正脸；正脸 0 命中且不是白底文档页时才加载侧脸级联
-    # （侧脸级联 XML 828KB，加载 + 多跑两遍在文档页上是纯浪费）。
     always_profile = profile_allowed and profile_mode not in ("auto",)
     auto_profile = profile_allowed and not always_profile and not doc_like
 
     found: list[tuple[Box, float, str]] = []
+    frontal_count = 0
+    try:
+        min_neighbors = max(1, int(os.environ.get("YINZHAN_SCAN_FACE_MIN_NEIGHBORS", "5") or 5))
+    except (TypeError, ValueError):
+        min_neighbors = 5
 
-    def _collect(label: str, cascade: Any, base: float,
-                 flipped_source: bool = False) -> None:
-        try:
-            dets = cascade.detectMultiScale(
-                flipped if flipped_source else gray,
-                scaleFactor=1.1, minNeighbors=5, minSize=(24, 24),
-            )
-        except Exception:
-            return
-        for det in dets if dets is not None else []:
+    def _collect_pass(entries: list[tuple[str, Any, float]]) -> int:
+        count = 0
+        for (tx0, ty0, tx1, ty1, tile_scale) in plan:
             try:
-                x, y, fw, fh = (float(v) for v in list(det)[:4])
+                tile = rgb[ty0:ty1, tx0:tx1]
             except Exception:
                 continue
-            if fw <= 0 or fh <= 0:
+            if tile.size == 0:
                 continue
-            src_w = float(flipped.shape[1]) if flipped_source else float(gray.shape[1])
-            x_scan = (src_w - x - fw) if flipped_source else x
-            rect: Box = (x_scan / scale, y / scale,
-                         (x_scan + fw) / scale, (y + fh) / scale)
-            face_px = min(fw / scale, fh / scale)
-            label_note = "profile-flip" if flipped_source else label
-            found.append((rect, _face_confidence(base, face_px, label_note),
-                          label_note))
-
-    # 第一轮：只跑正脸级联（最常用、也最便宜）
-    for label, cascade, base in _face_cascades(include_profile=False):
-        _collect(label, cascade, base, flipped_source=False)
-
-    # 第二轮：需要时再加载侧脸级联（auto：正脸 0 命中且非文档页）
-    if always_profile or (auto_profile and not found):
-        for label, cascade, base in _face_cascades(include_profile=True):
-            if label != "profile":
+            tile_w = max(1, tx1 - tx0)
+            tile_h = max(1, ty1 - ty0)
+            if tile_scale < 0.999:
+                try:
+                    tile = cv2.resize(
+                        tile,
+                        (max(1, int(round(tile_w * tile_scale))),
+                         max(1, int(round(tile_h * tile_scale)))),
+                        interpolation=cv2.INTER_AREA)
+                except Exception:
+                    continue
+            try:
+                gray = cv2.equalizeHist(cv2.cvtColor(tile, cv2.COLOR_RGB2GRAY))
+            except Exception:
                 continue
-            _collect("profile", cascade, base, flipped_source=False)
-            if flipped is not None:
-                _collect("profile", cascade, base, flipped_source=True)
+            if float(gray.std()) < 2.0:
+                continue
+            for label, cascade, base in entries:
+                variants = [(False, label)]
+                if label == "profile":
+                    variants = [(False, "profile"), (True, "profile-flip")]
+                for flipped_source, label_note in variants:
+                    try:
+                        src = cv2.flip(gray, 1) if flipped_source else gray
+                        dets = cascade.detectMultiScale(
+                            src, scaleFactor=1.1, minNeighbors=min_neighbors,
+                            minSize=(24, 24),
+                        )
+                    except Exception:
+                        continue
+                    for det in dets if dets is not None else []:
+                        try:
+                            x, y, fw, fh = (float(v) for v in list(det)[:4])
+                        except Exception:
+                            continue
+                        if fw <= 0 or fh <= 0 or tile_scale <= 0:
+                            continue
+                        src_w = float(gray.shape[1]) if flipped_source else 0.0
+                        if flipped_source:
+                            x = src_w - x - fw
+                        rect: Box = (tx0 + x / tile_scale, ty0 + y / tile_scale,
+                                     tx0 + (x + fw) / tile_scale,
+                                     ty0 + (y + fh) / tile_scale)
+                        face_px = min(fw / tile_scale, fh / tile_scale)
+                        found.append((rect,
+                                      _face_confidence(base, face_px, label_note),
+                                      label_note))
+                        count += 1
+        return count
+
+    frontal_count = _collect_pass(_face_cascades(include_profile=False))
+    if always_profile or (auto_profile and frontal_count == 0):
+        _collect_pass([entry for entry in _face_cascades(include_profile=True)
+                       if entry[0] == "profile"])
 
     if not found:
         return []
-    # 去重：置信度高者优先；同脸多尺度/正脸+侧脸重复命中只留一个
+
+    # 去重：同一张脸在多块/多尺度/正脸+侧脸重复命中只留一个（先按原始框去重）
     found.sort(key=lambda item: item[1], reverse=True)
     kept: list[tuple[Box, float, str]] = []
     for rect, conf, label in found:
-        box = _expand_box(rect, 0.12, float(width), float(height))
-        if box[2] - box[0] < 8 or box[3] - box[1] < 8:
-            continue
-        if any(_iou(box, prev[0]) >= 0.35 or _ioc(box, prev[0]) >= 0.85
+        if any(_iou(rect, prev[0]) >= 0.35 or _ioc(rect, prev[0]) >= 0.85
                for prev in kept):
             continue
-        kept.append((box, conf, label))
+        kept.append((rect, conf, label))
+    # 再按「整头」外扩，并做一次外扩后的去重（相邻/重叠框会因外扩而连在一起）
+    expanded: list[tuple[Box, float, str]] = []
+    for rect, conf, label in kept:
+        head = _expand_head(rect, float(width), float(height))
+        if head[2] - head[0] < 8 or head[3] - head[1] < 8:
+            continue
+        if any(_iou(head, prev[0]) >= 0.48 or _ioc(head, prev[0]) >= 0.90
+               for prev in expanded):
+            continue
+        expanded.append((head, conf, label))
+    max_faces = _env_int("YINZHAN_SCAN_FACE_MAX", 64, minimum=1, maximum=512)
+    expanded = expanded[:max_faces]
     return [
         ScanHit(kind="face", rect=box, confidence=round(conf, 3),
-                note=f"engine=haar;{label};scale={scale:.3f}")
-        for box, conf, label in kept
+                note=f"engine=haar;{label};{mode_label};head")
+        for box, conf, label in expanded
     ]
 
 
@@ -483,6 +612,14 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
     width, height = int(rgb.shape[1]), int(rgb.shape[0])
     if width < 32 or height < 32:
         return []
+    # 文本块数量是「证件版式 vs 发票/合同正文」的关键信号：
+    # - 证件照片 OCR 通常 4~12 块；
+    # - 发票/合同文本页 20+ 块，里面的「名称/住所/统一社会信用代码」常被误当证件。
+    block_count = len(text_boxes)
+    if block_count >= 18:
+        # 纯文本长文（发票/合同/函件）：不做证件判定，避免整页误涂
+        return []
+    text_rich = block_count >= 12
     best: tuple[float, str, list[Box], str] | None = None   # conf,type,anchors,note
 
     for doc_type, spec in _ID_DOC_SPECS.items():
@@ -500,7 +637,10 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
         if spec.get("title"):
             # 营业执照：必须命中「标题样」的短文本框（「营业执照（副本）」），
             # 且至少再有一个字段锚点；正文里出现「营业执照复印件」不算。
+            # 发票/合同等长文本页（>14 块）里的同名文字一律不算证件。
             short_title = [(text, rect) for text, rect in title if len(text) <= 14]
+            if text_rich or block_count > 14:
+                short_title = []
             if short_title and (n_medium + n_weak) >= 1:
                 triggered = True
                 title = short_title
@@ -521,12 +661,17 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
         region = _id_region(anchor_rects, text_boxes, width, height)
         area = max(0.0, region[2] - region[0]) * max(0.0, region[3] - region[1])
         page_area = float(width) * float(height) or 1.0
-        whole_page = area >= 0.25 * page_area
+        # 只有「证件版式」的小文本页才允许 25% 整页扩张；发票/合同文本页
+        # （text_rich）即使面积够大也最多涂锚点邻域，避免整页误涂。
+        whole_page = (not text_rich) and block_count <= 12 and area >= 0.25 * page_area
         if whole_page:
             region = (0.0, 0.0, float(width), float(height))
             conf = min(0.98, conf + 0.02)
+        elif text_rich:
+            conf = min(conf, 0.72)
         note = (f"engine=ocr;doc={doc_type};n={n_strong + n_medium + n_weak}"
-                f"{';whole_page' if whole_page else ''}")
+                f"{';whole_page' if whole_page else ''}"
+                f"{';textpage_region' if text_rich else ''}")
         cand = (conf, doc_type, [region], note)
         if best is None or cand[0] > best[0]:
             best = cand
@@ -585,98 +730,220 @@ def _plate_hits_from_text(text_boxes: Sequence[tuple[str, Box]],
     return hits
 
 
-def _plate_color_candidates(rgb: np.ndarray) -> list[Box]:
-    """蓝色/绿色车牌候选框（像素坐标，基于传入图）。只做候选，不直接算命中。"""
-    if cv2 is None or rgb.size == 0:
+#: 车牌底色（HSV 下限/上限 + 字符极性）：蓝/绿牌白字，黄牌黑字。
+_PLATE_COLOR_SPECS: tuple[tuple[str, tuple[int, int, int], tuple[int, int, int], str], ...] = (
+    ("blue", (100, 80, 40), (135, 255, 255), "white"),
+    ("green", (45, 60, 40), (95, 255, 255), "white"),
+    ("yellow", (15, 80, 80), (40, 255, 255), "black"),
+)
+
+
+def _plate_color_candidates(rgb: np.ndarray) -> list[dict]:
+    """全图 HSV 找「完整牌面」候选（蓝/绿/黄底 + 白/黑字），返回原图坐标。
+
+    这是车牌的主检测路径：即使 OCR 读不出字，只要牌面完整也能给出矩形；
+    OCR 文本只用于确认归属（见 ``_detect_plates``）。
+    每个候选：``{"rect", "kind", "ratio", "quality", "area_frac", "aspect"}``。
+    """
+    if cv2 is None or rgb is None or getattr(rgb, "size", 0) == 0:
         return []
     try:
-        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+        height, width = int(rgb.shape[0]), int(rgb.shape[1])
     except Exception:
         return []
-    masks = []
-    # 蓝牌：色相 100~135；绿牌（新能源渐变绿）：45~95
-    masks.append(cv2.inRange(hsv, (100, 80, 40), (135, 255, 255)))
-    masks.append(cv2.inRange(hsv, (45, 60, 40), (95, 255, 255)))
-    h, w = rgb.shape[:2]
-    out: list[Box] = []
-    for mask in masks:
+    cap = _env_int("YINZHAN_SCAN_PLATE_MAX_SIDE", 2000, minimum=320, maximum=6000)
+    generic = _env_int("YINZHAN_SCAN_MAX_SIDE", 3000, minimum=320, maximum=10000)
+    cap = min(cap, generic)
+    scale = min(1.0, cap / float(max(height, width))) if max(height, width) else 1.0
+    if scale < 1.0:
         try:
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,
-                                    np.ones((5, 5), np.uint8))
-            count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask, 8)
+            work = cv2.resize(rgb, (max(1, int(width * scale)),
+                                    max(1, int(height * scale))),
+                              interpolation=cv2.INTER_AREA)
+        except Exception:
+            return []
+    else:
+        work = rgb
+    try:
+        hsv = cv2.cvtColor(work, cv2.COLOR_RGB2HSV)
+    except Exception:
+        return []
+    page_area = float(work.shape[0] * work.shape[1]) or 1.0
+    close_kernel = np.ones((5, 5), np.uint8)
+    open_kernel = np.ones((3, 3), np.uint8)
+    out: list[dict] = []
+    for kind, low, high, polarity in _PLATE_COLOR_SPECS:
+        try:
+            mask = cv2.inRange(hsv, np.array(low, np.uint8), np.array(high, np.uint8))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, open_kernel)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                           cv2.CHAIN_APPROX_SIMPLE)
         except Exception:
             continue
-        for index in range(1, count):
-            x, y, bw, bh, area = (int(v) for v in stats[index][:5])
-            if bw < 40 or bh < 12 or area < 800:
-                continue
-            aspect = bw / float(bh)
-            if not 2.0 <= aspect <= 4.6:
-                continue
-            if bw > w * 0.98 or bh > h * 0.60:      # 整页底色块不算车牌
-                continue
-            crop = rgb[y:y + bh, x:x + bw]
-            if crop.size == 0:
-                continue
+        for contour in contours:
             try:
-                crop_hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
-                white_ratio = float(((crop_hsv[:, :, 1] < 70)
-                                     & (crop_hsv[:, :, 2] > 140)).mean())
+                area = float(cv2.contourArea(contour))
             except Exception:
                 continue
-            if white_ratio < 0.04:                 # 车牌上要有白字
+            if area < 500:
                 continue
-            out.append((float(x), float(y), float(x + bw), float(y + bh)))
-    return out
+            try:
+                (rw, rh) = cv2.minAreaRect(contour)[1]
+            except Exception:
+                continue
+            if rw < 40 or rh < 10:
+                continue
+            long_side, short_side = max(rw, rh), min(rw, rh)
+            aspect = long_side / float(max(1.0, short_side))
+            if not 2.0 <= aspect <= 4.8:
+                continue
+            rect_fill = area / float(max(1.0, rw * rh))
+            if rect_fill < 0.62:
+                continue
+            try:
+                bx, by, bw, bh = cv2.boundingRect(contour)
+            except Exception:
+                continue
+            if bw <= 0 or bh <= 0:
+                continue
+            area_frac = (bw * bh) / page_area
+            if not (0.0006 <= area_frac <= 0.30):
+                continue
+            # 轴对齐长宽比：牌面在画面里必须横放（允许轻微透视/旋转），
+            # 过滤水面/界面色带等竖向大色块。
+            bbox_aspect = bw / float(max(1, bh))
+            if not 1.7 <= bbox_aspect <= 5.0:
+                continue
+            crop = hsv[by:by + bh, bx:bx + bw]
+            if crop.size == 0:
+                continue
+            if polarity == "white":
+                polarity_mask = (crop[:, :, 1] < 80) & (crop[:, :, 2] > 130)
+            else:
+                polarity_mask = crop[:, :, 2] < 95
+            ratio = float(polarity_mask.mean())
+            if ratio < (0.045 if polarity == "white" else 0.035):
+                continue
+            # 字符笔画感：真实牌面有多个白/黑连通块（过滤纯色块/路牌底色）
+            char_like = 0
+            try:
+                count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(
+                    polarity_mask.astype(np.uint8), 8)
+                for idx in range(1, count):
+                    _x, _y, cw, ch, ca = (int(v) for v in stats[idx][:5])
+                    if ch < max(3, int(bh * 0.10)) or cw < 2 or ca < 12:
+                        continue
+                    if ch > bh * 0.90:
+                        continue
+                    char_like += 1
+            except Exception:
+                char_like = 0
+            if char_like < 3:
+                continue
+            quality = (min(1.0, rect_fill) * 0.40
+                       + min(1.0, ratio / 0.18) * 0.30
+                       + min(1.0, char_like / 8.0) * 0.30)
+            out.append({
+                "rect": (bx / scale, by / scale,
+                         (bx + bw) / scale, (by + bh) / scale),
+                "kind": kind,
+                "ratio": round(ratio, 4),
+                "quality": round(quality, 4),
+                "area_frac": round(area_frac, 5),
+                "aspect": round(aspect, 3),
+                "bbox_aspect": round(bbox_aspect, 3),
+                "touches_border": bool(bx <= 1 or by <= 1
+                                       or bx + bw >= work.shape[1] - 1
+                                       or by + bh >= work.shape[0] - 1),
+            })
+    if not out:
+        return []
+    # 去重：同一张牌被多通道/多轮廓命中，保留质量高、面积大的那个
+    out.sort(key=lambda item: (item["quality"], item["area_frac"]), reverse=True)
+    kept: list[dict] = []
+    for cand in out:
+        if any(_iou(cand["rect"], prev["rect"]) >= 0.30
+               or _ioc(cand["rect"], prev["rect"]) >= 0.80 for prev in kept):
+            continue
+        kept.append(cand)
+    return kept[:6]
+
+
+def _plate_candidate_for_box(box: Box, candidates: Sequence[dict]) -> int | None:
+    """OCR 车牌框落在哪个颜色候选里（中心包含/重叠），返回候选下标。"""
+    tcx = (box[0] + box[2]) / 2.0
+    tcy = (box[1] + box[3]) / 2.0
+    text_area = max(1.0, (box[2] - box[0]) * (box[3] - box[1]))
+    best_index, best_score = None, 0.0
+    for index, cand in enumerate(candidates):
+        rect = cand["rect"]
+        center_inside = rect[0] <= tcx <= rect[2] and rect[1] <= tcy <= rect[3]
+        overlap = _iou(box, rect)
+        if not center_inside and overlap < 0.20:
+            continue
+        cand_area = max(1.0, (rect[2] - rect[0]) * (rect[3] - rect[1]))
+        area_ratio = cand_area / text_area
+        if area_ratio < 0.9 or area_ratio > 8.0:
+            continue
+        score = overlap + (0.5 if center_inside else 0.0)
+        if score > best_score:
+            best_index, best_score = index, score
+    return best_index
 
 
 def _detect_plates(rgb: np.ndarray, ctx: ScanContext,
                    text_boxes: Sequence[tuple[str, Box]]) -> list[ScanHit]:
+    """车牌检测：颜色牌面为主、OCR 文本确认归属。
+
+    1. 全图颜色分割找完整牌面（蓝/绿/黄底 + 白/黑字 + 矩形拟合）；OCR 文本命中
+       则与色块取并集（比 OCR 框更宽，盖住整个牌面），置信度 0.95；
+    2. OCR 未读出的完整牌面作为候选回退（低置信 0.55，note 标 unconfirmed），
+       由上层（jobs 默认 pending）让用户确认；
+    3. 纯 OCR 命中（颜色分割失败/异常底色）仍保留原有文本路径。
+    """
     width, height = int(rgb.shape[1]), int(rgb.shape[0])
     if width < 32 or height < 32:
         return []
-    # 1) OCR 文本命中（主路径，置信度高）
     text_hits = _plate_hits_from_text(text_boxes, float(width), float(height))
-    # 2) 颜色修正：只在已读出的车牌 OCR 框附近开一个局部窗口找车牌底色，
-    #    不做全图 HSV 扫描（12MP 照片全图扫描要几十毫秒且容易把蓝底路牌算进来）。
-    color_hits: list[tuple[Box, float, str, str]] = []
-    if _env_bool("YINZHAN_SCAN_PLATE_COLOR", True) and text_hits and cv2 is not None:
-        height, width = rgb.shape[:2]
-        for box, _conf, value, _engine in text_hits:
-            span_x = max(8.0, box[2] - box[0])
-            span_y = max(8.0, box[3] - box[1])
-            wx0 = int(max(0.0, box[0] - span_x * 0.8))
-            wy0 = int(max(0.0, box[1] - span_y * 1.2))
-            wx1 = int(min(float(width), box[2] + span_x * 0.8))
-            wy1 = int(min(float(height), box[3] + span_y * 1.2))
-            if wx1 - wx0 < 24 or wy1 - wy0 < 12:
-                continue
-            crop = rgb[wy0:wy1, wx0:wx1]
-            try:
-                candidates = _plate_color_candidates(crop)
-            except Exception:
-                candidates = []
-            tcx = (box[0] + box[2]) / 2.0
-            tcy = (box[1] + box[3]) / 2.0
-            for cand in candidates:
-                box_cand = (cand[0] + wx0, cand[1] + wy0,
-                            cand[2] + wx0, cand[3] + wy0)
-                if not (box_cand[0] <= tcx <= box_cand[2]
-                        and box_cand[1] <= tcy <= box_cand[3]):
-                    continue
-                cand_area = ((box_cand[2] - box_cand[0])
-                             * (box_cand[3] - box_cand[1]))
-                text_area = max(1.0, span_x * span_y)
-                if cand_area <= 8.0 * text_area:   # 色块不能大到像路牌/背景
-                    refined = _expand_box(box_cand, 0.02, float(width), float(height))
-                    color_hits.append((refined, 0.93, value, "color+ocr"))
-                break
-
-    hits = list(text_hits) + color_hits
+    color_enabled = _env_bool("YINZHAN_SCAN_PLATE_COLOR", True) and cv2 is not None
+    candidates = _plate_color_candidates(rgb) if color_enabled else []
+    hits: list[tuple[Box, float, str, str]] = []
+    used: set[int] = set()
+    for box, conf, value, engine in text_hits:
+        index = _plate_candidate_for_box(box, candidates)
+        if index is not None:
+            cand = candidates[index]
+            rect = cand["rect"]
+            merged = (min(box[0], rect[0]), min(box[1], rect[1]),
+                      max(box[2], rect[2]), max(box[3], rect[3]))
+            merged = _expand_box(merged, 0.025, float(width), float(height))
+            hits.append((merged, 0.95, value,
+                         f"color+ocr/{cand['kind']}"))
+            used.add(index)
+        else:
+            hits.append((box, conf, value, engine))
+    # 不可读回退：没有 OCR 确认的完整牌面，只取质量最高的一个候选，低置信 + note
+    if candidates and _env_bool("YINZHAN_SCAN_PLATE_UNCONFIRMED", True):
+        unused = [(idx, cand) for idx, cand in enumerate(candidates)
+                  if idx not in used]
+        if unused:
+            idx, cand = max(unused, key=lambda item: (item[1]["quality"],
+                                                      item[1]["area_frac"]))
+            strict = (cand["quality"] >= 0.72
+                      and 2.3 <= cand["aspect"] <= 4.4
+                      and cand["area_frac"] <= 0.25
+                      and cand["ratio"] >= 0.06
+                      and not cand.get("touches_border"))
+            if strict:
+                hits.append((_expand_box(cand["rect"], 0.02,
+                                         float(width), float(height)),
+                             0.55, "", f"color/{cand['kind']};unconfirmed"))
     if not hits:
         return []
-    # 去重：同一车牌既被 OCR 命中又被颜色框修正时，保留面积更大的修正框
-    hits.sort(key=lambda item: ((item[0][2] - item[0][0]) * (item[0][3] - item[0][1])),
+    # 去重：已确认的完整牌面优先；同牌 OCR 框与色块框只留大的那个
+    hits.sort(key=lambda item: (bool(item[2]),
+                                (item[0][2] - item[0][0]) * (item[0][3] - item[0][1])),
               reverse=True)
     kept: list[tuple[Box, float, str, str]] = []
     for box, conf, value, engine in hits:

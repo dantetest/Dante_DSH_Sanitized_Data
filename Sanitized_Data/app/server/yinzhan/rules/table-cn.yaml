@@ -1,0 +1,208 @@
+# 表格 · 表头列级脱敏（table-cn）
+#
+# 来源：docs/research/08b-文本表格与隐藏数据查漏补缺.md §3.5 E1 / §4.3；
+#       docs/impl/table.md（实现说明与验收）。
+# 扩展点：docs/red-lines.md E4（规则按域独立；检测器在 detectors/table_det.py，
+#         registry._PLUGIN_FALLBACK 已含 table_det，无需改 registry）。
+#
+# 设计：
+#   * 一条规则 = 一类列语义；headers 精确匹配（仅忽略空白/大小写/末尾冒号），
+#     "名称"等泛词不默认生效，避免把"产品名称"当人名/公司名；
+#   * 只处理文本单元格：xlsx 的数值/日期/公式单元格交给 pipl-cn 的 numeric_cell；
+#   * priority 全部 < 15：低于既有规则，保证同一 span 被普通规则命中时保留既有
+#     类型/标签（本包只补"正则没覆盖到的列值"）；
+#   * level/pending 按 08b：身份证/银行卡/账号 L3；高风险列可在 detect 项加
+#     `status: pending` 转人工确认（本包默认 accepted，避免存量导入时全是待确认）；
+#   * value_pattern 是"值形状守卫"：列里混入 "无/N/A/合计" 之类文字时跳过；
+#   * exclude_validate 让位更权威规则（如证件号列里的合法 USCC 留给 cn.uscc）。
+#   * 规则只在 xlsx/docx 生效（解析器已提供 ref={sheet,row,col} / {t,r,c}）。
+
+pack: table-cn
+name: 表格 · 表头列级
+version: 1
+include: [common]
+
+rules:
+  # ── 人员 ──
+  - id: table.person
+    entity: PERSON
+    label: 表格姓名列
+    level: L2
+    scope: [xlsx, docx]
+    priority: 14
+    detect:
+      - type: table_column
+        headers: [姓名, 名字, 员工姓名, 客户名称, 申请人, 参保人,
+                  患者姓名, 学生姓名, 开户人姓名, 法定代表人]
+        header_rows: 3
+        confidence: 0.90
+        min_len: 2
+        max_len: 30
+    replace: {strategy: surrogate}
+
+  - id: table.contact
+    entity: PERSON
+    label: 表格联系人列
+    level: L2
+    scope: [xlsx, docx]
+    priority: 13
+    detect:
+      - type: table_column
+        headers: [联系人, 联系人姓名, 经办人, 业务联系人, 紧急联系人]
+        header_rows: 3
+        confidence: 0.90
+        min_len: 2
+        max_len: 30
+    replace: {strategy: surrogate}
+
+  # ── 证件（L3；可在 detect 项加 status: pending 转人工确认） ──
+  - id: table.id_card
+    entity: ID_CARD
+    label: 表格证件号列
+    level: L3
+    scope: [xlsx, docx]
+    priority: 12
+    detect:
+      - type: table_column
+        headers: [身份证号, 身份证号码, 身份证, 证件号, 证件号码,
+                  身份证件号, 居民身份证号, 护照号]
+        header_rows: 3
+        confidence: 0.90
+        # "证件号"列里合法的统一社会信用代码应留给 common.cn.uscc（L2），
+        # 否则本规则 L3 会在同长 span 上抢走它，导致既有类型减少。
+        exclude_validate: [uscc_checksum]
+        min_len: 5
+        max_len: 40
+    replace: {strategy: surrogate}
+
+  # ── 联系方式 ──
+  - id: table.phone
+    entity: PHONE
+    label: 表格电话列
+    level: L2
+    scope: [xlsx, docx]
+    priority: 11
+    detect:
+      - type: table_column
+        headers: [手机号, 手机号码, 手机, 联系电话, 电话, 联系方式,
+                  电话号码, 办公电话, 家庭电话]
+        header_rows: 3
+        confidence: 0.90
+        value_pattern: '^[+]?[0-9][0-9\-()（）]{5,24}$'
+        min_len: 6
+        max_len: 26
+    replace: {strategy: surrogate}
+
+  - id: table.address
+    entity: ADDRESS
+    label: 表格地址列
+    level: L2
+    scope: [xlsx, docx]
+    priority: 10
+    detect:
+      - type: table_column
+        headers: [地址, 住址, 联系地址, 家庭住址, 通讯地址, 户籍地址, 详细地址]
+        header_rows: 3
+        confidence: 0.90
+        min_len: 2
+        max_len: 120
+    replace: {strategy: surrogate}
+
+  - id: table.email
+    entity: EMAIL
+    label: 表格邮箱列
+    level: L2
+    scope: [xlsx, docx]
+    priority: 6
+    detect:
+      - type: table_column
+        headers: [邮箱, 电子邮箱, 电子邮件, 邮件地址, email, e-mail]
+        header_rows: 3
+        confidence: 0.90
+        value_pattern: '^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$'
+        min_len: 5
+        max_len: 80
+    replace: {strategy: surrogate}
+
+  # ── 单位 / 银行卡 / 账号 ──
+  - id: table.org
+    entity: ORG
+    label: 表格单位列
+    level: L2
+    scope: [xlsx, docx]
+    priority: 7
+    detect:
+      - type: table_column
+        headers: [单位, 工作单位, 公司, 公司名称, 单位名称, 机构名称, 用人单位]
+        header_rows: 3
+        confidence: 0.90
+        min_len: 2
+        max_len: 60
+    replace: {strategy: surrogate}
+
+  - id: table.bank_card
+    entity: BANK
+    label: 表格银行卡列
+    level: L3
+    scope: [xlsx, docx]
+    priority: 9
+    detect:
+      - type: table_column
+        headers: [银行卡号, 银行卡, 卡号, 银行账号, 银行帐号]
+        header_rows: 3
+        confidence: 0.90
+        value_pattern: '^[0-9\-]{8,30}$'
+        min_len: 8
+        max_len: 30
+    replace: {strategy: surrogate}
+
+  - id: table.account
+    entity: ACCOUNT
+    label: 表格账号列
+    level: L3
+    scope: [xlsx, docx]
+    priority: 8
+    detect:
+      - type: table_column
+        headers: [账号, 帐号, 账户, 账户号, 客户号, 客户编号]
+        header_rows: 3
+        confidence: 0.90
+        value_pattern: '^[0-9A-Za-z\-]{6,40}$'
+        min_len: 6
+        max_len: 40
+    replace: {strategy: surrogate}
+
+  # ── 金额（文本单元格；纯数值列由 pipl-cn.numeric_amount 负责） ──
+  - id: table.amount
+    entity: AMOUNT
+    label: 表格金额列
+    level: L2
+    scope: [xlsx, docx]
+    priority: 5
+    detect:
+      - type: table_column
+        headers: [金额, 工资, 应发工资, 实发工资, 余额, 合计, 小计,
+                  收入, 费用, 成本, 报销金额, 借款金额]
+        header_rows: 3
+        confidence: 0.90
+        value_pattern: '^(?:RMB|CNY|USD|EUR|¥|￥)?[-+]?[0-9][0-9,]*(?:\.[0-9]+)?(?:元|万元|亿元)?$'
+        min_len: 1
+        max_len: 40
+    replace: {strategy: surrogate}
+
+  # ── 单号 ──
+  - id: table.txn_no
+    entity: TXN_NO
+    label: 表格单号列
+    level: L2
+    scope: [xlsx, docx]
+    priority: 4
+    detect:
+      - type: table_column
+        headers: [订单号, 订单编号, 票号, 交易流水号, 流水号, 凭证号, 合同号]
+        header_rows: 3
+        confidence: 0.90
+        value_pattern: '^[A-Za-z0-9][A-Za-z0-9\-_/]{3,39}$'
+        min_len: 4
+        max_len: 40
+    replace: {strategy: surrogate}
