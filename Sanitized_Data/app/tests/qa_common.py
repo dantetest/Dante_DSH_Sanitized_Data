@@ -2465,6 +2465,316 @@ def capture_p1a_api(base: str) -> dict:
     return out
 
 
+# ════════════════════════ P1-B（Office 内嵌图/隐藏对象、CSV/TSV、PDF 内嵌图） ════════════════════════
+def _p1b_job(path: Path):
+    from yinzhan.jobs import MANAGER
+    job = MANAGER.create(Path(path))
+    _wait_job_inproc(job)
+    return job
+
+
+def _p1b_media(job) -> dict:
+    return dict(((getattr(job, "doc", None).meta or {}).get("embedded_media") or {})
+                if getattr(job, "doc", None) else {})
+
+
+def office_media_chain_test() -> dict:
+    """P1-B：Office 内嵌图片自动脱敏、隐藏对象确认语义、strict 剥离、正常图不变、审计。"""
+    ensure_ready()
+    try:
+        import test_office_media as tom
+        from yinzhan import audit, registry
+        from yinzhan.jobs import MANAGER
+        from yinzhan.udm import ParseContext, YinzhanError
+
+        registry.load_plugins()
+        ctx = ParseContext(ocr=None, workdir=str(WORK))
+
+        def _blocked(fn):
+            try:
+                fn()
+                return {"code": "", "msg": "", "blocked": False}
+            except YinzhanError as exc:
+                return {"code": getattr(exc, "code", ""), "msg": str(exc),
+                        "blocked": True}
+            except Exception as exc:  # noqa: BLE001
+                return {"code": type(exc).__name__, "msg": str(exc),
+                        "blocked": False}
+
+        def _rescan_office(path: Path, prefix: str) -> dict:
+            parts = tom._zip_media_parts(path)
+            marks, means = 0, []
+            for part in parts:
+                if not part.startswith(prefix):
+                    continue
+                try:
+                    data = tom._part_bytes(path, part)
+                except Exception:
+                    continue
+                marks += len(tom._scan_marks(data))
+                means.append(round(tom._image_mean(data), 1))
+            return {"media_parts": sorted(p for p in parts if p.startswith(prefix)),
+                    "residual_marks": marks, "means": means}
+
+        res: dict = {}
+        # ── DOCX 含敏感图 + 隐藏对象 ──
+        dx = tom.Fixtures.docx_hidden()
+        j = _p1b_job(dx)
+        m = _p1b_media(j)
+        blocked = _blocked(lambda: MANAGER.export(j.id, "human"))
+        docx = {"image_count": int(m.get("image_count") or 0),
+                "hidden_count": int(m.get("count") or 0),
+                "hidden_objects": (m.get("hidden_objects") or [])[:5],
+                "blocked": blocked}
+        try:
+            rec = MANAGER.export(j.id, "human",
+                                 options={"allow_unprocessed_media": True})
+            out = Path(rec["out"])
+            scan = _rescan_office(out, "word/media/")
+            re_doc = registry.find_parser(out).parse(out, ctx)
+            rm = (re_doc.meta or {}).get("embedded_media") or {}
+            docx.update({"allow_ok": True, "verify": rec.get("verify"),
+                         "rescan": scan,
+                         "hidden_after": int(rm.get("count") or 0),
+                         "out": str(out)})
+        except Exception as exc:  # noqa: BLE001
+            docx.update({"allow_ok": False, "allow_err": repr(exc)})
+        try:
+            rec = MANAGER.export(j.id, "human",
+                                 options={"allow_unprocessed_media": True,
+                                          "strict_office_media": True})
+            out = Path(rec["out"])
+            re_doc = registry.find_parser(out).parse(out, ctx)
+            rm = (re_doc.meta or {}).get("embedded_media") or {}
+            scan = _rescan_office(out, "word/media/")
+            docx["strict"] = {"hidden_after": int(rm.get("count") or 0),
+                              "rescan_marks": scan["residual_marks"],
+                              "verify": rec.get("verify")}
+        except Exception as exc:  # noqa: BLE001
+            docx["strict"] = {"err": repr(exc)}
+        res["docx_hidden"] = docx
+        # ── DOCX 正常图（无命中）：不弹确认、字节不变 ──
+        dc = tom.Fixtures.docx_clean()
+        jc = _p1b_job(dc)
+        mc = _p1b_media(jc)
+        docx_clean = {"image_count": int(mc.get("image_count") or 0),
+                      "hidden_count": int(mc.get("count") or 0)}
+        try:
+            rec = MANAGER.export(jc.id, "human")
+            out = Path(rec["out"])
+            same = []
+            for part in tom._zip_media_parts(dc):
+                if not part.startswith("word/media/"):
+                    continue
+                try:
+                    same.append(tom._part_bytes(dc, part)
+                                == tom._part_bytes(out, part))
+                except Exception:
+                    same.append(False)
+            docx_clean.update({"export_ok": True,
+                               "verify": rec.get("verify"),
+                               "parts_unchanged": same,
+                               "blocked_expected_false": True})
+        except Exception as exc:  # noqa: BLE001
+            docx_clean.update({"export_ok": False, "err": repr(exc)})
+        res["docx_clean"] = docx_clean
+        # ── XLSX 含敏感图 + 隐藏对象 ──
+        xh = tom.Fixtures.xlsx_hidden()
+        jx = _p1b_job(xh)
+        mx = _p1b_media(jx)
+        xlsx = {"image_count": int(mx.get("image_count") or 0),
+                "hidden_count": int(mx.get("count") or 0)}
+        try:
+            rec = MANAGER.export(jx.id, "human",
+                                 options={"allow_unprocessed_media": True})
+            out = Path(rec["out"])
+            scan = _rescan_office(out, "xl/media/")
+            xlsx.update({"allow_ok": True, "verify": rec.get("verify"),
+                         "rescan": scan})
+        except Exception as exc:  # noqa: BLE001
+            xlsx.update({"allow_ok": False, "err": repr(exc)})
+        res["xlsx_hidden"] = xlsx
+        # ── 审计 counts.office_media ──
+        office_audit = None
+        try:
+            for record in audit.recent(20):
+                counts = record.get("counts") or {}
+                if "office_media" in counts:
+                    office_audit = counts.get("office_media")
+                    break
+        except Exception:
+            office_audit = None
+        res["audit_office_media"] = office_audit
+        d = res.get("docx_hidden") or {}
+        c = res.get("docx_clean") or {}
+        x = res.get("xlsx_hidden") or {}
+        ok = bool(
+            d.get("image_count", 0) >= 2 and d.get("hidden_count", 0) >= 2
+            and d.get("blocked", {}).get("blocked") is True
+            and "隐藏对象" in d.get("blocked", {}).get("msg", "")
+            and d.get("allow_ok") and d.get("rescan", {}).get("residual_marks") == 0
+            and (d.get("verify") or {}).get("verified") is True
+            and (d.get("strict") or {}).get("hidden_after") == 0
+            and (d.get("strict") or {}).get("rescan_marks") == 0
+            and (d.get("strict") or {}).get("verify", {}).get("verified") is True
+            and c.get("hidden_count") == 0 and c.get("export_ok") is True
+            and c.get("parts_unchanged") and all(c.get("parts_unchanged"))
+            and (c.get("verify") or {}).get("verified") is True
+            and x.get("image_count", 0) >= 2 and x.get("hidden_count", 0) >= 2
+            and x.get("allow_ok") and x.get("rescan", {}).get("residual_marks") == 0
+            and (x.get("verify") or {}).get("verified") is True
+            and office_audit is not None)
+        return {"ok": ok, **res}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+def csv_chain_test() -> dict:
+    """P1-B：CSV/TSV 列级+多级/合并表头、导出行列不变、无表头 0 命中。"""
+    ensure_ready()
+    try:
+        import csv as _csv
+        from yinzhan import registry
+        from yinzhan.jobs import MANAGER
+
+        registry.load_plugins()
+        fx = TESTS / "fixtures" / "csv_table"
+        expected = json.loads((fx / "expected.json").read_text("utf-8"))
+        names = ("client_list.csv", "client_list.tsv", "two_level.csv",
+                 "merged_header.csv", "vertical_multilevel.csv",
+                 "no_header.csv")
+
+        def _shape(path: Path):
+            delim = "\t" if path.suffix.lower() == ".tsv" else ","
+            try:
+                with open(path, "r", encoding="utf-8-sig", newline="") as fh:
+                    rows = list(_csv.reader(fh, delimiter=delim))
+            except Exception:
+                return None
+            return (len(rows), max((len(r) for r in rows), default=0))
+
+        results: dict = {}
+        for name in names:
+            p = fx / name
+            if not p.is_file():
+                continue
+            job = _p1b_job(p)
+            table_ents = [e for e in job.entities if e.origin == "table"]
+
+            def _norm_v(value) -> str:
+                return "".join(str(value or "").split())
+
+            values = {_norm_v(e.value) for e in job.entities if e.value}
+            exp = expected.get(name) or {}
+            missing = [(rid, v) for rid, vals in exp.items() for v in vals
+                       if _norm_v(v) not in values]
+            rec = {"stage": job.stage, "table_entities": len(table_ents),
+                   "entities": len(job.entities),
+                   "missing_count": len(missing), "missing": missing[:4]}
+            if name == "no_header.csv":
+                rec["ok"] = (job.stage == "ready" and not table_ents)
+            else:
+                try:
+                    exp_rec = MANAGER.export(job.id, "ai")
+                    outp = Path(exp_rec["out"])
+                    src_shape, out_shape = _shape(p), _shape(outp)
+                    rec.update({"verify": exp_rec.get("verify"),
+                                "shape_src": src_shape, "shape_out": out_shape,
+                                "suffix_kept": outp.suffix == p.suffix})
+                    rec["ok"] = bool(
+                        job.stage == "ready" and len(table_ents) >= 1
+                        and not missing and src_shape == out_shape
+                        and outp.suffix == p.suffix
+                        and (exp_rec.get("verify") or {}).get("residual") == 0)
+                except Exception as exc:  # noqa: BLE001
+                    rec.update({"ok": False, "err": repr(exc)})
+            results[name] = rec
+        ok = bool(results) and all(r.get("ok") for r in results.values())
+        return {"ok": ok, "cases": results}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+def _pdf_black_ratio(exported: Path, rect, page: int) -> float:
+    """渲染导出 PDF 页面，统计实体矩形内黑像素比例。"""
+    try:
+        import fitz
+        import numpy as np
+        with fitz.open(str(exported)) as pdf:
+            pg = pdf[page]
+            pix = pg.get_pixmap(dpi=72)
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height, pix.width, pix.n)[:, :, :3]
+            sx = pix.width / float(pg.rect.width or 1)
+            sy = pix.height / float(pg.rect.height or 1)
+            x0 = max(0, int(rect[0] * sx))
+            y0 = max(0, int(rect[1] * sy))
+            x1 = min(pix.width, int(rect[2] * sx))
+            y1 = min(pix.height, int(rect[3] * sy))
+            if x1 <= x0 or y1 <= y0:
+                return 0.0
+            crop = arr[y0:y1, x0:x1]
+            if crop.size == 0:
+                return 0.0
+            black = np.all(crop < 45, axis=2)
+            return round(float(black.mean()), 3)
+    except Exception:
+        return -1.0
+
+
+def pdf_embedded_chain_test() -> dict:
+    """P1-B：PDF 文本层内嵌图 → EMBEDDED_IMAGE → human 涂黑 → 重解析 0 残留。"""
+    ensure_ready()
+    try:
+        from yinzhan import registry
+        from yinzhan.jobs import MANAGER
+        from yinzhan.udm import ParseContext
+
+        registry.load_plugins()
+        fx = TESTS / "fixtures" / "pdf_embedded"
+        manifest = json.loads((fx / "manifest.json").read_text("utf-8"))
+        cases = manifest.get("cases") or {}
+        results: dict = {}
+        for name, spec in cases.items():
+            p = fx / str(spec.get("file"))
+            if not p.is_file():
+                continue
+            job = _p1b_job(p)
+            emb = [e for e in job.entities if e.etype == "EMBEDDED_IMAGE"]
+            rec = {"stage": job.stage, "embedded": len(emb)}
+            if name == "sensitive":
+                try:
+                    exp = MANAGER.export(job.id, "human")
+                    outp = Path(exp["out"])
+                    ctx = ParseContext(ocr=None, workdir=str(WORK))
+                    re_doc = registry.find_parser(outp).parse(outp, ctx)
+                    re_emb = [m for m in (re_doc.visual_marks or [])
+                              if getattr(m, "kind", "") == "embedded_image"]
+                    ratios = []
+                    for e in emb:
+                        for sp in e.spans:
+                            if sp.rect:
+                                ratios.append(_pdf_black_ratio(
+                                    outp, sp.rect, sp.page or 0))
+                                break
+                    rec.update({"verify": exp.get("verify"),
+                                "reparse_embedded": len(re_emb),
+                                "black_ratios": ratios})
+                    rec["ok"] = bool(
+                        len(emb) >= 2 and len(re_emb) == 0
+                        and ratios and all(v >= 0.9 for v in ratios)
+                        and (exp.get("verify") or {}).get("residual") == 0)
+                except Exception as exc:  # noqa: BLE001
+                    rec.update({"ok": False, "err": repr(exc)})
+            else:
+                rec["ok"] = (job.stage == "ready" and not emb)
+            results[name] = rec
+        ok = bool(results) and all(r.get("ok") for r in results.values())
+        return {"ok": ok, "cases": results}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
 # ════════════════════════ 已知边界软记录 ════════════════════════
 def capture_known_limits() -> dict:
     ensure_ready()
@@ -2555,6 +2865,27 @@ def capture_known_limits() -> dict:
                 "未成年人推断只认身份证号生日，不估计人脸年龄",
                 "时间模糊默认关闭，需调用方显式开启",
                 "组合风险只提示，不自动整图涂黑",
+            ],
+        },
+        # P1-B 语义与已知限制（只做软记录）
+        "p1b_features": {
+            "office_media": {
+                "redact_images_default": True,
+                "confirmation_now_for": "隐藏对象（图表/文本框/OLE 等）",
+                "strict_option": "strict_office_media",
+                "allow_option": "allow_unprocessed_media",
+            },
+            "delimited": {"formats": ["csv", "tsv"],
+                          "column_level": True,
+                          "multilevel_header": True,
+                          "export_keeps_delim": True},
+            "pdf_embedded_image": {"min_area_ratio": 0.05,
+                                   "text_layer_pages_only": True,
+                                   "reparse_black_threshold": 0.95},
+            "known_limits": [
+                "Office 内嵌图里的纯文字（无 face/id/plate/qr/barcode/chat/sign 目标）不自动处理（P1.5）",
+                "strict_office_media 会改变文档外观（无命中图置白/剥离隐藏对象）",
+                "PDF 内嵌图只处理文本层页且图片面积≥5% 页面；异常格式降级为跳过",
             ],
         },
         "pdf_text_layer_pages_skipped_ocr": {
@@ -2910,6 +3241,13 @@ def write_snapshot(base: dict, path: Path) -> None:
       f"未成年人={p1a.get('minor_inference')}；"
       f"时间模糊={p1a.get('time_blur')}；组合风险={p1a.get('combination_risk')}")
     for _lim in (p1a.get("known_limits") or []):
+        A(f"  - 已知限制：{_lim}")
+    p1b = kl.get("p1b_features") or {}
+    om = p1b.get("office_media") or {}
+    A(f"- **P1-B 第一波**：Office 内嵌图片默认自动脱敏={om.get('redact_images_default')}"
+      f"（需确认的是{om.get('confirmation_now_for')}；strict={om.get('strict_option')}）；"
+      f"CSV/TSV={p1b.get('delimited')}；PDF 内嵌图={p1b.get('pdf_embedded_image')}")
+    for _lim in (p1b.get("known_limits") or []):
         A(f"  - 已知限制：{_lim}")
     gaps = kl.get("known_gaps_not_fixed") or {}
     if gaps:

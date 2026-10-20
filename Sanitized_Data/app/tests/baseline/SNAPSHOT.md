@@ -1,8 +1,8 @@
 # 数据隐站 · 基线快照（BASELINE SNAPSHOT）
 
-- 冻结时间：2026-10-20T21:07:11+0800
-- git HEAD：`ef74b11`（ef74b11ef91ecdb20438e427f699c69ecbc65911）  分支 `main`
-- 引擎源码改动：无（干净）
+- 冻结时间：2026-10-20T21:36:44+0800
+- git HEAD：`bdae2f2`（bdae2f2247f2b77e556b35ad3b2443a9ef53827a）  分支 `main`
+- 引擎源码改动：有未提交改动，基线需复核
 - Python：3.12.9  · 平台：win32
 - 无 GDAL：True  · 无 trimesh：True
 
@@ -22,7 +22,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 |---|---|---|
 | H1 | 基线样例全部解析成功 | 5/5 |
 | H2 | 两种导出全部成功、residual=0、成品存在非空、元数据已清 | exports_ok=10/10，residual_total=0 |
-| H3 | e2e 退出码 0 | exit=0，8.39s |
+| H3 | e2e 退出码 0 | exit=0，8.51s |
 | H4 | 规则包完整、无 load_errors、id 全局唯一、必填字段/scope/策略合法 | packs=8，defined=103，load_errors=0，violations=0 |
 | H5 | 解析器/检测器全部注册成功 | parsers=docx,image,mesh,pdf,text,tiff,xlsx；detectors=dict,joined_regex,ner,numeric_cell,regex,table_column |
 | H6 | 服务只监听 127.0.0.1 | runtime.host=127.0.0.1；代码 HOST=127.0.0.1 |
@@ -38,7 +38,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 | # | 软参考项 | 基线值 | 说明 |
 |---|---|---|---|
-| S1 | 性能：e2e 总耗时 / OCR 页耗时 | e2e 8.39s | 超过基线 50% 报警（red-lines F12）|
+| S1 | 性能：e2e 总耗时 / OCR 页耗时 | e2e 8.51s | 超过基线 50% 报警（red-lines F12）|
 | S2 | 已知边界现状 | 见 §6 | 后续 P0 会改，**不得断言永远如此** |
 | S3 | 新增命中 | 基线实体总数 52 | 新增类型/数量只提示，不判失败 |
 
@@ -95,7 +95,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 合计自有规则 **103** 条；load_errors=0；violations=0。
 
-按格式编译条数：docx=99、image=85、mesh=13、pdf=88、text=88、tiff=85、xlsx=102
+按格式编译条数：docx=99、image=85、mesh=13、pdf=88、text=99、tiff=85、xlsx=102
 
 各包规则 id 清单见 `baseline.json` → `rules.packs.*.rule_ids`。回归要求：包 id 不缺、每包自有规则数不减少、编译条数不减少（新增不算回归）。
 
@@ -104,7 +104,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 - 注册：parsers=['docx', 'image', 'mesh', 'pdf', 'text', 'tiff', 'xlsx']；detectors=['dict', 'joined_regex', 'ner', 'numeric_cell', 'regex', 'table_column']；replacers={'surrogate': True, 'black': True, 'mask': True}
 - OCR：available=True，backend=ppocrv6，error=None
 - `/api/health`：status=200，net=**blocked**，version=1.0.0，ocr=True
-- runtime.json：host=127.0.0.1，port=18767；netstat 监听行=['TCP    127.0.0.1:18767        0.0.0.0:0              LISTENING       16256']
+- runtime.json：host=127.0.0.1，port=18772；netstat 监听行=['TCP    127.0.0.1:18772        0.0.0.0:0              LISTENING       19316']
 - 外呼静态扫描：hits=[]，URL 字面量上下文 [('https://cka.blctek.com:8443，', 'documentation_or_comment'), ('http://{shown}:{port}', 'templated_local_url'), ('http://{public}:{port}', 'templated_local_url')]；本地浏览器拉起=[{'file': 'app\\server\\yinzhan\\app.py', 'line': 112, 'text': 'threading.Timer(0.6, lambda: webbrowser.open(url)).start()'}]
 - 审计 INSERT 列：['ts', 'job_id', 'doc_name', 'doc_hash', 'fmt', 'counts', 'rule_pack', 'mode', 'out_hash', 'out_name', 'prev_sig', 'sig']；疑似原值列=[]
 - 依赖：requirements=['pillow', 'lxml', 'pymupdf', 'python-docx', 'openpyxl', 'rapidocr', 'rapidocr-onnxruntime', 'onnxruntime', 'opencv-python-headless', 'zxing-cpp', 'rasterio', 'pyproj', 'cryptography']；网络客户端依赖=无
@@ -125,7 +125,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 ### 5.2 真实 HTTP 主路径（上传 → 任务 → ready → 双导出 → 下载）
 
 - 样例：委托代理合同.pdf（2959 bytes）
-- 上传：status=200；任务：j_c9e61853；stage=ready
+- 上传：status=200；任务：j_054acc86；stage=ready
 - 实体类型：{'手机号': 1, '固定电话': 1, '案号': 1, '统一社会信用代码': 1, '地址': 1, '律师事务所': 1, '金额': 2, '当事人/代理人': 2, '人名': 2, '机构名称': 1, '身份证号': 1, '银行卡号': 1}
 - 预览：{'status': 200, 'kind': 'raster', 'pages': 2, 'blocks': 25, 'entities': 15}；渲染：{'status': 200, 'ctype': 'image/png', 'bytes': 92728, 'png_magic': True}
 - ai：status=200，bytes=7203，verify={'verified': True, 'residual': 0, 'checked': 15, 'visual_residual': 0, 'media': {'count': 0, 'confirmed': False}, 'pdf_hidden': {}, 'issues': []}，下载 status=200，magic=%PDF-1.7，非空=True
@@ -156,6 +156,10 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
   - 已知限制：未成年人推断只认身份证号生日，不估计人脸年龄
   - 已知限制：时间模糊默认关闭，需调用方显式开启
   - 已知限制：组合风险只提示，不自动整图涂黑
+- **P1-B 第一波**：Office 内嵌图片默认自动脱敏=True（需确认的是隐藏对象（图表/文本框/OLE 等）；strict=strict_office_media）；CSV/TSV={'formats': ['csv', 'tsv'], 'column_level': True, 'multilevel_header': True, 'export_keeps_delim': True}；PDF 内嵌图={'min_area_ratio': 0.05, 'text_layer_pages_only': True, 'reparse_black_threshold': 0.95}
+  - 已知限制：Office 内嵌图里的纯文字（无 face/id/plate/qr/barcode/chat/sign 目标）不自动处理（P1.5）
+  - 已知限制：strict_office_media 会改变文档外观（无命中图置白/剥离隐藏对象）
+  - 已知限制：PDF 内嵌图只处理文本层页且图片面积≥5% 页面；异常格式降级为跳过
 - **已知不修（本轮确认，不当作回归）**：
   - `side_face_low_head_miss`：用户测试集 83 双人低头侧脸仍漏（Haar 模型上限，已写 docs/impl/visual.md，P1 YuNet 建议；本轮不修）
 - **正射 TIF 中性化（D3 已批准）**：成品物理上仍保留 LOCAL_CS 本地任意 CRS 的 GeoTIFF 结构标签（34264/34735/34737，GIS 可打开）。红线是**没有真实世界坐标**：源 ModelPixelScale / ModelTiepoint / EPSG / GDAL_METADATA / RPC / ICC / EXIF / GPS 一旦残留即 FAIL；LOCAL_CS 结构本身不算残留（详见 `docs/impl/tiff.md §10`）。
@@ -168,13 +172,12 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 ## 8. 本次基线更新理由（人工填写）
 
-> P1-A 第一波收口后干净 HEAD 基线：聊天逐项/招牌/未成年/时间模糊/组合风险；11 域、215 项；5 样例不变
+> P1-B 收口：Office 内嵌图自动脱敏+隐藏对象确认语义、CSV/TSV 列语义+多级表头、PDF 文本层内嵌图检测（EMBEDDED_IMAGE 涂黑+复检）；5 样例无内嵌图/CSV/PDF 内嵌图变化，规则 103/实体 52 功能基线不变；新增 P1-B 真链路检查
 
 ## 9. 基线更新记录（最近 10 次）
 
 | 时间 | HEAD | engine_clean | 理由 |
 |---|---|---|---|
-| 2026-10-20T00:18:11+0800 | fb90233 | False | 方案 A P0 第一波：底座+条码+财务+图像+贸易+前端+正射TIF（LOCAL_CS 中性化），红线全绿 |
 | 2026-10-20T11:17:16+0800 | e84b9d2 | True | 真实判决书漏识别修复：跨行案号/地址、标签姓名、竖排审判员、带空格金额；新增 joined_regex 检测器与 test_legal_detect（18项） |
 | 2026-10-20T13:32:33+0800 | 8bacbeb | False | P0 第二波（PIPL 收口）：PDF 隐藏数据剥离+verify 拦截、图片 EXIF Orientation 转正、pipl-cn(21)/table-cn(11) 规则+校验器、numeric_cell 数值写回、10 条规则 scope 扩 image/tiff、前端整图涂黑；对账单新增 6 实体属预期（table 列级 2 + pipl numeric AMOUNT 4），红线全绿 |
 | 2026-10-20T13:40:08+0800 | 7b74f58 | True | P0 二波收口后干净 HEAD 基线：PDF 隐藏数据/EXIF 朝向/pipl-cn+table-cn/numeric/整图涂黑；规则 71→103、样例 46→52（对账单 +6 属预期） |
@@ -184,4 +187,5 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 | 2026-10-20T19:54:13+0800 | 9b3f5df | True | 身份证 A 方案增量（反面签发机关/有效期）后干净 HEAD 基线：204 项/10 套件；5 样例无证件，规则 103/实体 52 不变 |
 | 2026-10-20T21:01:55+0800 | 9930db6 | False | P1-A 第一波收口：聊天截图逐项/招牌扫描器/未成年人提示与严格模式/时间模糊/组合风险；新增 11 域(含 signs)、215 项；5 样例无新增 |
 | 2026-10-20T21:07:11+0800 | ef74b11 | True | P1-A 第一波收口后干净 HEAD 基线：聊天逐项/招牌/未成年/时间模糊/组合风险；11 域、215 项；5 样例不变 |
+| 2026-10-20T21:36:44+0800 | bdae2f2 | False | P1-B 收口：Office 内嵌图自动脱敏+隐藏对象确认语义、CSV/TSV 列语义+多级表头、PDF 文本层内嵌图检测（EMBEDDED_IMAGE 涂黑+复检）；5 样例无内嵌图/CSV/PDF 内嵌图变化，规则 103/实体 52 功能基线不变；新增 P1-B 真链路检查 |
 

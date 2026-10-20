@@ -997,6 +997,81 @@ def check_p1a_capabilities(gate: Gate) -> None:
               _fmt_val(sneg))
 
 
+# ══════════════════════════ 5.8 P1-B（Office 内嵌图/隐藏对象、CSV/TSV、PDF 内嵌图） ══════════════════════════
+def check_p1b_capabilities(gate: Gate) -> None:
+    """P1-B 真链路：Office 图片自动脱敏/隐藏对象确认、CSV/TSV 列语义、PDF 内嵌图。"""
+    gate.set_current("功能红线 · P1-B 第一波")
+    gate.group("功能红线 · P1-B 第一波（Office 内嵌图/隐藏对象、CSV/TSV、PDF 内嵌图）")
+
+    office = qa.office_media_chain_test()
+    d = office.get("docx_hidden") or {}
+    c = office.get("docx_clean") or {}
+    x = office.get("xlsx_hidden") or {}
+    gate.hard("Office 内嵌图：图片计数/隐藏对象计数语义正确（docx+xlsx）",
+              d.get("image_count", 0) >= 2 and d.get("hidden_count", 0) >= 2
+              and x.get("image_count", 0) >= 2 and x.get("hidden_count", 0) >= 2,
+              _fmt_val({"docx": d.get("image_count"),
+                        "docx_hidden": d.get("hidden_count"),
+                        "xlsx": x.get("image_count"),
+                        "xlsx_hidden": x.get("hidden_count"),
+                        "err": office.get("err")}))
+    gate.hard("Office 内嵌图：默认导出只对隐藏对象要求确认（文案=隐藏对象）",
+              d.get("blocked", {}).get("blocked") is True
+              and d.get("blocked", {}).get("code") == "media_confirmation_required"
+              and "隐藏对象" in d.get("blocked", {}).get("msg", ""),
+              _fmt_val(d.get("blocked")))
+    gate.hard("Office 内嵌图：确认后自动脱敏（重扫 0 命中、verify 通过）",
+              d.get("allow_ok") is True
+              and (d.get("rescan") or {}).get("residual_marks") == 0,
+              _fmt_val({"allow_ok": d.get("allow_ok"),
+                        "rescan": d.get("rescan"),
+                        "verify": d.get("verify"),
+                        "err": d.get("allow_err")}))
+    gate.hard("Office 正常图片：不弹确认且图片字节不变",
+              c.get("hidden_count") == 0 and c.get("export_ok") is True
+              and bool(c.get("parts_unchanged"))
+              and all(c.get("parts_unchanged") or []),
+              _fmt_val({"hidden_count": c.get("hidden_count"),
+                        "export_ok": c.get("export_ok"),
+                        "parts_unchanged": c.get("parts_unchanged")}))
+    gate.hard("Office strict：隐藏对象 0、无命中图空白、verify 通过",
+              (d.get("strict") or {}).get("hidden_after") == 0
+              and (d.get("strict") or {}).get("rescan_marks") == 0
+              and ((d.get("strict") or {}).get("verify") or {}).get("verified") is True,
+              _fmt_val(d.get("strict")))
+    gate.hard("Office 审计记录 counts.office_media",
+              office.get("audit_office_media") is not None,
+              _fmt_val(office.get("audit_office_media")))
+    gate.hard("Office xlsx：确认后自动脱敏（重扫 0 命中、verify 通过）",
+              x.get("allow_ok") is True
+              and (x.get("rescan") or {}).get("residual_marks") == 0
+              and (x.get("verify") or {}).get("verified") is True,
+              _fmt_val({"allow_ok": x.get("allow_ok"),
+                        "rescan": x.get("rescan"),
+                        "verify": x.get("verify")}))
+
+    csv_res = qa.csv_chain_test()
+    cases = csv_res.get("cases") or {}
+    bad = {k: v for k, v in cases.items() if not v.get("ok")}
+    gate.hard("CSV/TSV：列级/多级表头覆盖 + 导出行列/分隔符不变 + residual=0",
+              csv_res.get("ok") is True,
+              _fmt_val({"err": csv_res.get("err"), "bad": bad}))
+    gate.hard("CSV/TSV：无表头文件 table-cn 0 命中",
+              (cases.get("no_header.csv") or {}).get("ok") is True,
+              _fmt_val(cases.get("no_header.csv")))
+
+    pdf_res = qa.pdf_embedded_chain_test()
+    pcases = pdf_res.get("cases") or {}
+    pb = {k: v for k, v in pcases.items() if not v.get("ok")}
+    gate.hard("PDF 内嵌图：敏感页产 EMBEDDED_IMAGE 且 human 涂黑/重解析 0 残留",
+              (pcases.get("sensitive") or {}).get("ok") is True,
+              _fmt_val(pcases.get("sensitive")))
+    gate.hard("PDF 内嵌图：正常配图/纯文本/小图 0 新增",
+              all((pcases.get(k) or {}).get("ok") is True
+                  for k in ("normal_only", "text_only", "tiny_qr_only")),
+              _fmt_val({"bad": pb, "err": pdf_res.get("err")}))
+
+
 # ══════════════════════════ 6. MCP 工具（F9） ══════════════════════════
 def check_mcp(gate: Gate) -> None:
     gate.set_current("契约完整性 · MCP 工具")
@@ -1290,6 +1365,12 @@ def run_checks() -> int:
         check_p1a_capabilities(gate)
     except Exception:
         gate.hard("P1-A 第一波检查异常", False, traceback.format_exc(limit=2))
+
+    # 4.8 P1-B（Office 内嵌图/隐藏对象、CSV/TSV、PDF 内嵌图）
+    try:
+        check_p1b_capabilities(gate)
+    except Exception:
+        gate.hard("P1-B 第一波检查异常", False, traceback.format_exc(limit=2))
 
     # 5 HTTP 服务 + 主路径
     http_bundle: dict = {}

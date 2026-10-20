@@ -6,7 +6,8 @@
   2. 各功能域自测 —— ``test_barcodes.py`` / ``test_finance.py`` /
      ``test_trade.py`` / ``test_visual.py`` / ``test_legal_detect.py`` /
      ``test_pipl_rules.py`` / ``test_table_column.py`` /
-     ``test_pdf_hidden.py`` / ``test_tiff.py``（存在才跑）。
+     ``test_pdf_hidden.py`` / ``test_sign_targets.py`` / ``test_office_media.py`` /
+     ``test_csv_table.py`` / ``test_pdf_embedded.py`` / ``test_tiff.py``（存在才跑）。
 
 用法（Windows 控制台必须 -X utf8）：
 
@@ -65,6 +66,12 @@ def _specs() -> list[dict]:
          "label": "PDF 隐藏数据（附件/批注/表单/JS/缩略图）剥离自测"},
         {"key": "signs", "file": TESTS / "test_sign_targets.py", "timeout": 600,
          "label": "P1-A 招牌扫描器（门牌/路牌/店招/单位铭牌）自测"},
+        {"key": "officemedia", "file": TESTS / "test_office_media.py", "timeout": 900,
+         "label": "P1-B Office 内嵌图自动脱敏/隐藏对象自测"},
+        {"key": "csv", "file": TESTS / "test_csv_table.py", "timeout": 600,
+         "label": "P1-B CSV/TSV 列语义与多级表头自测"},
+        {"key": "pdfembedded", "file": TESTS / "test_pdf_embedded.py", "timeout": 600,
+         "label": "P1-B PDF 文本层内嵌图检测/涂黑自测"},
         {"key": "tiff", "file": TESTS / "test_tiff.py", "timeout": 900,
          "label": "正射 TIF 域自测（可选）"},
     ]
