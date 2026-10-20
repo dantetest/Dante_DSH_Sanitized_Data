@@ -282,3 +282,89 @@
   4. **单页操作**：整图涂黑只作用于当前页；多页文件需逐页点击（符合 P0「头/整图」的最小实现）。
   5. **黑块颜色**为导出器统一的 `--black #0D0B09`（非纯 #000），与品牌一致且同样不可读。
   6. **PDF / 图片重编码**：沿用现有导出路径（PDF apply_redactions、图片重编码去 EXIF），未新增改动。
+
+---
+
+# 第三轮（P0）：证件脱敏选择器（关键字段 / 整卡）
+
+> 状态：已实现 · 2026-10-20 · 负责人：designer-icon（task-23）
+> 背景：用户选用方案 A —— 身份证默认「关键字段」脱敏（只遮头像/姓名/身份证号/住址），整卡涂黑可选。Lead 已在 `POST /api/jobs` 增加 `id_card_mode: "fields" | "whole"`（默认 fields）。
+> 代码：`app/web/app.js`（+106/−2）、`app/web/style.css`（+19）；**HTML / 后端 / 规则全部未改**；未 push。
+
+## 9.1 改动点
+
+| 位置 | 改动 |
+|---|---|
+| `state.idCardMode`（默认 `'fields'`） | 新增档位状态；`normalizeIdCardMode(v)` 只接受 `whole`，其它一律回 `fields`（非法值兜底） |
+| `mountIdCardMode()` / `buildIdModeBlock()` | **不改 index.html**，动态挂两处：①投放台「选择文件」按钮下方（完整版：标题 + 两档按钮 + 说明文案）；②对照台头部「严格度」左侧（紧凑版：`证件脱敏 [关键字段][整卡涂黑] 本次任务：…`） |
+| `setIdCardMode()` / `syncIdCardModeUI()` | 两处选择器同步（`aria-pressed`）；任务已创建后再改**只 toast 提示「已识别的任务不会重跑，重新投放文件后生效」**，不自动重跑；任务未创建时不打扰 |
+| `createJob()` | `POST /api/jobs` body 增加 `id_card_mode: normalizeIdCardMode(state.idCardMode)`；响应里回填的 `id_card_mode` 也同步回状态 |
+| `startFlow()` | 识别日志加一行「证件脱敏：关键字段/整卡涂黑（含义）」，让用户在扫描页就知道当前档位 |
+| `updateConsoleHead()` | 每次刷新时同步头部紧凑选择器与「本次任务：X」提示（来自 `job.id_card_mode`） |
+| `TYPE_CN / TYPE_ORDER / TYPE_COLOR` | 新增 `ID_PHOTO 证件头像`、`ID_NAME 证件姓名`、`ID_NUMBER 证件号码`、`ID_ADDRESS 证件住址`，排在 `ID_DOCUMENT` 之后；各配 muted 分组色（`#8E4A3C / #5A4A3F / #2F4F66 / #7A6A4A`），清单/日志不再落英文或兜底「其他敏感」 |
+| `style.css` | `.idmode`（投放台完整版：标题/分段按钮/说明）与 `.idmode.compact`（对照台头部紧凑版）、`.idmode-job`；沿用朱红选中态与纸面风格 |
+
+**未改**：`index.html`、`api.py`、`jobs.py`、`visual_targets.py`、规则包、解析器；未新增依赖、未外呼、未 push。
+
+## 9.2 接口契约
+
+```jsonc
+// POST /api/jobs（创建任务，现有接口，Lead 已加字段）
+{ "upload_id": "u_xxx", "strictness": "standard", "id_card_mode": "fields" }   // 默认
+{ "upload_id": "u_xxx", "strictness": "standard", "id_card_mode": "whole" }    // 整卡
+// → {"job_id":"j_xxx","name":"…","fmt":"image","id_card_mode":"fields"}
+```
+
+- 前端 `normalizeIdCardMode()` 对非法/缺省值兜底 `"fields"`；后端同样兜底（双保险）。
+- fields（后端实测，用户测试集 #85 正脸身份证）：实体为 `ID_PHOTO / ID_NAME / ID_NUMBER / ID_ADDRESS` 四类（+ 原有 OCR 地址等），预览框面积分别约 21.3% / 6.1% / 16.5% / 20.7%，**无整页框**。
+- whole：实体为 `ID_DOCUMENT` 整卡/整页（面积 100%），预览整页覆盖。
+- 任务快照 `GET /api/jobs/{id}` 含 `id_card_mode`，前端据此显示「本次任务：X」。
+
+## 9.3 实测（真实 HTTP + CDP 驱动真实 Edge，25 项断言 ALL PASS）
+
+测试样本：`C:\Users\Dante\Desktop\测试集\微信图片_20261009205811_85_29.jpg`（用户测试集 #85 正脸身份证，**只读**，未修改）。服务：临时数据目录 + `python run.py --port 18765 --no-browser`。
+
+| 断言 | 实测 |
+|---|---|
+| 投放台选择器 | 位于「选择文件」下方；标题「证件脱敏（身份证）」；两个按钮「关键字段（默认）」「整卡涂黑」；默认 `aria-pressed` 关键字段=true；说明文案含「只遮头像 / 姓名 / 身份证号 / 住址」「整卡不透明覆盖（公开 / 不确定场景推荐）」 |
+| 键盘可访问 | CDP 真实按键：Enter / Space 均能切换档位（`aria-pressed` 同步） |
+| 默认 fields 创建 | `POST /api/jobs` body = `{"upload_id":"u_…","strictness":"standard","id_card_mode":"fields"}`；job 快照 `id_card_mode=fields`；头部显示「本次任务：关键字段」 |
+| 新类型显示（真实后端） | 清单分组：`证件头像×1 / 证件姓名×1 / 证件号码×1 / 证件住址×1`（另有地址×1），**无「其他敏感」兜底** |
+| fields 预览 | 4 个证件字段框（面积 21.3%/6.1%/16.5%/20.7%），**0 个整页框** |
+| fields 导出 | human 成品 1024×1821：黑像素占比 **50.9%**、平均亮度 88.5 → 关键字段被涂、卡面其余仍可读 |
+| 创建后切整卡 | toast「…已识别的任务不会重跑，重新投放文件后生效」；`POST /api/jobs` 次数不变（0 次新请求）；job 快照仍 fields |
+| 重新投放 → whole | body 带 `"id_card_mode":"whole"`；快照=whole；头部「本次任务：整卡涂黑」 |
+| whole 预览/导出 | 预览出现整页级覆盖框；human 成品 1024×1821：黑像素占比 **100%**、平均亮度 11.07 → 整页不可读 |
+| 类型映射 | ID_* 中文名齐全、进入 TYPE_ORDER、各有分组色；`normalizeIdCardMode('bogus')` 与 `undefined` 均兜底 `fields` |
+| 页面回归 | `/`、`/download`、`/mcp`、`/console` 全部加载，全程 **0 JS 异常**；`node --check app/web/app.js` exit 0 |
+
+证据（临时目录 `%TEMP%\yz_idmode_test\`）：
+
+- `ui_idmode_drop.png`：投放台选择器（默认关键字段）
+- `ui_idmode_fields_real.png`：fields 真实任务——头部档位「本次任务：关键字段」、清单 4 类证件字段、预览 4 个字段框
+- `ui_idmode_switch_hint.png`：创建后切整卡的「重新投放生效」提示
+- `ui_idmode_whole.png`：whole 任务整卡/整页覆盖
+- `evidence_fields_vs_whole.png`：原图 / fields 成品 / whole 成品 三联图（附黑像素占比）
+
+## 9.4 手动测试步骤
+
+1. 起服务（`cd app/server && python run.py --port 8760`），打开 `http://127.0.0.1:8760/console`。
+2. 投放台「证件脱敏（身份证）」保持「关键字段（默认）」（或点「整卡涂黑」），选一张身份证照片拖入。
+3. 识别完成进对照台：头部应显示「本次任务：关键字段」；右侧清单应有「证件头像 / 证件姓名 / 证件号码 / 证件住址」等分组；左栏原件上 4 个虚线字段框，右栏相应位置被涂（换名模式为白块，涂黑模式为黑块），**整页不黑**。
+4. 「交付 → 给人看」导出，成品只有关键字段不可读，卡面其余仍可读。
+5. 对照台头部把档位切到「整卡涂黑」：只弹提示「已识别的任务不会重跑，重新投放文件后生效」，当前任务不变。
+6. 刷新页面回投放台 → 选「整卡涂黑」→ 重新拖入同一张身份证 → 预览整卡/整页黑；导出后整页不可读。
+7. 键盘：Tab 到档位按钮，Enter / Space 可切换。
+
+## 9.5 红线 / 兼容与风险
+
+- **无外呼 / 无 CDN / 无第三方库 / 无新依赖**；只调同源 `/api/*`；文案固定字符串，无 HTML 注入。
+- **不改后端/规则/HTML**：`id_card_mode` 由 Lead 的后端实现，前端只透传与展示；选择器由 JS 动态挂载（投放台 + 对照台头部），页面结构未动。
+- **非法值双保险**：前端 `normalizeIdCardMode` 兜底 fields；后端 api/jobs 也会兜底（已核对）。
+- 兼容风险：
+  1. **已创建的任务不重跑**（按需求）：切档位只影响下一次投放；如果用户在同一任务里改了选择器，需要重新投放/刷新页面重新拖入才生效（提示已写明）。
+  2. **后端字段定位失败时**会按整卡涂黑并给 warning（`jobs._visual_entities` 的 fallback 逻辑），前端无需特殊处理，清单会显示「证件」整卡框——预期降级，不报错。
+  3. **ID_* 为新 etype**：旧版后端不返回这些类型时，前端映射多出来的键无害；旧数据只显示原有类型。
+  4. **紧凑选择器占用对照台头部空间**：`console-head` 本身 `flex-wrap:wrap`，窄屏会自动换行；1360px 实测布局正常。
+  5. **strictness 变更会重跑任务**：`changeStrictness` 走原有重新建任务路径，此时会把当前 `id_card_mode` 一起带上（与档位选择一致，属合理行为）。
+  6. **证件反面**：关键字段模式下后端会 warning 提示「反面无字段可脱敏，如需整卡请切换」，前端照常展示 warning（入口在导出前 toast / 扫描日志），无额外改动。

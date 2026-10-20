@@ -38,11 +38,14 @@ const TYPE_CN = {
   SEAL: '公章/印章', SIGNATURE: '手写签名', SIG_BLOCK: '签署区', HANDWRITING: '疑似手写',
   FACE: '人脸', ID_DOCUMENT: '证件', PLATE: '车牌', ROAD_SIGN: '路牌',
   DOOR_ADDRESS: '门牌/门址', QRCODE: '二维码', BARCODE: '条形码',
+  // 身份证关键字段（方案 A：默认「关键字段」，整卡可选）
+  ID_PHOTO: '证件头像', ID_NAME: '证件姓名', ID_NUMBER: '证件号码', ID_ADDRESS: '证件住址',
   OTHER: '其他敏感',
 };
 const TYPE_ORDER = [
   'PERSON', 'ID_CARD', 'ADDRESS', 'PHONE', 'ORG', 'CASE_NO', 'AMOUNT', 'BANK', 'LICENSE', 'EMAIL', 'DATE', 'IP',
-  'FACE', 'ID_DOCUMENT', 'PLATE', 'ROAD_SIGN', 'DOOR_ADDRESS',
+  'FACE', 'ID_DOCUMENT', 'ID_PHOTO', 'ID_NAME', 'ID_NUMBER', 'ID_ADDRESS',
+  'PLATE', 'ROAD_SIGN', 'DOOR_ADDRESS',
   'SEAL', 'SIGNATURE', 'SIG_BLOCK', 'HANDWRITING', 'QRCODE', 'BARCODE',
   'OTHER',
 ];
@@ -54,6 +57,8 @@ const TYPE_COLOR = {
   SEAL: '#8C2F26', SIGNATURE: '#5E4A66', SIG_BLOCK: '#7A6E5A', HANDWRITING: '#4F6B6B',
   FACE: '#B0573F', ID_DOCUMENT: '#40372F', PLATE: '#46603A', ROAD_SIGN: '#8A6A2F',
   DOOR_ADDRESS: '#6B4636', QRCODE: '#2E3A48', BARCODE: '#24211C',
+  // 身份证关键字段：同一份「证件」下的细分，用同族低饱和色区分
+  ID_PHOTO: '#8E4A3C', ID_NAME: '#5A4A3F', ID_NUMBER: '#2F4F66', ID_ADDRESS: '#7A6A4A',
   OTHER: '#8C8272',
 };
 const STRICT_CN = { loose: '宽松', standard: '标准', strict: '最严' };
@@ -72,6 +77,22 @@ const MENU_ETYPES = [
   { label: '地址', etype: 'ADDRESS' }, { label: '金额', etype: 'AMOUNT' },
   { label: '其他敏感', etype: 'OTHER' },
 ];
+
+/* 证件脱敏档位（用户已批准方案 A）：默认「关键字段」，整卡涂黑可选。
+   fields=只遮头像/姓名/身份证号/住址；whole=整卡不透明覆盖（公开/不确定场景推荐）。
+   只影响任务创建（POST /api/jobs 的 id_card_mode），已创建的任务不自动重跑。 */
+const ID_MODE_OPTIONS = [
+  { value: 'fields', label: '关键字段（默认）', short: '关键字段' },
+  { value: 'whole', label: '整卡涂黑', short: '整卡涂黑' },
+];
+const ID_MODE_CN = { fields: '关键字段', whole: '整卡涂黑' };
+const ID_MODE_DESC = {
+  fields: '只遮头像、姓名、身份证号、住址',
+  whole: '整卡不透明覆盖（公开 / 不确定场景推荐）',
+};
+function normalizeIdCardMode(value) {
+  return value === 'whole' ? 'whole' : 'fields';
+}
 
 /* 人话错误：绝不把堆栈、代码原样甩给用户 */
 const ERROR_CN = {
@@ -128,6 +149,7 @@ const state = {
   fileName: '',
   jobId: null,
   strictness: 'standard',
+  idCardMode: 'fields',
   mode: 'sur',
   selectMode: false,
   busy: false,
@@ -247,6 +269,75 @@ function makeDocNo() {
   return 'No.' + ymd + '-' + String(Math.floor(Math.random() * 9000) + 1000);
 }
 
+/* ─────────────── 证件脱敏档位（投放台 + 对照台头部） ───────────────
+   用户已批准方案 A：默认「关键字段」（只遮头像/姓名/身份证号/住址），整卡涂黑可选。
+   选择结果在创建任务时作为 id_card_mode 发给后端；任务创建后再改只提示重新投放生效。 */
+function buildIdModeBlock(compact) {
+  const wrap = mk('div', 'idmode' + (compact ? ' compact' : ''));
+  wrap.appendChild(mk('span', 'idmode-label', compact ? '证件脱敏' : '证件脱敏（身份证）'));
+  const seg = mk('div', 'idmode-seg');
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', '证件脱敏档位');
+  ID_MODE_OPTIONS.forEach((opt) => {
+    const btn = mk('button', null, compact ? opt.short : opt.label);
+    btn.type = 'button';
+    btn.dataset.idmode = opt.value;
+    btn.setAttribute('aria-pressed', 'false');
+    btn.title = ID_MODE_CN[opt.value] + '：' + ID_MODE_DESC[opt.value];
+    btn.addEventListener('click', () => setIdCardMode(opt.value));
+    seg.appendChild(btn);
+  });
+  wrap.appendChild(seg);
+  if (compact) {
+    ui.idModeJobHint = mk('span', 'idmode-job', '');
+    wrap.appendChild(ui.idModeJobHint);
+  } else {
+    wrap.appendChild(mk('div', 'idmode-hint',
+      '关键字段：只遮头像 / 姓名 / 身份证号 / 住址；整卡涂黑：整卡不透明覆盖（公开 / 不确定场景推荐）'));
+  }
+  return wrap;
+}
+function mountIdCardMode() {
+  const dropWrap = ui.dropzone && ui.dropzone.closest ? ui.dropzone.closest('.drop-wrap') : null;
+  if (dropWrap && !dropWrap.querySelector('.idmode')) {
+    const actions = dropWrap.querySelector('.drop-actions');
+    const block = buildIdModeBlock(false);
+    if (actions && actions.parentNode === dropWrap) actions.insertAdjacentElement('afterend', block);
+    else dropWrap.appendChild(block);
+    ui.idModeDrop = block;
+  }
+  const strict = ui.strictSel && ui.strictSel.closest ? ui.strictSel.closest('.strict') : null;
+  if (strict && strict.parentNode && !strict.parentNode.querySelector('.idmode.compact')) {
+    const block = buildIdModeBlock(true);
+    strict.parentNode.insertBefore(block, strict);
+    ui.idModeHead = block;
+  }
+  syncIdCardModeUI();
+}
+function syncIdCardModeUI() {
+  const mode = normalizeIdCardMode(state.idCardMode);
+  $$('.idmode [data-idmode]').forEach((btn) => {
+    const on = btn.dataset.idmode === mode;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+  });
+  if (ui.idModeJobHint) {
+    const jobMode = (state.jobId && state.job) ? normalizeIdCardMode(state.job.id_card_mode) : null;
+    ui.idModeJobHint.textContent = jobMode ? '本次任务：' + ID_MODE_CN[jobMode] : '';
+    ui.idModeJobHint.title = jobMode ? '当前任务使用的档位；改动选择只影响下一次投放' : '';
+  }
+}
+function setIdCardMode(value) {
+  const next = normalizeIdCardMode(value);
+  if (next === state.idCardMode) return;
+  state.idCardMode = next;
+  syncIdCardModeUI();
+  if (state.jobId) {
+    toast('证件脱敏改为「' + ID_MODE_CN[next] + '」（' + ID_MODE_DESC[next] +
+      '）。已识别的任务不会重跑，重新投放文件后生效。', null, 7000);
+  }
+}
+
 /* ─────────────── ① 投放台 ─────────────── */
 function bindDropzone() {
   const openPicker = () => ui.fileInput.click();
@@ -312,6 +403,8 @@ async function startFlow(file) {
   beginScan(state.fileName);
   setScreen('scan');
   logScan('本机处理，文件不出这台机器。');
+  logScan('证件脱敏：' + ID_MODE_CN[normalizeIdCardMode(state.idCardMode)] +
+    '（' + ID_MODE_DESC[normalizeIdCardMode(state.idCardMode)] + '）');
   try {
     setScanStage('正在接收文件…');
     const headers = { 'X-Filename': encodeURIComponent(file.name || ''), 'Content-Type': file.type || 'application/octet-stream' };
@@ -328,13 +421,20 @@ async function startFlow(file) {
 async function createJob() {
   if (!state.uploadId) throw new AppError('missing_file', ERROR_CN.missing_file);
   setScanStage('正在建立本机任务…');
+  const idCardMode = normalizeIdCardMode(state.idCardMode);
   const res = await api('/api/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ upload_id: state.uploadId, strictness: state.strictness }),
+    body: JSON.stringify({
+      upload_id: state.uploadId,
+      strictness: state.strictness,
+      id_card_mode: idCardMode,
+    }),
   });
   if (!res || !res.job_id) throw new AppError('bad_response', '本机没有给出任务编号，请重新投一次。');
   state.jobId = String(res.job_id);
+  if (res.id_card_mode) state.idCardMode = normalizeIdCardMode(res.id_card_mode);
+  syncIdCardModeUI();
   startPolling();
 }
 function scanFailed(err) {
@@ -613,6 +713,7 @@ function updateConsoleHead() {
   ui.railCount.textContent = String(activeEntityCount());
   ui.docName.textContent = state.fileName || (state.job && state.job.name) || '未命名文件';
   syncWholePageButton();
+  syncIdCardModeUI();
 }
 function updatePager() {
   ui.pageLabel.textContent = (state.page + 1) + ' / ' + state.pages;
@@ -1830,6 +1931,7 @@ function bindModal() {
 function init() {
   cacheDom();
   mountWholePageButton();
+  mountIdCardMode();
   state.cardTpl = { ai: ui.cardAi.innerHTML, human: ui.cardHuman.innerHTML };
   state.docNo = makeDocNo();
   ui.docNo.textContent = state.docNo;

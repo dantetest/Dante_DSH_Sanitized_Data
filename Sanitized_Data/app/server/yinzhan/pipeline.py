@@ -512,6 +512,11 @@ GEO_TAGS = {33550, 33922, 34735, 34264, 42112, 42113}
 _RECT_ETYPE_KIND = {
     "FACE": "face",
     "ID_DOCUMENT": "id_document",
+    # 身份证关键字段档（A 方案）：按字段 kind 复检，避免被整卡命中吞掉
+    "ID_PHOTO": "id_photo",
+    "ID_NAME": "id_name",
+    "ID_NUMBER": "id_number",
+    "ID_ADDRESS": "id_address",
     "PLATE": "plate",
     "ROAD_SIGN": "road_sign",
     "DOOR_ADDRESS": "door_address",

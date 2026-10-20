@@ -84,6 +84,8 @@ class Job:
     path: str
     fmt: str
     strictness: str = "standard"
+    # 证件脱敏档位：fields=只遮头像/姓名/身份证号/住址（默认）；whole=整卡涂黑
+    id_card_mode: str = "fields"
     pack_ids: list[str] | None = None
     stage: str = "queued"          # queued|parsing|detecting|ready|exporting|done|error
     progress: float = 0.0
@@ -138,6 +140,7 @@ class Job:
                 "created_at": self.created_at,
                 "pack": self.pack_label,
                 "strictness": self.strictness,
+                "id_card_mode": self.id_card_mode,
                 "exports": {k: {kk: vv for kk, vv in v.items() if kk != "bytes"}
                             for k, v in self.exports.items()},
             }
@@ -151,15 +154,17 @@ class JobManager:
 
     # ── 创建 ──
     def create(self, path: Path, strictness: str = "standard",
-               pack_ids: list[str] | None = None) -> Job:
+               pack_ids: list[str] | None = None,
+               id_card_mode: str = "fields") -> Job:
         parser = registry.find_parser(path)
         if parser is None:
             raise YinzhanError(f"暂不支持这种文件：{path.suffix or '无扩展名'}")
+        mode = id_card_mode if id_card_mode in ("fields", "whole") else "fields"
         job_id = "j_" + os.urandom(4).hex()
         job = Job(
             id=job_id, name=_display_name(path.name), path=str(path),
             fmt=parser.format_id, strictness=strictness, pack_ids=pack_ids,
-            parser=parser,
+            id_card_mode=mode, parser=parser,
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -269,11 +274,19 @@ class JobManager:
                     decision=Decision(strategy="black", black=True, replacement=None),
                 ))
             warn_before = len(doc.warnings or [])
-            visual_ents = _visual_entities(doc, sig_blocks)
+            visual_ents = _visual_entities(doc, sig_blocks, job.id_card_mode)
             if visual_ents:
                 job.entities.extend(visual_ents)
+            # 证件页里的 OCR 文字实体（比如整块「住址+姓名+出生+性别」被 OCR 合并）
+            # 在证件档位下会被字段框/整卡框覆盖；保留会重复涂黑、甚至把要保留的
+            # 性别/民族/出生行一起涂掉。所以证件命中范围内的文字实体统一让位。
+            _drop_text_entities_in_id_cards(job, doc)
             # 视觉层可能新增「低置信码类候选未自动处理」等提示，补进 job.warnings
             job.warnings.extend((doc.warnings or [])[warn_before:])
+            # 证件页已经有整卡/字段脱敏兜底，人脸大图提示对证件页是噪音
+            if any(getattr(m, "kind", "") == "id_document"
+                   for m in (getattr(doc, "visual_marks", None) or [])):
+                job.warnings = [w for w in job.warnings if "照片较大" not in w]
             low_conf = _low_confidence_entities(doc, job.entities)
             if low_conf:
                 job.entities.extend(low_conf)
@@ -568,6 +581,8 @@ _TYPE_LABEL = {
     "SEAL": "公章/印章", "SIGNATURE": "手写签名", "SIG_BLOCK": "签署区",
     "HANDWRITING": "疑似手写",
     "FACE": "人脸", "ID_DOCUMENT": "证件", "PLATE": "车牌",
+    "ID_PHOTO": "证件头像", "ID_NAME": "证件姓名",
+    "ID_NUMBER": "证件号码", "ID_ADDRESS": "证件住址",
     "ROAD_SIGN": "路牌", "DOOR_ADDRESS": "门牌/门址",
     "QRCODE": "二维码", "BARCODE": "条形码",
 }
@@ -581,6 +596,11 @@ _VISUAL_SPEC = {
     "signature":   ("SIGNATURE", "手写签名", "pending", "L3"),
     "face":        ("FACE", "人脸", "accepted", "L3"),
     "id_document": ("ID_DOCUMENT", "证件", "accepted", "L3"),
+    # 身份证关键字段（A 方案默认档）：只遮头像/姓名/身份证号/住址
+    "id_photo":    ("ID_PHOTO", "证件头像", "accepted", "L3"),
+    "id_name":     ("ID_NAME", "证件姓名", "accepted", "L3"),
+    "id_number":   ("ID_NUMBER", "证件号码", "accepted", "L3"),
+    "id_address":  ("ID_ADDRESS", "证件住址", "accepted", "L3"),
     "plate":       ("PLATE", "车牌", "pending", "L2"),
     "road_sign":   ("ROAD_SIGN", "路牌", "pending", "L2"),
     "door_address": ("DOOR_ADDRESS", "门牌/门址", "pending", "L2"),
@@ -625,7 +645,64 @@ def _low_confidence_entities(doc: Document, entities: list[Entity]) -> list[Enti
     return out
 
 
-def _visual_entities(doc: Document, sig_blocks: list | None = None) -> list[Entity]:
+_ID_FIELD_KINDS = frozenset({"id_photo", "id_name", "id_number", "id_address"})
+
+
+def _drop_text_entities_in_id_cards(job: "Job", doc: Document) -> None:
+    """证件页内由 OCR 文本块产生的文字实体让位给证件字段/整卡框。
+
+    实测身份证 OCR 会把「住址+姓名+出生+性别」合并成一个文本块，若保留该
+    ADDRESS 实体，会把整块（含要保留的性别/民族/出生）一起涂掉；字段档下用
+    id_* 框精确遮，文字实体应丢弃。只丢 spans 全部落在证件矩形内的文字实体。
+    """
+    card_rects: dict[int, list] = {}
+    for mark in getattr(doc, "visual_marks", None) or []:
+        if getattr(mark, "kind", "") == "id_document":
+            card_rects.setdefault(getattr(mark, "page", 0), []).append(mark.rect)
+    if not card_rects:
+        return
+    # block_id -> (page, bbox)
+    blocks: dict[str, tuple[int, tuple | None]] = {}
+    for page in doc.pages:
+        for block in page.blocks:
+            blocks[block.id] = (page.index, block.bbox)
+    kept: list[Entity] = []
+    for ent in job.entities:
+        if ent.origin == "visual":
+            kept.append(ent)
+            continue
+        rects = []
+        for span in ent.spans or []:
+            if span.rect:
+                rects.append((span.page if span.page is not None else 0, span.rect))
+            elif span.block_id and span.block_id in blocks:
+                page_idx, bbox = blocks[span.block_id]
+                if bbox:
+                    rects.append((page_idx, bbox))
+        if not rects:
+            kept.append(ent)
+            continue
+        inside = all(
+            any(_inside(rect, card) for card in card_rects.get(page, []))
+            for page, rect in rects
+        )
+        if not inside:
+            kept.append(ent)
+    job.entities = kept
+
+
+def _mark_note(note: str) -> dict[str, str]:
+    """解析扫描器 note 里的 k=v 片段（side=front;fields=4 等）。"""
+    data: dict[str, str] = {}
+    for part in str(note or "").split(";"):
+        if "=" in part:
+            key, value = part.split("=", 1)
+            data[key.strip()] = value.strip()
+    return data
+
+
+def _visual_entities(doc: Document, sig_blocks: list | None = None,
+                     id_card_mode: str = "fields") -> list[Entity]:
     sig_by_page: dict[int, list] = {}
     for pg, rect in (sig_blocks or []):
         sig_by_page.setdefault(pg, []).append(rect)
@@ -637,8 +714,35 @@ def _visual_entities(doc: Document, sig_blocks: list | None = None) -> list[Enti
         except Exception:
             return 1.0
 
+    marks = list(getattr(doc, "visual_marks", None) or [])
+    mode = id_card_mode if id_card_mode in ("fields", "whole") else "fields"
+    id_docs = [m for m in marks if m.kind == "id_document"]
+    field_marks = [m for m in marks if m.kind in _ID_FIELD_KINDS]
+    others = [m for m in marks
+              if m.kind not in _ID_FIELD_KINDS and m.kind != "id_document"]
+
+    chosen = list(others)
+    if mode == "whole":
+        # 整卡档：只保留整卡/整页命中，字段命中不重复涂
+        chosen.extend(id_docs)
+    else:
+        # 关键字段档（默认）：只涂头像/姓名/身份证号/住址
+        chosen.extend(field_marks)
+        for mark in id_docs:
+            meta = _mark_note(mark.note)
+            side = meta.get("side", "")
+            if side == "back":
+                doc.warnings.append(
+                    "检测到身份证反面：关键字段模式下反面没有姓名/号码/住址，"
+                    "未做字段脱敏；如需整卡请切换「整卡涂黑」")
+                continue
+            if meta.get("fallback") == "1" or not field_marks:
+                chosen.append(mark)
+                doc.warnings.append("证件字段定位失败，已按整卡涂黑（可改用整卡模式）")
+            # 正面且字段命中成功：整卡命中不加入，避免把卡面全部涂掉
+
     out: list[Entity] = []
-    for vm in (getattr(doc, "visual_marks", None) or []):
+    for vm in chosen:
         spec = _VISUAL_SPEC.get(vm.kind)
         if spec is None:
             continue

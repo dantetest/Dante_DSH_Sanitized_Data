@@ -125,6 +125,25 @@ main{flex:1; min-height:0; position:relative;}
 .drop-cta{font-size:15px; letter-spacing:.16em; margin-bottom:12px;}
 .drop-formats{font:400 11px/1.9 var(--font-mono); letter-spacing:.1em; color:var(--ink-3);}
 .drop-actions{margin-top:16px;}
+/* 证件脱敏档位：投放台（完整版）与对照台头部（紧凑版），由 app.js 动态挂载 */
+.idmode{display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:18px;}
+.idmode-label{font:400 10.5px/1 var(--font-mono); letter-spacing:.16em; color:var(--ink-3);}
+.idmode-seg{
+  display:flex; border:1px solid var(--rule); border-radius:2px; overflow:hidden;
+  background:rgba(255,255,255,.35);
+}
+.idmode-seg button{
+  font:400 11px/1 var(--font-song); letter-spacing:.08em; padding:7px 12px; border:0;
+  background:transparent; color:var(--ink-2); cursor:pointer; transition:.16s;
+}
+.idmode-seg button:hover:not(.on){background:rgba(178,58,46,.08); color:var(--seal);}
+.idmode-seg button.on{background:var(--seal); color:#FBF7EC;}
+.idmode-seg button:focus-visible{outline:2px solid var(--seal); outline-offset:-2px;}
+.idmode-hint{font:400 10.5px/1.7 var(--font-mono); color:var(--ink-3); letter-spacing:.03em; max-width:min(560px,86vw);}
+.idmode.compact{flex-direction:row; align-items:center; gap:7px; margin-top:0; flex:0 0 auto;}
+.idmode.compact .idmode-label{letter-spacing:.08em;}
+.idmode.compact .idmode-seg button{padding:5px 8px; font-size:10.5px;}
+.idmode.compact .idmode-job{font:400 10px/1 var(--font-mono); color:var(--ink-3); letter-spacing:.04em; white-space:nowrap;}
 .drop-note{margin-top:26px; font:400 11px/1 var(--font-mono); letter-spacing:.14em; color:var(--ink-3);}
 .drop-note b{color:var(--ink-2); font-weight:400;}
 

@@ -17,13 +17,23 @@
 P0 范围
 -------
 - ``face``：OpenCV 自带 Haar 级联（frontalface_default + profileface），
-  0 新增模型/体积；长边缩到 **≈640** 检测（默认 ``YINZHAN_SCAN_FACE_MAX_SIDE=640``），
-  框外扩 12%，同图去重；侧脸级联只在「正脸 0 命中且非白底文档页」时才加载/运行。
+  0 新增模型/体积；长边 >1600 时按 2×2（cap 640）/3×3（cap 960）分块检测、
+  映射回原图合并去重，并在原图较大时向 ctx.warnings 写"照片较大，小脸可能漏检"；
+  命中框按「整个头」非对称外扩（上 35% 发际线、左右 25% 耳廓、下 15% 下颌）。
 - ``id_document``：OCR 锚点判定（身份证/护照/驾驶证/营业执照/社保卡），
-  命中后返回整证件区域；面积 ≥ 页面 25% 时返回整页（决策已批准）。
-- ``plate``：优先 OCR 文本框 + 中国车牌正则（含新能源 8 位、挂/学/警后缀），
-  扩边后只在 OCR 框附近的局部窗口用颜色（蓝/绿）底色修正；
-  没有可读车牌文字时不做全图猜测（避免蓝底路牌误报、也控制大图耗时）。
+  命中后返回整证件区域；面积 ≥ 页面 25% 且文本块不多时返回整页；
+  文本块 ≥18 的发票/合同页直接跳过，12~17 块禁止整页扩张（只涂锚点邻域）。
+- ``id_photo`` / ``id_name`` / ``id_number`` / ``id_address``：身份证关键字段
+  （A 方案）。仅身份证正面触发：按 0/90/180/270 四向旋转，用「期望证件照区」
+  Haar 人脸命中确定朝向，再按固定模板把头像/姓名/号码/住址框映射回原图；
+  没有可识别脸/朝向/字段越界时返回 ``fallback=1`` 的整卡 ``id_document``（不漏）。
+  注释格式：``side=front|back;fields=n[;fallback=1];orient=0|90|180|270``，
+  ``orient`` 表示把原页面逆时针旋转多少度得到正向卡。
+- ``plate``：OCR 文本框 + 中国车牌正则（含新能源 8 位、挂/学/警后缀）作为基础路径；
+  全图 HSV 蓝/绿/黄底色 + 矩形拟合找**完整牌面**，OCR 仅确认归属；
+  不可读时回退低置信候选（note 标 unconfirmed），返回比 OCR 框更宽的整块牌面。
+- ``road_sign`` / ``door_address``：**P1 预留**，当前恒返回空（只注册 kind，
+  不产生误报）；实现计划见 docs/impl/visual.md。
 - ``road_sign`` / ``door_address``：**P1 预留**，当前恒返回空（只注册 kind，
   不产生误报）；实现计划见 docs/impl/visual.md。
 
@@ -54,6 +64,10 @@ Box = tuple[float, float, float, float]
 KINDS: tuple[str, ...] = (
     "face",
     "id_document",
+    "id_photo",
+    "id_name",
+    "id_number",
+    "id_address",
     "plate",
     "road_sign",
     "door_address",
@@ -605,6 +619,420 @@ def _id_region(anchor_boxes: Sequence[Box], all_boxes: Sequence[tuple[str, Box]]
                       float(width), float(height))
 
 
+# ────────────────────── 身份证关键字段（A 方案，P0 后续） ──────────────────────
+
+#: 正面字段模板（相对「正立卡片」宽/高归一化坐标；用用户 #85 转正实拍校准）。
+#: 只抹**值**、不抹标签；性别/民族/出生三行必须保持可见。
+_ID_FIELD_TEMPLATES: dict[str, tuple[float, float, float, float]] = {
+    "id_photo": (0.55, 0.15, 0.96, 0.78),
+    "id_name": (0.18, 0.12, 0.45, 0.26),
+    "id_address": (0.18, 0.48, 0.93, 0.69),
+    "id_number": (0.26, 0.73, 0.93, 0.90),
+}
+_ID_FIELD_PAD = 0.0                  # 模板区间已按实拍校准，不再整体外扩（框窄优先）
+_ID_FIELD_CARD_EXPAND = 0.03         # 拟合卡略小于实物卡，映射前放大 3%（补偿锚点内缩）
+_ID_CARD_ASPECT = 85.6 / 54.0        # ≈1.585（横版卡）
+_ID_CARD_MARGIN_X = 0.06             # 文本锚点距卡片左边 6%
+#: #85 转正实测：姓名行顶 ≈卡高 14.7%，公民身份号码标签底 ≈卡高 91%；
+#: 锚点纵向跨度对应卡高 76.3%，据此反推卡片高度/上边界（旧 5%~86% 会把框整体上移）。
+_ID_CARD_MARGIN_TOP = 0.147
+_ID_CARD_TEXT_H = 0.763
+_ID_PHOTO_REGION = (0.55, 0.15, 0.96, 0.78)   # 期望证件照区域（脸中心归一化）
+_ID_FRONT_ANCHORS = ("姓名", "公民身份号码", "住址", "性别", "民族", "出生")
+_ID_BACK_ANCHORS = ("签发机关", "有效期限", "居民身份证")
+_ID_NUMBER_RE = re.compile(r"\d{17}[\dXx]")
+
+
+def _offset_box(box: Box, dx: float, dy: float) -> Box:
+    return (box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy)
+
+
+def _rot_forward_box(box: Box, k: int, width: float, height: float) -> Box:
+    """原图（裁片）坐标 → 逆时针旋转 k*90° 后的坐标。
+
+    np.rot90(crop, k) 的像素关系（裁片宽 W、高 H）：
+    k=1: Xr=y,           Yr=W-x
+    k=2: Xr=W-x,         Yr=H-y
+    k=3: Xr=H-y,         Yr=x
+    """
+    x0, y0, x1, y1 = box
+    k %= 4
+    if k == 0:
+        return (x0, y0, x1, y1)
+    if k == 1:
+        return (y0, width - x1, y1, width - x0)
+    if k == 2:
+        return (width - x1, height - y1, width - x0, height - y0)
+    return (height - y1, x0, height - y0, x1)
+
+
+def _rot_back_box(box: Box, k: int, width: float, height: float) -> Box:
+    """逆时针旋转 k*90° 后的坐标 → 原图（裁片）坐标（上式的逆）。"""
+    x0, y0, x1, y1 = box
+    k %= 4
+    if k == 0:
+        return (x0, y0, x1, y1)
+    if k == 1:
+        return (width - y1, x0, width - y0, x1)
+    if k == 2:
+        return (width - x1, height - y1, width - x0, height - y0)
+    return (y0, height - x1, y1, height - x0)
+
+
+def _expand_card_rect(box: Box, width: int, height: int, ratio: float = 0.10) -> Box:
+    """整卡命中框外扩（宁可多遮不可漏）；字段框不受影响。"""
+    x0, y0, x1, y1 = box
+    dx = (x1 - x0) * ratio
+    dy = (y1 - y0) * ratio
+    return _clamp_box((x0 - dx, y0 - dy, x1 + dx, y1 + dy),
+                      float(width), float(height))
+
+
+def _expand_card_rect_local(box: Box, ratio: float) -> Box:
+    """四边等比外扩（用于模板映射前放大拟合卡，不夹取页面边界）。"""
+    x0, y0, x1, y1 = box
+    dx = (x1 - x0) * ratio
+    dy = (y1 - y0) * ratio
+    return (x0 - dx, y0 - dy, x1 + dx, y1 + dy)
+
+
+def _inside_ratio(inner: Box, width: float, height: float) -> float:
+    """框落在 [0,0,width,height] 内的面积占比（0~1）。"""
+    x0, y0 = max(0.0, inner[0]), max(0.0, inner[1])
+    x1, y1 = min(float(width), inner[2]), min(float(height), inner[3])
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    inter = (x1 - x0) * (y1 - y0)
+    area = max(1e-6, (inner[2] - inner[0]) * (inner[3] - inner[1]))
+    return inter / area
+
+
+def _fitted_card_box(anchor_rot: Sequence[Box]) -> Box | None:
+    """用「正立卡片」坐标系里的文本锚点并集，反推横版卡片矩形。
+
+    依据 #85 转正实测：姓名行顶 ≈ 卡高 14.7%、公民身份号码标签底 ≈ 卡高 91%，
+    即文本锚点纵向跨度约卡高 76.3%；宽度按身份证 1.585 横版比例反推，
+    左边界由「最左锚点距卡左 6%」得到。旧假设 5%~86% 会让卡片整体上移，
+    #85 上表现为住址框上移盖住性别/民族/出生行。
+    """
+    if not anchor_rot:
+        return None
+    x0 = min(b[0] for b in anchor_rot)
+    y0 = min(b[1] for b in anchor_rot)
+    x1 = max(b[2] for b in anchor_rot)
+    y1 = max(b[3] for b in anchor_rot)
+    ah = max(1.0, y1 - y0)
+    if ah < 6:
+        return None
+    card_h = ah / _ID_CARD_TEXT_H
+    card_w = card_h * _ID_CARD_ASPECT
+    if card_w < max(8.0, x1 - x0):      # 保证装得下横向锚点
+        card_w = max(8.0, x1 - x0) / 0.90
+        card_h = card_w / _ID_CARD_ASPECT
+    card_x0 = x0 - _ID_CARD_MARGIN_X * card_w
+    card_y0 = y0 - _ID_CARD_MARGIN_TOP * card_h
+    return (card_x0, card_y0, card_x0 + card_w, card_y0 + card_h)
+
+
+def _text_upright_votes(anchor_page: Sequence[Box], crop_box: Box,
+                        crop_w: float, crop_h: float) -> list[int]:
+    """四向旋转投票：文本框变成「横排」最多的 k 即为文本朝向。"""
+    votes: list[int] = []
+    for k in range(4):
+        horizontal = 0
+        for rect in anchor_page:
+            local = _offset_box(rect, -crop_box[0], -crop_box[1])
+            mapped = _rot_forward_box(local, k, crop_w, crop_h)
+            w = mapped[2] - mapped[0]
+            h = mapped[3] - mapped[1]
+            if w >= h * 1.1:
+                horizontal += 1
+        votes.append(horizontal)
+    return votes
+
+
+def _choose_text_orientation(anchor_page: Sequence[Box], crop_box: Box,
+                             crop_w: float, crop_h: float) -> int:
+    votes = _text_upright_votes(anchor_page, crop_box, crop_w, crop_h)
+    best_k = 0
+    best_vote = -1
+    for k, vote in enumerate(votes):
+        if vote > best_vote:
+            best_k, best_vote = k, vote
+    return best_k
+
+
+def _expand_anchor_crop(anchor_page: Sequence[Box], width: int, height: int,
+                        ratio: float = 0.25) -> Box:
+    """锚点并集外扩一圈作为「证件裁片」，保证能包含头像区/卡片边缘。"""
+    x0 = min(b[0] for b in anchor_page)
+    y0 = min(b[1] for b in anchor_page)
+    x1 = max(b[2] for b in anchor_page)
+    y1 = max(b[3] for b in anchor_page)
+    pad_x = max(12.0, (x1 - x0) * ratio)
+    pad_y = max(12.0, (y1 - y0) * ratio)
+    return _clamp_box((x0 - pad_x, y0 - pad_y, x1 + pad_x, y1 + pad_y),
+                      float(width), float(height))
+
+
+def _detect_card_face(crop: np.ndarray, k: int, anchor_page: Sequence[Box],
+                      crop_box: Box, width: int, height: int):
+    """在旋转 k 后的裁片里找「证件照区域」的人脸。
+
+    返回 ``(score, rot_image, rot_w, rot_h, card_rot)``；找不到返回 ``None``。
+    """
+    if cv2 is None:
+        return None
+    try:
+        rot = np.rot90(crop, k)
+    except Exception:
+        return None
+    rot_h, rot_w = int(rot.shape[0]), int(rot.shape[1])
+    if rot_w < 40 or rot_h < 24:
+        return None
+    local_anchor = [_offset_box(r, -crop_box[0], -crop_box[1]) for r in anchor_page]
+    anchor_rot = [_rot_forward_box(r, k, float(crop.shape[1]), float(crop.shape[0]))
+                  for r in local_anchor]
+    card_rot = _fitted_card_box(anchor_rot)
+    if card_rot is None:
+        return None
+    if card_rot[2] - card_rot[0] <= (card_rot[3] - card_rot[1]) * 1.15:
+        return None            # 正向身份证必须是横版
+    scale = min(1.0, 640.0 / float(max(rot_w, rot_h)))
+    if scale < 1.0:
+        scan = cv2.resize(rot, (max(1, int(round(rot_w * scale))),
+                                max(1, int(round(rot_h * scale)))),
+                          interpolation=cv2.INTER_AREA)
+    else:
+        scan = rot
+    try:
+        gray = cv2.equalizeHist(cv2.cvtColor(scan, cv2.COLOR_RGB2GRAY))
+    except Exception:
+        return None
+    card_w = max(1.0, card_rot[2] - card_rot[0])
+    card_h = max(1.0, card_rot[3] - card_rot[1])
+    best = None
+    for _label, cascade, base_conf in _face_cascades(include_profile=False):
+        if cascade is None:
+            continue
+        try:
+            dets = cascade.detectMultiScale(gray, scaleFactor=1.1,
+                                            minNeighbors=5, minSize=(24, 24))
+        except Exception:
+            continue
+        for det in dets if dets is not None else []:
+            try:
+                fx, fy, fw, fh = (float(v) for v in list(det)[:4])
+            except Exception:
+                continue
+            if fw <= 0 or fh <= 0 or scale <= 0:
+                continue
+            # 映射回旋转后裁片坐标，再换算到「卡片归一化」坐标
+            cx = (fx + fw / 2.0) / scale
+            cy = (fy + fh / 2.0) / scale
+            nx = (cx - card_rot[0]) / card_w
+            ny = (cy - card_rot[1]) / card_h
+            tol = 0.06
+            if not (_ID_PHOTO_REGION[0] - tol <= nx <= _ID_PHOTO_REGION[2] + 0.03
+                    and _ID_PHOTO_REGION[1] - tol <= ny <= _ID_PHOTO_REGION[3] + tol):
+                continue
+            face_w = fw / scale
+            if face_w < card_w * 0.06:       # 小得离谱的框多半是纹理误报
+                continue
+            score = (fw / scale) * (fh / scale)
+            if best is None or score > best[0]:
+                best = (score, base_conf)
+    if best is None:
+        return None
+    return best[0], rot, rot_w, rot_h, card_rot
+
+
+def _refine_id_fields(fields: dict[str, Box],
+                      text_boxes: Sequence[tuple[str, Box]],
+                      card_page_box: Box,
+                      template_boxes: dict[str, Box] | None = None) -> dict[str, Box]:
+    """用同字段 OCR 文本框微调字段框，但**必须裁回模板值区间**。
+
+    校准后模板只覆盖「值」；OCR 框常把标签/邻行也框进来，若直接并集会遮到
+    性别/民族/出生行，因此并集后按模板框硬裁剪（宁可框窄一点，漏了可用整卡档兜底）。
+    """
+    card_area = max(1.0, (card_page_box[2] - card_page_box[0])
+                    * (card_page_box[3] - card_page_box[1]))
+    name_box = fields.get("id_name")
+    number_box = fields.get("id_number")
+    address_box = fields.get("id_address")
+
+    def _near(rect: Box, field: Box, expand: float) -> bool:
+        fx0 = field[0] - (field[2] - field[0]) * expand
+        fy0 = field[1] - (field[3] - field[1]) * expand
+        fx1 = field[2] + (field[2] - field[0]) * expand
+        fy1 = field[3] + (field[3] - field[1]) * expand
+        cx = (rect[0] + rect[2]) / 2.0
+        cy = (rect[1] + rect[3]) / 2.0
+        return fx0 <= cx <= fx1 and fy0 <= cy <= fy1
+
+    for text, rect in text_boxes:
+        norm = _norm_text(text)
+        if not norm:
+            continue
+        rect_area = max(1e-6, (rect[2] - rect[0]) * (rect[3] - rect[1]))
+        if rect_area > card_area * 0.45:     # 整页/整卡大框不参与扩框
+            continue
+        if name_box is not None and "姓名" in norm and _near(rect, name_box, 0.45):
+            name_box = (min(name_box[0], rect[0]), min(name_box[1], rect[1]),
+                        max(name_box[2], rect[2]), max(name_box[3], rect[3]))
+            fields["id_name"] = name_box
+        elif number_box is not None and (
+                _ID_NUMBER_RE.search(norm) or "身份号码" in norm
+                or "公民身份" in norm) and _near(rect, number_box, 0.55):
+            number_box = (min(number_box[0], rect[0]), min(number_box[1], rect[1]),
+                          max(number_box[2], rect[2]), max(number_box[3], rect[3]))
+            fields["id_number"] = number_box
+        elif address_box is not None and _near(rect, address_box, 0.45) and any(
+                key in norm for key in ("住址", "省", "市", "区", "路", "号", "村",
+                                        "街", "栋", "楼")):
+            address_box = (min(address_box[0], rect[0]), min(address_box[1], rect[1]),
+                           max(address_box[2], rect[2]), max(address_box[3], rect[3]))
+            fields["id_address"] = address_box
+    # 先裁回模板值区间（模板是遮「值」的边界，标签/邻行不得被并集带进来）
+    if template_boxes:
+        for kind, box in list(fields.items()):
+            template = template_boxes.get(kind)
+            if template is None:
+                continue
+            clipped = (max(box[0], template[0]), max(box[1], template[1]),
+                       min(box[2], template[2]), min(box[3], template[3]))
+            if clipped[2] > clipped[0] and clipped[3] > clipped[1]:
+                fields[kind] = clipped
+    # 再确保不扩到卡片外（卡片外扩 8% 容差）
+    pad_x = (card_page_box[2] - card_page_box[0]) * 0.08
+    pad_y = (card_page_box[3] - card_page_box[1]) * 0.08
+    allowed = (card_page_box[0] - pad_x, card_page_box[1] - pad_y,
+               card_page_box[2] + pad_x, card_page_box[3] + pad_y)
+    for kind, box in list(fields.items()):
+        clipped = (max(box[0], allowed[0]), max(box[1], allowed[1]),
+                   min(box[2], allowed[2]), min(box[3], allowed[3]))
+        if clipped[2] > clipped[0] and clipped[3] > clipped[1]:
+            fields[kind] = clipped
+    return fields
+
+
+def _detect_id_card_front(rgb: np.ndarray, text_boxes: Sequence[tuple[str, Box]],
+                          width: int, height: int):
+    """正面字段级检测：四向旋转 + 期望证件照区人脸选朝向 + 模板映射。
+
+    返回 ``(orient, fields, card_page_box)`` 或 ``None``（需要整卡回退）。
+    """
+    anchor_rects = [rect for _text, rect in
+                    _find_anchor_boxes(text_boxes, _ID_FRONT_ANCHORS)]
+    if len(anchor_rects) < 2:
+        return None
+    # 正面文字锚点只覆盖卡片左半（右侧是照片），四向旋转前无法预知照片方向；
+    # 直接以整页为裁片做四向旋转（长边缩到 640 再跑 Haar），保证旋转后照片区完整。
+    crop_box = (0.0, 0.0, float(width), float(height))
+    cx0, cy0 = 0, 0
+    crop = rgb
+    if crop.size == 0 or crop.shape[0] < 24 or crop.shape[1] < 40:
+        return None
+    crop_w = float(crop.shape[1])
+    crop_h = float(crop.shape[0])
+    best = None
+    for k in range(4):
+        found = _detect_card_face(crop, k, anchor_rects, crop_box, width, height)
+        if found is None:
+            continue
+        score, _rot, rot_w, rot_h, card_rot = found
+        if best is None or score > best[0]:
+            best = (score, k, rot_w, rot_h, card_rot)
+    if best is None:
+        return None
+    _score, k, rot_w, rot_h, card_rot = best
+    if _ID_FIELD_CARD_EXPAND:
+        card_rot = _expand_card_rect_local(card_rot, _ID_FIELD_CARD_EXPAND)
+    # 模板框：旋转后坐标系（正立卡片）→ 裁片坐标 → 页面坐标
+    cw = card_rot[2] - card_rot[0]
+    ch = card_rot[3] - card_rot[1]
+    pad_x = _ID_FIELD_PAD * cw
+    pad_y = _ID_FIELD_PAD * ch
+    fields: dict[str, Box] = {}
+    template_page: dict[str, Box] = {}
+    for kind, (nx0, ny0, nx1, ny1) in _ID_FIELD_TEMPLATES.items():
+        rot_box = (card_rot[0] + nx0 * cw - pad_x, card_rot[1] + ny0 * ch - pad_y,
+                   card_rot[0] + nx1 * cw + pad_x, card_rot[1] + ny1 * ch + pad_y)
+        local = _rot_back_box(rot_box, k, crop_w, crop_h)
+        if _inside_ratio(local, crop_w, crop_h) < 0.97:
+            return None                  # 字段框落出卡片/裁片 → 不猜，整卡回退
+        page_box = _clamp_box(_offset_box(local, cx0, cy0),
+                              float(width), float(height))
+        fields[kind] = page_box
+        template_page[kind] = page_box
+    card_local = _rot_back_box(card_rot, k, crop_w, crop_h)
+    card_page = _clamp_box(_offset_box(card_local, cx0, cy0),
+                           float(width), float(height))
+    if card_page[2] - card_page[0] < 40 or card_page[3] - card_page[1] < 24:
+        return None
+    fields = _refine_id_fields(fields, text_boxes, card_page, template_page)
+    return k * 90, fields, card_page
+
+
+def _choose_card_orientation(text_boxes: Sequence[tuple[str, Box]],
+                             anchor_page: Sequence[Box], crop_box: Box,
+                             crop_w: float, crop_h: float) -> int:
+    """文本朝向投票；横排候选有多个（0/180 或 90/270 歧义）时用证件标题位置消歧。
+
+    反面卡片顶部有「中华人民共和国居民身份证」标题：标题在卡片上半区的朝向才是正向。
+    """
+    votes = _text_upright_votes(anchor_page, crop_box, crop_w, crop_h)
+    best_vote = max(votes) if votes else 0
+    candidates = [k for k, vote in enumerate(votes) if vote == best_vote]
+    if len(candidates) <= 1:
+        return candidates[0] if candidates else 0
+    title_boxes = [rect for _text, rect in
+                   _find_anchor_boxes(text_boxes, ("居民身份证", "中华人民共和国"))]
+    if not title_boxes:
+        return candidates[0]
+    best = None
+    for k in candidates:
+        local = [_offset_box(r, -crop_box[0], -crop_box[1]) for r in anchor_page]
+        anchor_rot = [_rot_forward_box(r, k, crop_w, crop_h) for r in local]
+        card = _fitted_card_box(anchor_rot)
+        if card is None:
+            continue
+        title_local = [_offset_box(r, -crop_box[0], -crop_box[1])
+                       for r in title_boxes]
+        title_rot = [_rot_forward_box(r, k, crop_w, crop_h)
+                     for r in title_local]
+        cy = sum((b[1] + b[3]) / 2.0 for b in title_rot) / len(title_rot)
+        ny = (cy - card[1]) / max(1.0, card[3] - card[1])
+        if best is None or ny < best[0]:
+            best = (ny, k)
+    return best[1] if best else candidates[0]
+
+
+def _detect_id_card_fallback(rgb: np.ndarray, text_boxes: Sequence[tuple[str, Box]],
+                             anchor_rects: Sequence[Box], width: int, height: int,
+                             side: str = "front"):
+    """无脸/无法确定朝向时的整卡回退：文本朝向投票估卡片框，返回 (orient, box)。"""
+    if not anchor_rects:
+        return 0, (0.0, 0.0, float(width), float(height))
+    crop_box = _expand_anchor_crop(anchor_rects, width, height, ratio=0.28)
+    cx0, cy0, cx1, cy1 = (int(round(v)) for v in crop_box)
+    crop = rgb[cy0:cy1, cx0:cx1]
+    if crop.size == 0:
+        return 0, crop_box
+    crop_w = float(crop.shape[1])
+    crop_h = float(crop.shape[0])
+    k = _choose_card_orientation(text_boxes, anchor_rects, crop_box, crop_w, crop_h)
+    local_anchor = [_offset_box(r, -cx0, -cy0) for r in anchor_rects]
+    anchor_rot = [_rot_forward_box(r, k, crop_w, crop_h) for r in local_anchor]
+    card_rot = _fitted_card_box(anchor_rot)
+    if card_rot is None:
+        return k * 90, _clamp_box(crop_box, float(width), float(height))
+    local = _rot_back_box(card_rot, k, crop_w, crop_h)
+    page = _clamp_box(_offset_box(local, cx0, cy0), float(width), float(height))
+    return k * 90, page
+
+
 def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
                         text_boxes: Sequence[tuple[str, Box]]) -> list[ScanHit]:
     if not text_boxes:
@@ -620,7 +1048,8 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
         # 纯文本长文（发票/合同/函件）：不做证件判定，避免整页误涂
         return []
     text_rich = block_count >= 12
-    best: tuple[float, str, list[Box], str] | None = None   # conf,type,anchors,note
+    best: tuple[float, str, list[Box], str, list[Box]] | None = None
+    # conf, type, regions, note, anchors
 
     for doc_type, spec in _ID_DOC_SPECS.items():
         strong = _find_anchor_boxes(text_boxes, spec.get("strong", ()))
@@ -672,15 +1101,63 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
         note = (f"engine=ocr;doc={doc_type};n={n_strong + n_medium + n_weak}"
                 f"{';whole_page' if whole_page else ''}"
                 f"{';textpage_region' if text_rich else ''}")
-        cand = (conf, doc_type, [region], note)
+        cand = (conf, doc_type, [region], note, anchor_rects)
         if best is None or cand[0] > best[0]:
             best = cand
 
     if best is None:
         return []
-    conf, doc_type, regions, note = best
-    return [ScanHit(kind="id_document", rect=regions[0],
-                    confidence=round(conf, 3), note=note)]
+    conf, doc_type, regions, note, anchor_rects = best
+    if doc_type != "id_card":
+        # 护照/驾驶证/营业执照/社保卡：保持原有整卡命中（字段级只做身份证）
+        return [ScanHit(kind="id_document", rect=regions[0],
+                        confidence=round(conf, 3), note=note)]
+
+    # ── 身份证：正/反面分类 + 正面字段级定位（A 方案） ──
+    whole_page = "whole_page" in note          # 卡几乎占满整页（用户实拍常见）
+    page_rect = (0.0, 0.0, float(width), float(height))
+    front_hits = _find_anchor_boxes(text_boxes, _ID_FRONT_ANCHORS)
+    back_hits = _find_anchor_boxes(text_boxes, _ID_BACK_ANCHORS)
+    side = "back" if len(back_hits) > len(front_hits) else "front"
+    if side == "back":
+        # 反面：没有可抹的字段，只报 side=back 的整卡（关键字段模式由 Lead 决定提示）
+        orient, card_box = _detect_id_card_fallback(
+            rgb, text_boxes, anchor_rects, width, height, side="back")
+        doc_rect = page_rect if whole_page else _expand_card_rect(
+            card_box, width, height, ratio=0.10)
+        return [ScanHit(
+            kind="id_document", rect=doc_rect,
+            confidence=round(max(conf, 0.85), 3),
+            note=f"engine=ocr;doc=id_card;side=back;fields=0;orient={orient}")]
+
+    front = _detect_id_card_front(rgb, text_boxes, width, height)
+    if front is None:
+        # 无脸/无法确定朝向/字段框越界：不猜，整卡 fallback=1（保证不漏）
+        orient, card_box = _detect_id_card_fallback(
+            rgb, text_boxes, anchor_rects, width, height, side="front")
+        doc_rect = page_rect if whole_page else _expand_card_rect(
+            card_box, width, height, ratio=0.10)
+        return [ScanHit(
+            kind="id_document", rect=doc_rect,
+            confidence=round(min(conf, 0.88), 3),
+            note=(f"engine=ocr;doc=id_card;side=front;fields=0;fallback=1;"
+                  f"orient={orient}"))]
+    orient, fields, card_page = front
+    field_note = f"engine=ocr;doc=id_card;side=front;fields={len(fields)};orient={orient}"
+    hits: list[ScanHit] = []
+    for kind in ("id_photo", "id_name", "id_number", "id_address"):
+        box = fields.get(kind)
+        if box is None:
+            continue
+        field_conf = 0.90 if kind in ("id_photo", "id_name", "id_number") else 0.86
+        hits.append(ScanHit(kind=kind, rect=box, confidence=field_conf,
+                            note=field_note))
+    doc_rect = page_rect if whole_page else _expand_card_rect(
+        card_page, width, height, ratio=0.10)
+    hits.append(ScanHit(kind="id_document", rect=doc_rect,
+                        confidence=round(min(0.97, conf), 3),
+                        note=field_note))
+    return hits
 
 
 # ────────────────────────────── 车牌（OCR + 颜色修正，P0） ──────────────────────────────
@@ -974,14 +1451,22 @@ def _detect_door_address(rgb: np.ndarray, ctx: ScanContext,
 
 # ────────────────────────────── 总入口 ──────────────────────────────
 
+#: 身份证关键字段 kind：落在整卡框里也必须保留（A 方案 fields 模式要用）
+_ID_FIELD_KINDS = ("id_photo", "id_name", "id_number", "id_address")
+
+
 def _prune_nested(hits: list[ScanHit]) -> list[ScanHit]:
-    """证件整图命中后，落在其中的脸/车牌框不再单独上报（避免重复实体）。"""
+    """证件整图命中后，落在其中的脸/车牌框不再单独上报（避免重复实体）。
+
+    注意：身份证字段 kind（id_photo/id_name/id_number/id_address）虽然在整卡框内，
+    但 A 方案 fields 模式必须用它们，不能在这里被当成重复删掉；由 jobs 按 mode 过滤。
+    """
     docs = [hit for hit in hits if hit.kind == "id_document"]
     if not docs:
         return hits
     out: list[ScanHit] = []
     for hit in hits:
-        if hit.kind == "id_document":
+        if hit.kind == "id_document" or hit.kind in _ID_FIELD_KINDS:
             out.append(hit)
             continue
         if any(_ioc(hit.rect, doc.rect) >= 0.85 for doc in docs):
@@ -1063,5 +1548,8 @@ __all__ = [
     "KINDS", "SCANNER_NAME", "scan", "iter_text_boxes",
     "_detect_faces", "_detect_id_document", "_detect_plates",
     "_detect_road_sign", "_detect_door_address",
+    "_detect_id_card_front", "_detect_id_card_fallback",
+    "_ID_FIELD_TEMPLATES", "_rot_forward_box", "_rot_back_box",
+    "_fitted_card_box",
     "_FACE_CASCADES_OVERRIDE",
 ]

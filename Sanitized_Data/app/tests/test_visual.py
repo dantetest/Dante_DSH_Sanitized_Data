@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""图像 P0 扫描器测试（visual_targets：人脸 / 证件整图 / 车牌）。
+"""图像 P0 扫描器测试（visual_targets：人脸 / 证件整图与身份证字段 / 车牌）。
 
 运行（Windows 控制台请带 -X utf8）：
 
@@ -10,9 +10,12 @@
 - 纯离线、无网络、不写仓库：夹具默认生成到临时目录（tempfile.mkdtemp()）。
   想人工看一眼夹具时，加环境变量 ``YINZHAN_WRITE_FIXTURES=1``，会写到
   ``app/tests/fixtures/visual/``（该目录不入库二进制，由本脚本按需生成）。
-- 人脸正样本：仓库内没有可再分发的真人照片，P0 用「注入假级联」验证
-  缩放下采样、外扩 12%、去重、置信度换算、文档页跳过侧脸等逻辑；
-  真实照片召回/误报测试集待用户提供（见 docs/impl/visual.md §6）。
+- 人脸正样本：仓库内没有可再分发的真人照片，用「注入假级联」验证
+  分块缩放映射、整头外扩、去重、置信度换算、文档页跳过侧脸等逻辑；
+  真实照片召回/误报测试集见 docs/impl/visual.md §9（用户测试集只读实测）。
+- 身份证关键字段（A 方案）：合成正面/反面卡（虚构姓名/号码/地址 + 暗红头像块，
+  0/90/180/270 四向）+ 注入「最大暗块」假级联，验证朝向/模板映射/整卡回退；
+  无脸卡走 fallback=1。
 - 负样本：真实 ``samples/名片.png``（跑真 OCR 取文本框）、``samples/正射影像.tif``
   首帧、纯白页，断言不新增 face / plate / id_document 误报（红线要求）。
 """
@@ -35,7 +38,7 @@ from PIL import Image, ImageDraw, ImageFont           # noqa: E402
 
 from yinzhan import mediascan                         # noqa: E402
 from yinzhan import visual_targets                    # noqa: E402
-from yinzhan.mediascan import ScanContext             # noqa: E402
+from yinzhan.mediascan import ScanContext, ScanHit   # noqa: E402
 
 SAMPLES = REPO / "samples"
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "visual"
@@ -262,7 +265,119 @@ def build_fixtures() -> dict:
     img.save(path)
     out["blank_page"] = {"path": path, "size": img.size, "text_boxes": []}
 
+    # 11) 身份证正面字段级夹具：0/90/180/270 四向 + 无脸回退
+    _add_id_field_fixtures(root, out)
+
     return out
+
+
+def _add_id_field_fixtures(root: Path, out: dict) -> None:
+    """生成身份证正面/反面/无脸合成夹具（虚构信息，不入库）。
+
+    正面布局按用户 #85 转正实拍校准：标签在左、值落在模板值区间；
+    性别/民族、出生两行画在模板间隙里，用于断言导出掩膜不得覆盖保留行。
+    """
+    width, height = 1400, 900
+    background = (120, 130, 125)          # 中性灰：既非暗块、也非纯白
+    card = (150, 110, 1250, 804)          # 1100×694，≈1.585 横版身份证比例
+    card_w = float(card[2] - card[0])
+    card_h = float(card[3] - card[1])
+
+    def _rel_box(nx0: float, ny0: float, nx1: float, ny1: float):
+        return (card[0] + nx0 * card_w, card[1] + ny0 * card_h,
+                card[0] + nx1 * card_w, card[1] + ny1 * card_h)
+
+    # (text, nx, ny, font_size, group)；group 用于统计字段期望区/保留行区域
+    front_items = (
+        ("姓名", 0.08, 0.145, 34, None),
+        ("张三", 0.20, 0.135, 44, "id_name"),
+        ("性别", 0.08, 0.305, 32, None),
+        ("男", 0.20, 0.305, 34, "retained_gender"),
+        ("民族", 0.32, 0.305, 32, None),
+        ("汉", 0.44, 0.305, 34, "retained_gender"),
+        ("出生", 0.08, 0.405, 32, None),
+        ("1990年1月1日", 0.20, 0.405, 30, "retained_birth"),
+        ("住址", 0.08, 0.535, 32, None),
+        ("上海市浦东新区测试路1号", 0.20, 0.535, 28, "id_address"),
+        ("2栋3单元401室", 0.22, 0.615, 28, "id_address"),
+        ("公民身份号码", 0.08, 0.805, 30, None),
+        ("310101199001011234", 0.30, 0.795, 32, "id_number"),
+    )
+    back_items = (
+        ("中华人民共和国居民身份证", 0.30, 0.10, 34, None),
+        ("签发机关 上海市公安局", 0.10, 0.55, 32, None),
+        ("有效期限 2020.01.01-2040.01.01", 0.10, 0.72, 30, None),
+    )
+
+    def _union(rects):
+        return (min(r[0] for r in rects), min(r[1] for r in rects),
+                max(r[2] for r in rects), max(r[3] for r in rects))
+
+    def _render(items, photo: bool):
+        img = _new_canvas(width, height, background)
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle(card, radius=30, fill=(250, 250, 248),
+                               outline=(90, 90, 90), width=4)
+        photo_rect = None
+        if photo:
+            photo_rect = _rel_box(0.55, 0.15, 0.96, 0.78)
+            draw.rectangle([round(v) for v in photo_rect], fill=(150, 25, 25))
+        text_boxes = []
+        groups: dict[str, list] = {}
+        for text, nx, ny, size, group in items:
+            pos = (round(card[0] + nx * card_w), round(card[1] + ny * card_h))
+            font = _font(size)
+            _draw_text(draw, pos, text, size)
+            bbox = tuple(float(v) for v in draw.textbbox(pos, text, font=font))
+            text_boxes.append({"text": text, "rect": bbox})
+            if group:
+                groups.setdefault(group, []).append(bbox)
+        value_rects = {key: _union(rects) for key, rects in groups.items()
+                       if key in ("id_name", "id_address", "id_number")}
+        retained = [_union(groups[key]) for key in
+                    ("retained_gender", "retained_birth") if key in groups]
+        return img, text_boxes, photo_rect, value_rects, retained
+
+    def _emit(prefix: str, img, text_boxes, photo_rect, value_rects,
+              retained, rotations=(0, 90, 180, 270)) -> None:
+        base = np.array(img)
+        for rotation in rotations:
+            k = rotation // 90
+            page = np.rot90(base, k).copy()
+            page_h, page_w = page.shape[:2]
+
+            def _map(box):
+                return tuple(visual_targets._rot_forward_box(
+                    box, k, float(width), float(height)))
+
+            boxes = [{"text": item["text"], "rect": _map(item["rect"])}
+                     for item in text_boxes]
+            path = root / f"{prefix}_{rotation}.png"
+            Image.fromarray(page).save(path)
+            # 未旋转的原始图像 → 需要逆时针旋转 ((4-k)%4)*90° 才能转正
+            expected_orient = ((4 - k) % 4) * 90
+            out[f"{prefix}_{rotation}"] = {
+                "path": path, "size": (page_w, page_h), "text_boxes": boxes,
+                "card_rect": _map(card),
+                "photo_rect": _map(photo_rect) if photo_rect else None,
+                "value_rects": {key: _map(rect)
+                                for key, rect in value_rects.items()},
+                "retained_rects": [_map(rect) for rect in retained],
+                "orient_expected": expected_orient,
+            }
+
+    front_img, front_boxes, front_photo, front_values, front_retained = _render(
+        front_items, True)
+    _emit("idfront", front_img, front_boxes, front_photo, front_values,
+          front_retained)
+    noface_img, noface_boxes, _, noface_values, noface_retained = _render(
+        front_items, False)
+    _emit("idfront_noface", noface_img, noface_boxes, None, noface_values,
+          noface_retained, rotations=(0,))
+    back_img, back_boxes, _, back_values, _ = _render(back_items, False)
+    _emit("idback", back_img, back_boxes, None, back_values, [],
+          rotations=(0, 90))
+
 
 
 # ────────────────────────────── 测试用假级联 ──────────────────────────────
@@ -282,6 +397,45 @@ class _FakeCascade:
         return np.array(boxes, dtype=np.int32) if boxes else np.array([])
 
 
+class _MarkerFaceCascade:
+    """测试用假级联：把「图像里最大的暗色实心块」当证件照头像。
+
+    合成身份证夹具用暗红实心块表示头像；反向测试（不画头像块）时只剩文字
+    笔画/描边等细碎暗块，本假级联不会返回，从而走 fallback 整卡分支。
+    """
+
+    def __init__(self, max_gray: int = 110, min_area_frac: float = 0.01):
+        self.max_gray = max_gray
+        self.min_area_frac = min_area_frac
+        self.calls = 0
+
+    def detectMultiScale(self, image, scaleFactor=1.1, minNeighbors=5,
+                         minSize=(24, 24)):
+        import cv2 as _cv2
+        self.calls += 1
+        if image is None:
+            return np.empty((0, 4), np.int32)
+        gray = image if image.ndim == 2 else _cv2.cvtColor(
+            image, _cv2.COLOR_RGB2GRAY)
+        mask = (gray < self.max_gray).astype(np.uint8)
+        count, _labels, stats, _centroids = _cv2.connectedComponentsWithStats(
+            mask, 8)
+        height, width = gray.shape
+        best = None
+        for index in range(1, count):
+            x, y, bw, bh, area = (int(v) for v in stats[index][:5])
+            if bw < 8 or bh < 8 or area < self.min_area_frac * width * height:
+                continue
+            fill = area / max(1.0, bw * bh)
+            if fill < 0.60:            # 描边/文字笔画不算头像块
+                continue
+            if best is None or area > best[4]:
+                best = (x, y, bw, bh, area)
+        if best is None:
+            return np.empty((0, 4), np.int32)
+        return np.array([[best[0], best[1], best[2], best[3]]], dtype=np.int32)
+
+
 def _ctx(width: int, height: int, text_boxes=None, options=None) -> ScanContext:
     opts = {"text_boxes": text_boxes or []}
     if options:
@@ -296,6 +450,31 @@ def _image(path) -> np.ndarray:
 
 def _hits_by_kind(hits, kind: str):
     return [hit for hit in hits if hit.kind == kind]
+
+
+def _intersection_area(a, b) -> float:
+    x0, y0 = max(a[0], b[0]), max(a[1], b[1])
+    x1, y1 = min(a[2], b[2]), min(a[3], b[3])
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    return (x1 - x0) * (y1 - y0)
+
+
+def _mask_coverage(target, masks, samples: int = 40) -> float:
+    """像素采样估计：target 区域被 masks（描黑框）覆盖的面积比例。"""
+    x0, y0, x1, y1 = target
+    if x1 <= x0 or y1 <= y0 or not masks:
+        return 0.0
+    covered = 0
+    total = 0
+    for iy in range(samples):
+        py = y0 + (iy + 0.5) * (y1 - y0) / samples
+        for ix in range(samples):
+            px = x0 + (ix + 0.5) * (x1 - x0) / samples
+            total += 1
+            if any(m[0] <= px <= m[2] and m[1] <= py <= m[3] for m in masks):
+                covered += 1
+    return covered / float(total or 1)
 
 
 # ══════════════════════════════ 测试类 ══════════════════════════════
@@ -314,6 +493,10 @@ class TestRegistration(unittest.TestCase):
         self.assertIn(visual_targets.SCANNER_NAME, mediascan.scanner_names())
         self.assertIn("face", visual_targets.KINDS)
         self.assertIn("id_document", visual_targets.KINDS)
+        self.assertIn("id_photo", visual_targets.KINDS)
+        self.assertIn("id_name", visual_targets.KINDS)
+        self.assertIn("id_number", visual_targets.KINDS)
+        self.assertIn("id_address", visual_targets.KINDS)
         self.assertIn("plate", visual_targets.KINDS)
 
     def test_no_cv2_still_importable(self):
@@ -525,7 +708,12 @@ class TestIdDocument(unittest.TestCase):
         self.assertAlmostEqual(rect[1], 0.0, delta=1.0)
         self.assertAlmostEqual(rect[2], float(width), delta=1.0)
         self.assertAlmostEqual(rect[3], float(height), delta=1.0)
-        self.assertIn("whole_page", hits[0].note)
+        # 新 note 格式：身份证带 side/fields/orient；无脸时 fallback=1
+        self.assertIn("doc=id_card", hits[0].note)
+        self.assertIn("side=front", hits[0].note)
+        self.assertIn("fields=0", hits[0].note)
+        self.assertIn("fallback=1", hits[0].note)
+        self.assertIn("orient=", hits[0].note)
 
     def test_passport_mrz(self):
         hits = self._run("passport")
@@ -553,6 +741,127 @@ class TestIdDocument(unittest.TestCase):
         ctx = _ctx(*fixture["size"])
         self.assertEqual(
             visual_targets._detect_id_document(image, ctx, []), [])
+
+
+class TestIdCardFields(unittest.TestCase):
+    """A 方案：身份证关键字段定位（合成卡 0/90/180/270 + 反面 + 无脸回退）。"""
+
+    def setUp(self):
+        self._saved_override = visual_targets._FACE_CASCADES_OVERRIDE
+        visual_targets._FACE_CASCADES_OVERRIDE = [
+            ("frontal", _MarkerFaceCascade(), 0.92)]
+        self._env_backup = {key: os.environ.get(key)
+                            for key in ("YINZHAN_SCAN_FACE_PROFILE",)}
+        os.environ["YINZHAN_SCAN_FACE_PROFILE"] = "0"
+
+    def tearDown(self):
+        visual_targets._FACE_CASCADES_OVERRIDE = self._saved_override
+        for key, value in self._env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def _run(self, name: str):
+        fixture = FIXTURES[name]
+        image = _image(fixture["path"])
+        ctx = _ctx(*fixture["size"], fixture["text_boxes"])
+        boxes = visual_targets.iter_text_boxes(ctx)
+        return visual_targets._detect_id_document(image, ctx, boxes)
+
+    def test_front_fields_all_orientations(self):
+        for rotation in (0, 90, 180, 270):
+            name = f"idfront_{rotation}"
+            fixture = FIXTURES[name]
+            with self.subTest(rotation=rotation):
+                hits = self._run(name)
+                fields = {hit.kind: hit for hit in hits if hit.kind in
+                          ("id_photo", "id_name", "id_number", "id_address")}
+                self.assertEqual(
+                    set(fields),
+                    {"id_photo", "id_name", "id_number", "id_address"},
+                    [hit.note for hit in hits])
+                docs = [hit for hit in hits if hit.kind == "id_document"]
+                self.assertEqual(len(docs), 1)
+                for hit in hits:
+                    self.assertIn("side=front", hit.note)
+                    self.assertIn("fields=4", hit.note)
+                    self.assertNotIn("fallback=1", hit.note)
+                    self.assertIn(f"orient={fixture['orient_expected']}", hit.note)
+                # 字段框都在卡片范围内（卡片外扩 8% 容差）
+                cx0, cy0, cx1, cy1 = fixture["card_rect"]
+                dx, dy = (cx1 - cx0) * 0.08, (cy1 - cy0) * 0.08
+                card = (cx0 - dx, cy0 - dy, cx1 + dx, cy1 + dy)
+                for kind, hit in fields.items():
+                    self.assertGreaterEqual(
+                        visual_targets._ioc(hit.rect, card), 0.95, kind)
+                # 字段覆盖语义区域：头像块/姓名值/号码值/住址值（遮盖率 ≥85%）
+                semantic = {
+                    "id_photo": fixture["photo_rect"],
+                    "id_name": fixture["value_rects"]["id_name"],
+                    "id_number": fixture["value_rects"]["id_number"],
+                    "id_address": fixture["value_rects"]["id_address"],
+                }
+                for kind, expected in semantic.items():
+                    self.assertIsNotNone(expected, kind)
+                    area = (expected[2] - expected[0]) * (expected[3] - expected[1])
+                    covered = _intersection_area(fields[kind].rect, expected) / area
+                    self.assertGreaterEqual(covered, 0.85, kind)
+                # 性别/民族/出生三行必须保留可见：导出掩膜（4 个字段框）不得
+                # 完全覆盖保留行（像素采样覆盖率 <50%，即至少一半可见）
+                mask_boxes = [hit.rect for hit in fields.values()]
+                for index, retained in enumerate(fixture["retained_rects"]):
+                    coverage = _mask_coverage(retained, mask_boxes)
+                    self.assertLess(
+                        coverage, 0.5,
+                        f"rotation={rotation} 保留行{index}被字段框覆盖 "
+                        f"{coverage:.0%}：{retained} masks={mask_boxes}")
+
+    def test_back_returns_only_id_document(self):
+        for rotation in (0, 90):
+            with self.subTest(rotation=rotation):
+                hits = self._run(f"idback_{rotation}")
+                self.assertEqual([hit.kind for hit in hits], ["id_document"],
+                                 [hit.note for hit in hits])
+                note = hits[0].note
+                self.assertIn("side=back", note)
+                self.assertIn("fields=0", note)
+                self.assertIn("orient=", note)
+                self.assertNotIn("fallback=1", note)
+
+    def test_no_face_falls_back_to_whole_card(self):
+        hits = self._run("idfront_noface_0")
+        self.assertEqual(len(hits), 1, [hit.note for hit in hits])
+        note = hits[0].note
+        self.assertEqual(hits[0].kind, "id_document")
+        self.assertIn("side=front", note)
+        self.assertIn("fields=0", note)
+        self.assertIn("fallback=1", note)
+        self.assertIn("orient=", note)
+        self.assertNotIn("id_photo", [hit.kind for hit in hits])
+
+    def test_rotation_mapping_roundtrip(self):
+        box = (150.0, 110.0, 1250.0, 804.0)
+        width, height = 1400, 900
+        for k in range(4):
+            page_box = visual_targets._rot_forward_box(
+                box, k, float(width), float(height))
+            back = visual_targets._rot_back_box(
+                page_box, k, float(width), float(height))
+            for a, b in zip(box, back):
+                self.assertAlmostEqual(a, b, delta=1e-6)
+
+    def test_fields_kept_in_prune_nested(self):
+        # 字段框在整卡框内也不能被 _prune_nested 当重复删掉（jobs 按模式过滤）
+        hits = [
+            ScanHit(kind="id_document", rect=(0.0, 0.0, 100.0, 100.0),
+                    confidence=0.9, note="engine=ocr;doc=id_card;fields=1"),
+            ScanHit(kind="id_photo", rect=(10.0, 10.0, 40.0, 40.0),
+                    confidence=0.9, note="engine=ocr;doc=id_card;fields=1"),
+        ]
+        pruned = visual_targets._prune_nested(hits)
+        self.assertEqual([hit.kind for hit in pruned],
+                         ["id_document", "id_photo"])
 
 
 class TestPlate(unittest.TestCase):

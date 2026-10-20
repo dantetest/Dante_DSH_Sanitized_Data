@@ -138,6 +138,10 @@ def create_job(ctx):
     body = ctx.json()
     strictness = body.get("strictness") or "standard"
     packs = body.get("packs") or None
+    # 证件脱敏档位：fields=只遮头像/姓名/身份证号/住址（默认）；whole=整卡涂黑
+    id_card_mode = body.get("id_card_mode") or "fields"
+    if id_card_mode not in ("fields", "whole"):
+        id_card_mode = "fields"
     path: Path | None = None
     if body.get("upload_id"):
         uid = body["upload_id"]
@@ -152,8 +156,10 @@ def create_job(ctx):
             raise ApiError("路径不存在")
     else:
         raise ApiError("缺少 upload_id 或 path")
-    job = MANAGER.create(path, strictness=strictness, pack_ids=packs)
-    return {"job_id": job.id, "name": job.name, "fmt": job.fmt}
+    job = MANAGER.create(path, strictness=strictness, pack_ids=packs,
+                         id_card_mode=id_card_mode)
+    return {"job_id": job.id, "name": job.name, "fmt": job.fmt,
+            "id_card_mode": job.id_card_mode}
 
 
 @route("GET", r"/api/jobs")
