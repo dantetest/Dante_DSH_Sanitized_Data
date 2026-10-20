@@ -646,13 +646,13 @@ def _fake_code(body: str, rng: random.Random) -> str:
 
 
 _AMOUNT_RE = re.compile(
-    r"^(?P<pre>[^\d]{0,10}?)(?P<int>\d{1,3}(?:,\d{3})+|\d+)"
+    r"^(?P<pre>[^\d]{0,10}?)(?P<int>\d{1,3}(?:[ ,]\d{3})+|\d+)"
     r"(?P<dec>\.\d+)?(?P<unit>\s*(?:万亿|亿元|万元|亿|万|元|圆|块))?$")
 _CN_NUMERALS = "壹贰叁肆伍陆柒捌玖"
 
 
 def _fake_amount(value: str, rng: random.Random, attempt: int = 0) -> str:
-    """金额：±25% 内浮动，保持数量级、小数位、千分位和单位。"""
+    """金额：±25% 内浮动，保持数量级、小数位、千分位（含空格分隔）和单位。"""
     label, body = _split_label(value)
     match = _AMOUNT_RE.match(body)
     if not match:
@@ -668,8 +668,14 @@ def _fake_amount(value: str, rng: random.Random, attempt: int = 0) -> str:
     int_text = match.group("int")
     dec = match.group("dec") or ""
     unit = match.group("unit") or ""
-    has_comma = "," in int_text
-    plain = int_text.replace(",", "")
+    # 分隔符：逗号优先，其次空格（判决书/OCR 常把千分位排成空格）
+    if "," in int_text:
+        separator = ","
+    elif " " in int_text:
+        separator = " "
+    else:
+        separator = ""
+    plain = int_text.replace(",", "").replace(" ", "")
     original = int(plain)
     digits_len = len(plain)
     lower = max(0.75, (10 ** (digits_len - 1)) / original) if original else 0.75
@@ -686,7 +692,16 @@ def _fake_amount(value: str, rng: random.Random, attempt: int = 0) -> str:
                                 original + rng.choice((-1, 1))))
         else:
             new_value = 1 if original != 1 else 2
-    new_int = f"{new_value:,}" if has_comma else str(new_value).zfill(digits_len)
+    if separator:
+        groups: list[str] = []
+        text_digits = str(new_value).zfill(digits_len)
+        first = len(text_digits) % 3 or 3
+        groups.append(text_digits[:first])
+        for pos in range(first, len(text_digits), 3):
+            groups.append(text_digits[pos:pos + 3])
+        new_int = separator.join(groups)
+    else:
+        new_int = str(new_value).zfill(digits_len)
     if dec:
         decimal_digits = len(dec) - 1
         new_dec = "." + "".join(rng.choice(_DIGITS) for _ in range(decimal_digits))
@@ -696,17 +711,19 @@ def _fake_amount(value: str, rng: random.Random, attempt: int = 0) -> str:
 
 
 def _fake_case_no(value: str, rng: random.Random, attempt: int = 0) -> str:
-    """案号：保留"（年份）法院代字民初"结构，序号换成 5 位随机数。"""
+    """案号：保留"（年份）法院代字民初"结构，序号换成随机数（保留空格排版）。"""
     label, body = _split_label(value)
     new_serial = str(rng.randint(10000, 99999))
     if "号" in body:
         idx = body.rfind("号")
-        match = re.search(r"\d+$", body[:idx])
+        # 序号和「号」之间常有排版空格："民再1 号"
+        match = re.search(r"(\d+)(\s*)$", body[:idx])
         if match:
-            return label + body[:match.start()] + new_serial + body[match.end():]
-    match = re.search(r"\d+$", body)
+            return label + body[:match.start(1)] + new_serial + body[match.start(1) + len(match.group(1)):]
+        # 跨行案号末尾可能没有「号」，倒序找最后一段数字
+    match = re.search(r"(\d+)(\s*)$", body)
     if match:
-        return label + body[:match.start()] + new_serial
+        return label + body[:match.start(1)] + new_serial + body[match.end(1):]
     return label + _fake_generic(body, rng)
 
 

@@ -131,6 +131,8 @@ rules:
     replace: {strategy: surrogate}
 
   # 法定代表人（强锚点，避免把正文普通姓名都当法人）
+  # 姓名后面必须有边界（标点/空白/冒号），否则「法定代表人莫俊林联系较多」
+  # 会把「联系」的「联」一起吃进姓名（2-4 字贪婪）。
   - id: cn.legal_rep
     entity: PERSON
     label: 法定代表人
@@ -139,8 +141,7 @@ rules:
     priority: 81
     detect:
       - type: regex
-        pattern: '(?:法定代表人|法人代表|法定代表)\s*[:：]?\s*[\u4e00-\u9fa5]{2,4}'
-        strip_prefix: [法定代表人, 法人代表, 法定代表, '：', ':']
+        pattern: '(?:法定代表人|法人代表|法定代表)\s*[:：]?\s*(?P<value>[\u4e00-\u9fa5]{2,4})(?=[，。；;、：:\s]|$)'
     replace: {strategy: surrogate}
 
   # 注册地址 / 住所（地址实体的强锚点）

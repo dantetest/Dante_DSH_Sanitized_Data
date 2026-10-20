@@ -198,7 +198,8 @@ class RegexDetector(Detector):
                  strip_suffix: list[str] | tuple[str, ...] | None = None,
                  unless_validate: str | list[str] | tuple[str, ...] | None = None,
                  exclude_near: list[str] | tuple[str, ...] | None = None,
-                 exclude_before: int = 24, exclude_after: int = 8) -> None:
+                 exclude_before: int = 24, exclude_after: int = 8,
+                 value_clean: str = "") -> None:
         if not pattern:
             raise ValueError("RegexDetector 需要非空 pattern")
         self.pattern = str(pattern)
@@ -226,6 +227,9 @@ class RegexDetector(Detector):
         self.exclude_before = max(0, int(exclude_before))
         self.exclude_after = max(0, int(exclude_after))
         self.confidence = float(confidence)
+        # value_clean：对命名捕获组的值做清洗（判决书落款常把姓名竖排成
+        # "审判员\n何\n荐"，清洗后才是干净姓名）。可选 "collapse_ws" / "strip"。
+        self.value_clean = str(value_clean or "").strip().lower()
         # 机构类正则容易把前面的"委托/被告/公司的"一起吃进来，允许裁剪。
         self.strip_prefix = tuple(
             sorted((str(x) for x in strip_prefix or () if str(x)), key=len, reverse=True)
@@ -269,6 +273,7 @@ class RegexDetector(Detector):
             exclude_near=exclude_near,
             exclude_before=int(spec.get("exclude_before", 24)),
             exclude_after=int(spec.get("exclude_after", 8)),
+            value_clean=str(spec.get("value_clean") or ""),
         )
 
     # ── 上下文窗口 ──
@@ -295,8 +300,21 @@ class RegexDetector(Detector):
             if not text:
                 continue
             for match in self.regex.finditer(text):
-                start, end = match.start(), match.end()
-                value = match.group(0)
+                groups = match.groupdict()
+                if "value" in groups and groups["value"] is not None:
+                    # 规则用 (?P<value>...) 精确指定要脱敏的片段（姓名/地址等）
+                    value = match.group("value")
+                    start, end = match.span("value")
+                else:
+                    start, end = match.start(), match.end()
+                    value = match.group(0)
+                if self.value_clean == "collapse_ws":
+                    value = re.sub(r"\s+", "", value)
+                elif self.value_clean == "strip":
+                    value = value.strip()
+                # 清洗后值为空：放弃（避免把纯空白当实体）
+                if not value.strip():
+                    continue
                 # 机构类规则的前导干扰词裁剪（"患者入住上海市…" -> "上海市…"）
                 changed = True
                 while changed and value:

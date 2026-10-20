@@ -53,6 +53,8 @@ def _specs() -> list[dict]:
          "label": "贸易域自测"},
         {"key": "visual", "file": TESTS / "test_visual.py", "timeout": 600,
          "label": "图像域自测"},
+        {"key": "legal", "file": TESTS / "test_legal_detect.py", "timeout": 300,
+         "label": "判决书类文本检测回归（跨行案号/地址/标签姓名/带空格金额）"},
         {"key": "tiff", "file": TESTS / "test_tiff.py", "timeout": 900,
          "label": "正射 TIF 域自测（可选）"},
     ]

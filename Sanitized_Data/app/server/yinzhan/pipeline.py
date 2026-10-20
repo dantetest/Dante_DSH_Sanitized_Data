@@ -597,6 +597,30 @@ def has_cleanup_targets(doc: Document) -> bool:
     return False
 
 
+def _replacement_intervals(text: str, entities: list[Entity]) -> list[tuple[int, int]]:
+    """成品文本里所有保形假值占据的区间（用于排除假值内部子串误报）。"""
+    intervals: list[tuple[int, int]] = []
+    seen: set[str] = set()
+    for e in entities:
+        if e.status == "rejected" or e.decision is None:
+            continue
+        dec = e.decision
+        if dec.black or dec.strategy in ("black", "drop", "keep"):
+            continue
+        repl = (dec.replacement or "").strip()
+        if len(repl) < 2 or repl in seen:
+            continue
+        seen.add(repl)
+        start = 0
+        while True:
+            pos = text.find(repl, start)
+            if pos < 0:
+                break
+            intervals.append((pos, pos + len(repl)))
+            start = pos + 1
+    return intervals
+
+
 def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
            ctx: ParseContext, *, doc: Document | None = None,
            options: dict | None = None) -> dict:
@@ -617,6 +641,10 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
         return {"verified": False, "residual": None, "issues": [f"成品无法重新解析：{exc}"]}
 
     text = _all_text(re_doc)
+    # 换名版会把保形假值写回成品；假值里可能保留"人民法院/省市区"这类不敏感
+    # 共同片段，导致原文值作为子串出现在**假值内部**。先记下所有假值在成品文本
+    # 里的覆盖区间，属于假值内部的命中不算泄漏，假值之外还出现才是真残留。
+    covered = _replacement_intervals(text, entities)
     for e in entities:
         if e.status == "rejected" or not e.value:
             continue
@@ -624,9 +652,22 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
         if e.decision is not None and e.decision.strategy == "keep":
             continue
         checked += 1
-        needle = e.value
+        needle = e.value.strip()
         # 单字没法验（「方」在「甲方」里到处都是），只检查两个字符以上的值
-        if len(needle.strip()) >= 2 and needle in text:
+        if len(needle) < 2:
+            continue
+        leaked = False
+        start = 0
+        while True:
+            pos = text.find(needle, start)
+            if pos < 0:
+                break
+            end = pos + len(needle)
+            if not any(s <= pos and end <= e2 for s, e2 in covered):
+                leaked = True
+                break
+            start = pos + 1
+        if leaked:
             residual.append(e.value)
 
     if residual:

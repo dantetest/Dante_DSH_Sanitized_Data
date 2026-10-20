@@ -104,7 +104,7 @@ def all_detectors() -> dict[str, type[Detector]]:
 _PLUGIN_FALLBACK = {
     "parsers": ("pdf_parser", "docx_parser", "xlsx_parser", "image_parser",
                 "text_parser", "tiff_parser", "mesh_parser"),
-    "detectors": ("regex_det", "dict_det", "ner_det",
+    "detectors": ("regex_det", "dict_det", "ner_det", "joined_det",
                   "finance_validators", "trade_validators"),
     "replacers": ("surrogate", "black", "mask", "amount_consistency"),
 }

@@ -115,6 +115,8 @@ rules:
     replace: {strategy: surrogate}
 
   # ── 金额 ──
+  # 判决书/OCR 里千分位常被排成空格（"930 700.00 元"），空格和逗号都当分隔符；
+  # 带空格的写法必须带单位/币种，避免把 "3 034.6M²" 这类编号误当金额。
   - id: cn.amount
     entity: AMOUNT
     label: 金额
@@ -123,7 +125,7 @@ rules:
     priority: 70
     detect:
       - type: regex
-        pattern: '(?<![\d.])(?:(?:人民币|RMB|¥|￥)\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?(?:\s*(?:万元|亿元|元))?|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?\s*(?:万元|亿元|元)|\d+(?:\.\d{1,2})?\s*(?:万元|亿元|元))'
+        pattern: '(?<![\d.])(?:(?:人民币|RMB|¥|￥)\s*(?:\d{1,3}(?:[ ,]\d{3})+|\d+)(?:\.\d{1,2})?(?:\s*(?:万元|亿元|元))?|\d{1,3}(?:[ ,]\d{3})+(?:\.\d{1,2})?\s*(?:万元|亿元|元)|\d+(?:\.\d{1,2})?\s*(?:万元|亿元|元))'
     replace: {strategy: surrogate}
 
   - id: cn.amount_cn
@@ -158,6 +160,35 @@ rules:
     detect:
       - type: ner
         types: [address]
+    replace: {strategy: surrogate}
+
+  # 住址/住所地标签 + 地址（判决书/合同里地址常折成 2–3 行，joined_regex 跨行兜住）
+  - id: cn.address_labeled
+    entity: ADDRESS
+    label: 地址
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 79
+    detect:
+      - type: regex
+        pattern: '(?:住所地|住址|住\s*所\s*地|住\s*址)\s*[:：]?\s*(?P<value>[^。；;，,\n]{6,80}?)(?=[。；;，,]|联系|电话|传真|邮编|法定代表人|负责人|统一社会信用代码|纳税人|身份证|账号|开户|住所地|住址|地址|委托|被告|原告|第三人|本院|审判|$|\\n)'
+      - type: joined_regex
+        pattern: '(?:住所地|住址|住\s*所\s*地|住\s*址)\s*[:：]?\s*(?P<value>[^。；;，,\n]{6,80}?)(?=[。；;，,]|联系|电话|传真|邮编|法定代表人|负责人|统一社会信用代码|纳税人|身份证|账号|开户|住所地|住址|地址|委托|被告|原告|第三人|本院|审判|$|\\n)'
+        max_blocks: 8
+    replace: {strategy: surrogate}
+
+  # 无"住址"标签的居住地址：「…村民，住峨边彝族自治县宜坪村水溪子组3号。」
+  - id: cn.address_residence
+    entity: ADDRESS
+    label: 住址
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 77
+    detect:
+      - type: joined_regex
+        # 只抓「，住XX县…」这种居住地址；排除「住址/住所/住房/住院/住户」等词
+        pattern: '(?<=[，,；;。])\s*住(?![址所房户宅院持建])(?P<value>[^。；;，,\n]{4,60}?)(?=[。；;，,]|$)'
+        max_blocks: 8
     replace: {strategy: surrogate}
 
   - id: cn.org

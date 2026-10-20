@@ -6,16 +6,23 @@ version: 1
 include: [common]
 
 rules:
-  # 案号：（2023）京0105民初12345号
+  # 案号：（2023）京0105民初12345号 / （2026）川3423 民再1 号 / 2025 川3423 执136 号
+  # 判决书正文里的案号常带 OCR/排版空格，程序类型也很多（民再/民监/执异…），
+  # 这里统一放宽空格与类型；跨行案号用 joined_regex 兜住（（2026）\n川3423 民监1 号）。
   - id: cn.case_no
     entity: CASE_NO
     label: 案号
     level: L2
     scope: [pdf, docx, xlsx, text, image, tiff]
-    priority: 85
+    priority: 88
     detect:
       - type: regex
-        pattern: '(?<![0-9A-Za-z])(?:（|\(|〔)\s*(?:19|20)\d{2}\s*(?:）|\)|〕)\s*[\u4e00-\u9fa5]{1,4}\d{1,4}(?:民初|民终|刑初|刑终|行初|行终|执|民申|民再|刑申|破申|财保|民特|民辖终|执异|执复)\d+(?:号)?'
+        pattern: '(?<![0-9A-Za-z])(?:（|\(|〔)\s*(?:19|20)\d{2}\s*(?:）|\)|〕)\s*[\u4e00-\u9fa5]{1,4}\s*\d{1,4}\s*(?:民初|民终|民再|民申|民监|民特|民辖终|刑初|刑终|刑申|行初|行终|执异|执复|执恢|执保|执|财保|破申)\s*\d+\s*(?:号)?'
+      - type: regex
+        pattern: '(?<!\d)(?:19|20)\d{2}\s*[\u4e00-\u9fa5]{1,2}\s*\d{2,4}\s*(?:民初|民终|民再|民申|民监|刑初|刑终|行初|行终|执异|执恢|执保|执)\s*\d+\s*号'
+      - type: joined_regex
+        pattern: '(?<![0-9A-Za-z])(?:(?:（|\(|〔)\s*(?:19|20)\d{2}\s*(?:）|\)|〕)|(?<!\d)(?:19|20)\d{2})\s*[\u4e00-\u9fa5]{1,4}\s*\d{1,4}\s*(?:民初|民终|民再|民申|民监|民特|民辖终|刑初|刑终|刑申|行初|行终|执异|执复|执恢|执保|执|财保|破申)\s*\d+\s*(?:号)?'
+        max_blocks: 8
     replace: {strategy: surrogate}
 
   # 律所内部案件编号 / 合同编号：［2004］沪建纬（蓉）民代字第393号
@@ -85,4 +92,49 @@ rules:
         types: [person]
         required_hints: [委托, 当事, 代理, 申请, 被告, 原告, 证人, 受害, 嫌疑,
                          法定代表人, 甲方, 乙方, 第三人, 上诉人, 申请人]
+    replace: {strategy: surrogate}
+
+  # ── 判决书/文书里的「标签 + 姓名」──
+  # NER 的上下文窗口只有十来个字，"委托诉讼代理人（特别授权）：杨超" 这种
+  # 中间隔了括号的写法会漏；这里用确定性标签规则兜底（标签出现即认定为姓名）。
+  - id: legal.agent_name
+    entity: PERSON
+    label: 委托诉讼代理人
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 84
+    detect:
+      - type: regex
+        pattern: '(?:委托诉讼代理人|委托代理人|诉讼代理人|辩护人)\s*(?:[（(][^（）()\n]{0,12}[）)])?\s*[:：]?\s*(?P<value>[\u4e00-\u9fa5]{2,4})(?=[，。；;、：:）)（(\s]|$)'
+    replace: {strategy: surrogate}
+
+  # 法定代表人 / 法人代表人（OCR 常见写法）/ 法人代表 / 法定代理人
+  - id: legal.rep_name
+    entity: PERSON
+    label: 法定代表人
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 84
+    detect:
+      - type: regex
+        pattern: '(?:法定代表人|法人代表人|法人代表|法定代理人)\s*(?:[（(][^（）()\n]{0,12}[）)])?\s*[:：；;]\s*(?P<value>[\u4e00-\u9fa5]{2,4})(?=[，。；;、：:）)（(\s]|$)'
+    replace: {strategy: surrogate}
+
+  # 审判长 / 审判员 / 书记员等落款：姓名可能换行，甚至被竖排拆成单字
+  # （"审判员\n何\n荐"），用 value_clean=collapse_ws 拼回一个姓名。
+  - id: legal.judge_name
+    entity: PERSON
+    label: 审判人员
+    level: L2
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 84
+    detect:
+      - type: regex
+        pattern: '(?:审判长|审判员|书记员|法官助理|人民陪审员)\s*[:：]?\s*(?P<value>[\u4e00-\u9fa5](?:[ \t]*\n?[ \t]*[\u4e00-\u9fa5]){1,3})(?=\s*$|[，。；;、])'
+        value_clean: collapse_ws
+      # 跨行：标签和姓名被切成两块（"审判员" / "李树清"）
+      - type: joined_regex
+        pattern: '(?:审判长|审判员|书记员|法官助理|人民陪审员)\s*[:：]?\s*(?P<value>[\u4e00-\u9fa5](?:[ \t]*\n?[ \t]*[\u4e00-\u9fa5]){1,3})(?=\s*$|[，。；;、])'
+        value_clean: collapse_ws
+        max_blocks: 3
     replace: {strategy: surrogate}
