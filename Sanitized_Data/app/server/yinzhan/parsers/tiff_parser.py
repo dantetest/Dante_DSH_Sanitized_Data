@@ -22,6 +22,7 @@ P0（2026-10-20，方案 A）：
 from __future__ import annotations
 
 import os
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -33,8 +34,8 @@ from ..udm import (
     Decision, Document, Entity, ExportError, ExportResult, Page, ParseContext, ParseError,
 )
 from .image_parser import (
-    _apply_decisions, _denormalize_rect, _new_doc_id, _ocr_blocks, _paint_box,
-    _render_image_bytes, _span_box_in_block,
+    _apply_decisions, _apply_orientation, _denormalize_rect, _new_doc_id,
+    _ocr_blocks, _paint_box, _render_image_bytes, _span_box_in_block,
 )
 
 # ────────────────────────── 兼容旧接口的常量 ──────────────────────────
@@ -51,8 +52,9 @@ GEO_TAG_NAMES: dict[int, str] = {
     42113: "GDAL_NODATA",
 }
 
-#: Pillow 回退时明确允许带进新 tiffinfo 的展示性标签：方向、分辨率、分辨率单位。
-KEEP_TAGS: tuple[int, ...] = (274, 282, 283, 296)
+#: Pillow 回退时明确允许带进新 tiffinfo 的展示性标签：分辨率、分辨率单位。
+#: **不含 274（Orientation）**：导出像素已按 Orientation 转正，不得再写该标签。
+KEEP_TAGS: tuple[int, ...] = (282, 283, 296)
 
 # ────────────────────────── 可调参数（环境变量） ──────────────────────────
 
@@ -122,7 +124,7 @@ def _scan_geo_tags(source: Image.Image) -> list[str]:
 
 
 def _safe_tiffinfo(source: Image.Image) -> dict[int, Any]:
-    """构造新的 TIFF 标签集：只保留方向/分辨率，其余（含地理、设备、ICC）不带。"""
+    """构造新的 TIFF 标签集：只保留分辨率/单位，其余（地理、方向、设备、ICC）不带。"""
     try:
         tags = dict(source.tag_v2.items())
     except Exception:
@@ -133,10 +135,116 @@ def _safe_tiffinfo(source: Image.Image) -> dict[int, Any]:
             continue
         value = tags[tag]
         try:
-            info[tag] = int(value) if tag in (274, 296) else float(value)
+            info[tag] = int(value) if tag in (296,) else float(value)
         except (TypeError, ValueError):
             continue
+    # 成品像素已转正，绝不能再带 Orientation（否则查看器会二次旋转）
+    info.pop(274, None)
     return info
+
+
+def _read_tiff_orientation(path: Path) -> int:
+    """轻量读取经典 TIFF 的 tag 274（不依赖 rasterio/PIL 全解码）。
+
+    只解析第一个 IFD；BigTIFF/损坏/非 TIFF 返回 1（视为正常方向）。
+    """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(8)
+            if len(head) < 8:
+                return 1
+            if head[:2] == b"II":
+                endian = "<"
+            elif head[:2] == b"MM":
+                endian = ">"
+            else:
+                return 1
+            if struct.unpack(endian + "H", head[2:4])[0] != 42:
+                return 1  # BigTIFF（43）等不解析，按正常方向处理
+            ifd_offset = struct.unpack(endian + "I", head[4:8])[0]
+            if not ifd_offset:
+                return 1
+            handle.seek(ifd_offset)
+            raw_count = handle.read(2)
+            if len(raw_count) < 2:
+                return 1
+            entry_count = struct.unpack(endian + "H", raw_count)[0]
+            for _index in range(min(entry_count, 1000)):
+                entry = handle.read(12)
+                if len(entry) < 12:
+                    return 1
+                tag = struct.unpack(endian + "H", entry[0:2])[0]
+                if tag != 274:
+                    continue
+                value = struct.unpack(endian + "H", entry[8:10])[0]
+                return int(value) if 1 <= int(value) <= 8 else 1
+    except Exception:
+        return 1
+    return 1
+
+
+def _tiff_orientation(path: Path) -> int:
+    """读取 TIFF Orientation：优先轻量 IFD 解析，失败再退回 PIL 的 getexif。"""
+    value = _read_tiff_orientation(path)
+    if value != 1:
+        return value
+    try:
+        with Image.open(path) as image:
+            exif_orientation = image.getexif().get(274)
+            if exif_orientation:
+                return int(exif_orientation)
+    except Exception:
+        pass
+    return 1
+
+
+def _apply_tiff_orientation(image: Image.Image, frames: int = 1) -> Image.Image:
+    """TIFF 专用 Orientation 转正。
+
+    新版 Pillow（>=11/12）的 TIFF 解码器在 ``Image.open`` 时已按 tag 274 自动
+    转正（``image.size`` 与 tag 256/257 存储尺寸不同）；此时再调
+    ``ImageOps.exif_transpose`` 会二次旋转。这里按“存储尺寸 vs 当前尺寸”判断，
+    只有确实未自动转正时才补转；多帧 TIFF 保持帧结构不转。
+    """
+    if frames > 1:
+        return image
+    try:
+        tags = getattr(image, "tag_v2", None) or {}
+        orientation = int(tags.get(274, 1) or 1)
+        stored = (int(tags.get(256, image.size[0])), int(tags.get(257, image.size[1])))
+    except Exception:
+        return image
+    if orientation in (1, 0):
+        return image
+    if (int(image.size[0]), int(image.size[1])) != stored:
+        # Pillow 解码时已自动转正，避免二次旋转
+        return image
+    return _apply_orientation(image, frames)
+
+
+def _render_tiff_pillow(path: Path, page: int) -> bytes | None:
+    """Pillow 路径预览：按 TIFF Orientation 转正后缩略为 PNG（不二次旋转）。"""
+    try:
+        from io import BytesIO
+
+        with Image.open(path) as image:
+            frames = int(getattr(image, "n_frames", 1) or 1)
+            index = int(page)
+            if index < 0 or index >= frames:
+                return None
+            if index:
+                image.seek(index)
+            frame = _apply_tiff_orientation(image, frames).convert("RGB")
+        try:
+            resample = Image.Resampling.LANCZOS
+        except AttributeError:  # pragma: no cover - 老 Pillow
+            resample = Image.LANCZOS
+        frame.thumbnail((MAX_RENDER_EDGE, MAX_RENDER_EDGE), resample)
+        buffer = BytesIO()
+        frame.save(buffer, format="PNG")
+        return buffer.getvalue()
+    except Exception:
+        return None
 
 
 def _remove_sidecars(out_path: Path, warnings: list[str]) -> list[str]:
@@ -357,6 +465,15 @@ class TiffParser(registry.Parser):
                 "compression": (src.compression.value if src.compression else "none"),
                 "engine": "rasterio",
             })
+            # Orientation：rasterio 读取的是原始像素朝向（GDAL 不自动转正），
+            # CONTRACT §11.1 只要求 Pillow 路径转正；rasterio 路径记为已知限制。
+            orientation = _tiff_orientation(path)
+            document.meta["orientation"] = orientation
+            if orientation not in (1, 0):
+                document.warnings.append(
+                    f"检测到 TIFF Orientation={orientation}：rasterio 路径暂不转正像素"
+                    "（已知限制，见 docs/impl/tiff.md）；预览/OCR/框选按原始像素朝向，"
+                    "成品方向仍为源像素方向，建议先转正源图或强制 Pillow 路径")
             ref = g.read_georef(path, structure)
             kind = ref.kind if ref.kind != "none" else "none"
             names = [GEO_TAG_NAMES[t] for t in GEO_TAG_NAMES if t in structure.first_tags]
@@ -450,9 +567,20 @@ class TiffParser(registry.Parser):
         geo_names: list[str] = []
         try:
             frames = int(getattr(source, "n_frames", 1) or 1)
+            orientation = _read_tiff_orientation(path)
             document.meta["format"] = "TIFF"
             document.meta["frames"] = frames
             document.meta["engine"] = "pillow"
+            document.meta["orientation"] = orientation
+            document.meta["orientation_applied"] = bool(
+                frames == 1 and orientation not in (1, 0))
+            if frames > 1 and orientation not in (1, 0):
+                document.warnings.append(
+                    f"多帧 TIFF 含 Orientation={orientation}：为保持帧结构未逐帧转正，"
+                    "预览/导出方向可能未转正（单帧 TIFF 会按 DIS/EXIF 转正）")
+            elif orientation not in (1, 0):
+                document.warnings.append(
+                    f"已按 TIFF Orientation={orientation} 转正像素（parse/render/export 一致）")
             if pixels > pil_limit:
                 document.warnings.append(
                     f"画面 {pixels / 1e6:.0f}M 像素超过 Pillow 常规上限"
@@ -463,8 +591,9 @@ class TiffParser(registry.Parser):
                     for name in _scan_geo_tags(source):
                         if name not in geo_names:
                             geo_names.append(name)
-                    width, height = float(source.size[0]), float(source.size[1])
-                    rgb = source.convert("RGB")
+                    frame_source = _apply_tiff_orientation(source, frames)
+                    width, height = float(frame_source.size[0]), float(frame_source.size[1])
+                    rgb = frame_source.convert("RGB")
                     page = Page(index=index, width=width, height=height,
                                 ref={"frame": index})
                     page.blocks = _ocr_blocks(rgb, index, ctx, document.warnings,
@@ -521,7 +650,12 @@ class TiffParser(registry.Parser):
     def render(self, doc: Document, page: int, mode: str = "orig") -> bytes | None:
         path = Path((doc.extra or {}).get("out_path") or doc.path) if mode == "out" else Path(doc.path)
         g = _georef()
-        if g.has_rasterio() and path.is_file():
+        orientation = _tiff_orientation(path) if path.is_file() else 1
+        engine = str((doc.meta or {}).get("engine") or "")
+        # Pillow 解析路径已转正像素，渲染必须同样转正（走 _render_image_bytes）；
+        # rasterio 路径解析是原始像素朝向，渲染保持 rasterio 以避免坐标错位。
+        if (g.has_rasterio() and path.is_file()
+                and not (orientation not in (1, 0) and engine != "rasterio")):
             try:
                 structure = g.scan_tiff(path)
                 if not structure.error and structure.frames <= 1:
@@ -534,6 +668,10 @@ class TiffParser(registry.Parser):
                     return buffer.getvalue()
             except Exception:
                 pass
+        # Pillow 路径：自带 TIFF 专用转正（新版 Pillow 已自动转正时不会二次旋转）
+        rendered = _render_tiff_pillow(path, page)
+        if rendered is not None:
+            return rendered
         return _render_image_bytes(doc, page, mode)
 
     # ── 导出 ──
@@ -636,6 +774,13 @@ class TiffParser(registry.Parser):
         g = _georef()
         from rasterio.windows import Window
 
+        orientation = _tiff_orientation(Path(doc.path))
+        if orientation not in (1, 0):
+            warnings.append(
+                f"源 TIFF Orientation={orientation}：rasterio 导出路径不转正像素"
+                "（已知限制，见 docs/impl/tiff.md）；成品按原始像素方向输出且不写 274 标签。"
+                "如需方向正确，请先转正源图或强制 Pillow 路径导出")
+
         with g.rasterio.open(doc.path) as src:
             width, height = int(src.width), int(src.height)
             count = int(src.count)
@@ -736,13 +881,22 @@ class TiffParser(registry.Parser):
             raise ExportError(f"无法打开 TIFF：{exc}") from exc
         try:
             frame_count = int(getattr(source, "n_frames", 1) or 1)
+            orientation = _read_tiff_orientation(Path(doc.path))
+            if frame_count > 1 and orientation not in (1, 0):
+                warnings.append(
+                    f"多帧 TIFF 含 Orientation={orientation}：为保持帧结构未逐帧转正，"
+                    "成品方向可能未转正")
             new_info = _safe_tiffinfo(source)
             targets = max(len(doc.pages), frame_count, 1)
             frames: list[Image.Image] = []
             for index in range(targets):
                 try:
                     source.seek(min(index, frame_count - 1))
-                    frame = source.convert("RGB")
+                    # CONTRACT §11.1：单帧按 Orientation 转正像素后再涂黑/保存；
+                    # 成品不写 274（见 _safe_tiffinfo）。新版 Pillow 已自动转正的
+                    # TIFF 由 _apply_tiff_orientation 识别，避免二次旋转。
+                    frame_source = _apply_tiff_orientation(source, frame_count)
+                    frame = frame_source.convert("RGB")
                 except Exception as exc:
                     warnings.append(f"第 {index + 1} 帧读取失败：{exc}")
                     continue

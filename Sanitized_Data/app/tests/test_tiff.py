@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import random
 import sys
@@ -35,11 +36,12 @@ if str(SERVER) not in sys.path:
     sys.path.insert(0, str(SERVER))
 
 import numpy as np                                    # noqa: E402
-from PIL import Image, ImageDraw, ImageFont           # noqa: E402
+from PIL import Image, ImageDraw, ImageFont, ImageOps  # noqa: E402
 
 from yinzhan import georef, pipeline, registry        # noqa: E402
 from yinzhan.jobs import _load_rules                  # noqa: E402
 from yinzhan.ocr import get_ocr                       # noqa: E402
+from yinzhan.parsers import tiff_parser               # noqa: E402
 from yinzhan.udm import ParseContext, ParseError, VerifyError  # noqa: E402
 
 SAMPLES = REPO / "samples"
@@ -128,6 +130,32 @@ def _write_multiframe(path: Path) -> Path:
             34735: (1, 1, 0, 1, 1024, 0, 1, 2),
         })
     return path
+
+
+def _write_orientation_tiff(path: Path) -> Path:
+    """120×60 横向存储 + Orientation=6 的 8bit RGB TIFF（显示应为 60×120 竖向）。
+
+    左上红 / 右上蓝 / 底部绿条（非对称标记）用于验证转正后像素位置正确。
+    """
+    image = Image.new("RGB", (120, 60), (245, 245, 240))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([0, 0, 20, 20], fill=(255, 0, 0))
+    draw.rectangle([100, 0, 119, 20], fill=(0, 0, 255))
+    draw.rectangle([10, 50, 110, 59], fill=(0, 160, 0))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path, format="TIFF",
+               tiffinfo={274: 6, 282: 300.0, 283: 300.0, 296: 2})
+    return path
+
+
+def _display_oriented_rgb(path: Path) -> np.ndarray:
+    """返回“查看器应看到”的 RGB 数组（兼容 Pillow 新旧版本的 TIFF 自动转正差异）。"""
+    with Image.open(path) as image:
+        stored = (image.tag_v2.get(256), image.tag_v2.get(257))
+        current = image.convert("RGB").copy()
+    if stored and (current.size[0], current.size[1]) != (stored[0], stored[1]):
+        return np.asarray(current)  # 新版 Pillow 打开已自动转正
+    return np.asarray(ImageOps.exif_transpose(current))
 
 
 def _write_icc_tiff(path: Path) -> Path:
@@ -243,6 +271,13 @@ class Fixtures:
         path = cls.get() / "plain_no_geo.tif"
         if not path.exists():
             _write_geotiff(path, 120, 80, 3, "uint8", crs=None, transform=None)
+        return path
+
+    @classmethod
+    def orientation(cls) -> Path:
+        path = cls.get() / "orientation6.tif"
+        if not path.exists():
+            _write_orientation_tiff(path)
         return path
 
 
@@ -606,6 +641,74 @@ class TestFallbacks(unittest.TestCase):
         out = Fixtures.get() / "photo_no_geo_out.tif"
         pipeline.export(doc, self.parser, [], out, {"mode": "human"})
         self.assertEqual(_geo_tag_ids(out), [])
+
+
+class TestOrientation(unittest.TestCase):
+    """CONTRACT §11.1：Pillow 路径 parse/render/export 必须按 Orientation 转正且不写 274。
+
+    注意：新版 Pillow（>=11/12）TIFF 解码器在 open 时已自动按 tag 274 转正；
+    parser 侧用“存储尺寸 vs 当前尺寸”判断是否已转正，避免二次旋转。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        registry.load_plugins()
+        cls.path = Fixtures.orientation()
+        cls.parser = registry.find_parser(cls.path)
+
+    def test_keeptags_no_orientation(self):
+        self.assertNotIn(274, tiff_parser.KEEP_TAGS)
+        with Image.open(self.path) as image:
+            info = tiff_parser._safe_tiffinfo(image)
+        self.assertNotIn(274, info)
+
+    def test_pillow_parse_render_export_oriented(self):
+        old = georef.HAS_RASTERIO
+        georef.HAS_RASTERIO = False
+        try:
+            doc = self.parser.parse(self.path, _ctx())
+            self.assertEqual(doc.meta.get("engine"), "pillow")
+            self.assertEqual(doc.meta.get("orientation"), 6)
+            self.assertTrue(doc.meta.get("orientation_applied"))
+            self.assertEqual((doc.pages[0].width, doc.pages[0].height), (60.0, 120.0))
+            self.assertTrue(any("Orientation=6" in warning and "转正" in warning
+                                for warning in doc.warnings), doc.warnings)
+            png = self.parser.render(doc, 0, "orig")
+            self.assertIsNotNone(png)
+            with Image.open(io.BytesIO(png)) as rendered:
+                self.assertEqual(rendered.size, (60, 120),
+                                 "render 未按 Orientation 转正")
+            out = Fixtures.get() / "orientation6_out.tif"
+            pipeline.export(doc, self.parser, [], out, {"mode": "human"})
+            expected = _display_oriented_rgb(self.path)
+            with Image.open(out) as exported:
+                self.assertEqual(exported.size, (60, 120),
+                                 "导出成品未按 Orientation 转正")
+                self.assertNotIn(274, exported.tag_v2,
+                                 "导出成品不应再带 Orientation 标签")
+                exported_rgb = np.asarray(exported.convert("RGB"))
+            np.testing.assert_array_equal(exported_rgb, expected)
+            # 成品重解析：方向标签已无 → orientation=1；尺寸仍为转正后尺寸
+            again = self.parser.parse(out, _ctx())
+            self.assertEqual(again.meta.get("orientation"), 1)
+            self.assertEqual((again.pages[0].width, again.pages[0].height), (60.0, 120.0))
+        finally:
+            georef.HAS_RASTERIO = old
+
+    @unittest.skipUnless(HAS_RASTERIO, "需要 rasterio")
+    def test_rasterio_path_warns_and_strips_274(self):
+        doc = self.parser.parse(self.path, _ctx())
+        self.assertEqual(doc.meta.get("engine"), "rasterio")
+        # rasterio 路径是原始像素朝向（已知限制 P1），页面尺寸保持存储尺寸
+        self.assertEqual((doc.pages[0].width, doc.pages[0].height), (120.0, 60.0))
+        self.assertTrue(any("rasterio 路径暂不转正" in warning
+                            for warning in doc.warnings), doc.warnings)
+        out = Fixtures.get() / "orientation6_rasterio_out.tif"
+        res = pipeline.export(doc, self.parser, [], out, {"mode": "human"})
+        self.assertTrue(any("rasterio 导出路径不转正" in warning
+                            for warning in res.warnings), res.warnings)
+        with Image.open(out) as exported:
+            self.assertNotIn(274, exported.tag_v2)
 
 
 class TestMultiFrame(unittest.TestCase):

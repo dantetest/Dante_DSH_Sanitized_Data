@@ -1,8 +1,8 @@
-# 正射 TIF P0 实现说明（大图 / 位深 / 坐标中性化 / sidecar / ICC）
+# 正射 TIF P0 实现说明（大图 / 位深 / 坐标中性化 / sidecar / ICC / Orientation）
 
-> 状态：已实现（P0） · 2026-10-20 · 负责人：researcher-geo（task-11）
-> 代码：`app/server/yinzhan/georef.py`（新增，纯逻辑）、`app/server/yinzhan/parsers/tiff_parser.py`（重写导出/解析路径，保留 Lead 的 mediascan hook）
-> 测试：`app/tests/test_tiff.py`（33 项）+ `app/tests/e2e.py`（5/5）+ `app/tests/regression.py`（**166/166 全绿**）
+> 状态：已实现（P0 + P0 缺陷修复 Orientation） · 2026-10-20 · 负责人：researcher-geo（task-11 / task-40）
+> 代码：`app/server/yinzhan/georef.py`（纯逻辑）、`app/server/yinzhan/parsers/tiff_parser.py`（解析/导出路径 + Orientation 转正）
+> 测试：`app/tests/test_tiff.py`（36 项）+ `app/tests/e2e.py`（5/5）+ `app/tests/regression.py`（**240 项硬检查全绿**）
 > 上游决策：方案 A 已批准 D1 中性化必须、D2 可还原、D3 本地任意 CRS、D4 允许 rasterio/pyproj、D7 位深默认保留（见 `docs/research/03-…md` §8.2 与 `docs/research/00-…md`）。
 
 ---
@@ -15,7 +15,7 @@
 | 2 | 16bit/多波段尽量保留，降级必须 warning | ✅ | 保留源 dtype/波段（实测 uint16×3、uint8×4 均保留）；Pillow 回退统一 8bit RGB 时 warning；4+ 波段语义 warning |
 | 3 | 坐标中性化 v1：随机平移+旋转，参数入 `doc.extra["geo_params"]`；写本地任意 CRS 或 strip | ✅ | `georef.make_params`（θ∈±3°、dx/dy∈±200~5000m、scale=1）；成品 LOCAL_CS（EPSG=None）；`geo_mode="strip"` 彻底去参考；参数 JSON 序列化后可被 jobs 写入 vault `extra["geo"]` |
 | 4 | 导出后复检：Geo/ICC/EXIF 通过 | ✅ | 解析器侧 `georef.verify_exported_geo`（真实 CRS/原 tiepoint/ICC/EXIF/GPS/XMP/IPTC 一律 `ExportError`）；`pipeline.verify` 双保险 |
-| 5 | 测试：样例 + 大图/16bit/多帧/注入标签；断言 0 真实 Geo、可还原、大图可处理、e2e 不破 | ✅ | `test_tiff.py` 33 项全绿（§7）；e2e 5/5、残留 0 |
+| 5 | 测试：样例 + 大图/16bit/多帧/注入标签；断言 0 真实 Geo、可还原、大图可处理、e2e 不破 | ✅ | `test_tiff.py` 36 项全绿（§7）；e2e 5/5、残留 0 |
 | 6 | 红线：不破坏既有功能、不 push、依赖离线可用 | ✅ | e2e 5/5；依赖离线 wheelhouse 可纯净安装（§4）；未 push |
 
 **行为约定（与 Lead 对齐）**
@@ -75,6 +75,27 @@ dst_transform = local ∘ src_transform            # 6 元组仿射
 | `YINZHAN_TIFF_OVERVIEWS` | `1` | 是否生成内部金字塔 |
 | `YINZHAN_TIFF_YAW_RANGE` | 3.0 | 旋转角上限（度） |
 
+### 2.3 Orientation（EXIF tag 274）契约（task-40 修复）
+
+CONTRACT §11.1 要求：图片 parse/export/render 在入口按 Orientation 转正像素，导出不得再带
+Orientation 标签。TIFF 的落点：
+
+| 路径 | parse | render | export | 说明 |
+|---|---|---|---|---|
+| **Pillow 路径**（多帧/无 rasterio/大图拒绝后的回退） | ✅ 转正 | ✅ 转正 | ✅ 转正 + **不写 274** | 单帧 TIFF 才转正（保持多帧帧结构）；`KEEP_TAGS` 已移除 274 |
+| **rasterio 路径**（单页大图/正射主场景） | ⚠️ 不转正（已知限制 P1） | 保持原始像素朝向（与 parse 坐标一致） | ⚠️ 不转正 + 不写 274 | parse/export 都发明确 warning，建议先转正源图或强制 Pillow 路径 |
+
+**实现要点**：
+- 新增轻量 IFD 读取 `_read_tiff_orientation()`（不依赖 rasterio/PIL 全解码；BigTIFF/损坏按 1 处理）。
+- **Pillow 新版本陷阱**：Pillow >=11/12 的 TIFF 解码器在 `Image.open` 时已按 274 自动转正
+  （`image.size` 与 tag 256/257 存储尺寸不同）。`_apply_tiff_orientation()` 用“存储尺寸 vs
+  当前尺寸”判断，只有确实未转正时才调用 `ImageOps.exif_transpose`，避免**二次旋转**；
+  `render` 走 `_render_tiff_pillow()` 同一逻辑（不复用 image_parser 的无条件转正，防止
+  TIFF 被旋转两次）。
+- 导出 Pillow 路径在涂黑前转正，因此 `entity.spans` 的像素坐标与页面尺寸一致；
+  `_safe_tiffinfo()` 只保留 282/283/296，并显式 `pop(274)`。
+- 成品重解析 `doc.meta["orientation"]=1`（无标签），页面尺寸保持转正后的像素尺寸。
+
 ---
 
 ## 3. 行为与降级矩阵
@@ -90,6 +111,9 @@ dst_transform = local ∘ src_transform            # 6 元组仿射
 | 源 TIFF 带 `.tfw/.prj/.aux.xml/.ovr/.kml/.rpc/.rpb/.imd/.xml` | 删除成品派生 sidecar（不碰源文件） | 删除失败时 warning |
 | 4+ 波段 | 前 3 波段按 RGB 处理、其余原样；RGBN/alpha 语义另行提示 | √ |
 | 非 8bit / 单波段影像上的“换名文本” | 退化为涂黑（否则会破坏 dtype/波段），只 warning 一次 | √ |
+| 源 TIFF 带 Orientation=3/6/8（Pillow 路径） | parse/render/export 按 274 转正像素；成品不写 274 | “已按 TIFF Orientation=… 转正像素” |
+| 源 TIFF 带 Orientation（rasterio 路径） | 保持原始像素朝向（已知限制 P1），parse/export 明确 warning；成品无 274 | “rasterio 路径暂不转正像素” |
+| 多帧 TIFF 带 Orientation | 为保持帧结构不逐帧转正（warning）；单帧才转 | “多帧 TIFF 含 Orientation…未逐帧转正” |
 
 ---
 
@@ -150,8 +174,10 @@ Lead 已把 `rasterio`/`pyproj` 加入第 36 行的 `collect_all(pkg)` 循环（
 
 | 用例 | 结果 |
 |---|---|
-| **红线 regression**（`app/tests/regression.py`） | **166 项硬检查全绿**（耗时 33.0s；含 e2e、TIF local-CRS 语义、安全红线、MCP、HTTP、规则、桌面入口） |
-| **TIF 域内单测**（`app/tests/test_tiff.py`） | **33/33 通过**（25.4s，0 skipped） |
+| **红线 regression**（`app/tests/regression.py`） | **240 项硬检查全绿**（耗时 94.5s；含 e2e、TIF local-CRS 语义、安全红线、MCP、HTTP、规则、桌面入口） |
+| **TIF 域内单测**（`app/tests/test_tiff.py`） | **36/36 通过**（27.5s，0 skipped） |
+| **Orientation=6 修复用例（task-40）** | Pillow 路径：parse 页面 60×120（转正）、render PNG 60×120、导出成品 60×120 且 `274 not in tag_v2`、像素与“查看器应看到”逐像素相等；rasterio 路径：明确 warning、页面保持 120×60 原始像素、成品无 274 |
+| **PLY 二进制修复（task-40）** | 见 `docs/impl/mesh.md`；`test_mesh.py` 7/7 通过（三种 PLY 子格式数据段等长、顶点重定位/面数据一致、自检拦截损坏） |
 | `samples/正射影像.tif`（800×600）e2e | 5/5 通过、残留 0；tif 解析 **1048ms**、检测 2ms、识别 3 处（图幅号/控制点号/坐标系名称）；导出 换名 33774B / 涂黑 26353B |
 | 样例中性化后标签 | `[256…339, 34264, 34735, 34737]`；`rasterio` 判定 `LOCAL_CS[...]`、`to_epsg()=None`；无 33550/33922 原始 tiepoint、无 34675/EXIF/GPS/XMP |
 | 样例可还原 | 随机像素 `pixel_to_local → local_to_pixel` 往返误差 <1e-6 像素；成品 transform == `geo_params.dst_transform` |
@@ -168,7 +194,7 @@ Lead 已把 `rasterio`/`pyproj` 加入第 36 行的 `collect_all(pkg)` 循环（
 ### 测试命令
 
 ```powershell
-# 域内单测（33 项；大图用例想跳过加 $env:YINZHAN_TIFF_SKIP_BIG='1'）
+# 域内单测（36 项；大图用例想跳过加 $env:YINZHAN_TIFF_SKIP_BIG='1'）
 python -X utf8 app\tests\test_tiff.py
 
 # 红线 e2e（必须 5/5、残留 0）
@@ -230,6 +256,7 @@ $env:YINZHAN_WRITE_FIXTURES='1'; python -X utf8 app\tests\test_tiff.py
 9. **Pillow 回退无中性化**：未装 rasterio 的机器只能剥离；文档/UI 明确 warning，不静默。
 10. **PIL 回退大图上限**：>2×Pillow 上限（约 1.79 亿像素）直接拒绝并提示装 rasterio/切图。
 11. **依赖体积**：desktop 安装包 +60~100MB 待构建实测；若打包体积不可接受，可改为“按需安装可选依赖”。
+12. **rasterio 路径不转正 Orientation（已知限制 P1）**：GDAL 读到的是原始像素朝向，OCR/框选/成品方向按原像素处理；parse/export 均明确 warning。若源图带 Orientation 且用户要求方向正确，需先转正源图或强制 Pillow 路径（大图时 Pillow 可能超上限，需切图）。
 
 ---
 
@@ -261,4 +288,6 @@ rasterio `LOCAL_CS`/`to_epsg()=None`、源 tiepoint 已消失、ICC/EXIF 均无�
 | 日期 | 变更 | 负责人 |
 |---|---|---|
 | 2026-10-20 | 新增 `georef.py`；重写 TIF parse/export（rasterio 大图/位深/中性化/sidecar/ICC）；新增 `test_tiff.py` 33 项；e2e 保持 5/5；QA 更新探针后 regression **166/166 全绿** | researcher-geo |
+| 2026-10-20 | **task-40 修复 Orientation 契约缺口**：Pillow 路径 parse/render/export 按 274 转正（兼容新版 Pillow 自动转正，避免二次旋转）；`KEEP_TAGS` 移除 274、导出显式 `pop(274)`；rasterio 路径明确 warning 并保持原始像素朝向；`test_tiff.py` 扩到 36 项；e2e 5/5、regression 240/240 全绿 | researcher-geo |
+
 

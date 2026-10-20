@@ -402,9 +402,15 @@ def _ply_byteorder(fmt: str) -> str | None:
 
 
 def _ply_build_header(
-    header: dict[str, Any], rules: list[tuple[str, str, bool]]
+    header: dict[str, Any], rules: list[tuple[str, str, bool]],
+    *, binary: bool = False,
 ) -> tuple[bytes, int]:
-    """重写 PLY 头部：覆盖 comment/obj_info 敏感串，其余行原样保留。"""
+    """重写 PLY 头部：覆盖 comment/obj_info 敏感串，其余行原样保留。
+
+    二进制 PLY 不允许在头部写变长内容（旧实现把 `█` 写进 header 会让数据段整体
+    错位，见 docs/impl/mesh.md）。二进制模式直接**删除命中的 comment/obj_info 行**；
+    ASCII 模式维持文本替换（行式数据，长度变化安全）。
+    """
     output = bytearray()
     hits = 0
     for raw in header["raw_lines"]:
@@ -414,12 +420,197 @@ def _ply_build_header(
             new_text, line_hits = _sanitize_text(text, rules)
             hits += line_hits
             if line_hits:
+                if binary:
+                    # 二进制 PLY：删除该行，避免 header 长度变化导致数据段偏移错乱
+                    continue
                 eol = _eol_of(raw)
                 output.extend(new_text.encode("utf-8", "replace"))
                 output.extend(eol)
                 continue
         output.extend(raw)
     return bytes(output), hits
+
+
+def _ply_verify_output(
+    source: Path,
+    out_path: Path,
+    header: dict[str, Any],
+    header_bytes: bytes,
+    byteorder: str | None,
+    *,
+    center: list[float] | None,
+    warnings: list[str],
+) -> None:
+    """解析器侧自检：重读成品，校验 header 数量与顶点/面数据一致。
+
+    旧缺陷（二进制 PLY header 变长导致几何错位）在 pipeline.verify 里看不出来
+    （mesh verify 只重读文本注释），所以由导出器自己做结构级复检；不通过直接
+    ExportError，避免交付损坏模型。
+    """
+    issues: list[str] = []
+    try:
+        out_header = _read_ply_header(out_path)
+    except Exception as exc:
+        raise ExportError(f"PLY 成品复检失败（header 无法解析）：{exc}") from exc
+    if out_header["format"] != header["format"]:
+        issues.append(f"format 变化 {header['format']} -> {out_header['format']}")
+    src_elements = header["elements"]
+    out_elements = out_header["elements"]
+    if len(src_elements) != len(out_elements):
+        issues.append("element 数量变化")
+    else:
+        for src_el, out_el in zip(src_elements, out_elements):
+            if src_el["name"] != out_el["name"] or int(src_el["count"]) != int(out_el["count"]):
+                issues.append(f"element {src_el['name']} 数量/名称变化")
+                break
+            if src_el["props"] != out_el["props"]:
+                issues.append(f"element {src_el['name']} property 布局变化")
+                break
+    # 二进制 PLY 数据段长度必须与源文件一致（header 长度可变，数据段不能少/多）；
+    # ASCII 是行式数据，重定位后浮点文本长度会变化，不做长度对比。
+    if byteorder is not None:
+        try:
+            src_data_len = source.stat().st_size - int(header["data_offset"])
+            out_data_len = out_path.stat().st_size - int(out_header["data_offset"])
+            if src_data_len != out_data_len:
+                issues.append(f"数据段长度变化（源 {src_data_len}B，成品 {out_data_len}B）")
+        except OSError as exc:
+            issues.append(f"文件长度读取失败：{exc}")
+    if issues:
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise ExportError("PLY 成品复检失败：" + "；".join(issues))
+
+    if byteorder is None or not _NUMPY_OK:
+        # ASCII 或缺少 numpy：逐 element 校验数据行数，并比较顶点/面数据
+        try:
+            src_elems = _ply_read_ascii_elements(source, header)
+            out_elems = _ply_read_ascii_elements(out_path, out_header)
+        except Exception as exc:
+            try:
+                out_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise ExportError(f"PLY 成品复检失败（ASCII 数据行无法解析）：{exc}") from exc
+        for src_el, out_el in zip(src_elements, out_elements):
+            name = str(src_el["name"]).lower()
+            src_lines = src_elems.get(name) or []
+            out_lines = out_elems.get(name) or []
+            if len(src_lines) != int(src_el["count"]) or len(out_lines) != len(src_lines):
+                issues.append(f"element {src_el['name']} 数据行数不一致（疑似几何错位）")
+                continue
+            if name == "vertex" and center is not None:
+                try:
+                    out_values = _ply_ascii_vertex_values(out_lines, src_el)
+                    src_values = _ply_ascii_vertex_values(src_lines, src_el)
+                except Exception as exc:
+                    issues.append(f"vertex 数值解析失败：{exc}")
+                    continue
+                for src_v, out_v in zip(src_values, out_values):
+                    expected = tuple(src_v[i] - center[i] for i in range(3))
+                    if any(abs(out_v[i] - expected[i]) > 1e-5 for i in range(3)):
+                        issues.append("vertex 重定位后数值不一致")
+                        break
+            else:
+                if src_lines != out_lines:
+                    issues.append(f"element {src_el['name']} 数据与源不一致")
+        if issues:
+            try:
+                out_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise ExportError("PLY 成品复检失败：" + "；".join(issues))
+        return
+
+    # 二进制：比较数据段字节（顶点段按 center 平移后比较，其余段必须逐字节一致）
+    try:
+        vertex = _ply_vertex_element(header)
+        layout = _ply_binary_vertex_layout(header, byteorder) if vertex is not None else None
+        raw_src = source.read_bytes()
+        raw_out = out_path.read_bytes()
+        src_data = raw_src[int(header["data_offset"]):]
+        out_data = raw_out[int(out_header["data_offset"]):]
+        if layout is None:
+            if src_data != out_data:
+                issues.append("二进制数据段与源文件不一致")
+        else:
+            start, count, dtype = layout
+            vlen = count * dtype.itemsize
+            if start + vlen > len(src_data) or start + vlen > len(out_data):
+                issues.append("顶点数据段长度不足（疑似截断/错位）")
+            else:
+                if src_data[:start] != out_data[:start]:
+                    issues.append("顶点前数据段不一致")
+                src_vertices = np.frombuffer(bytearray(src_data), dtype=dtype, count=count,
+                                             offset=start)
+                out_vertices = np.frombuffer(bytearray(out_data), dtype=dtype, count=count,
+                                             offset=start)
+                if center is not None:
+                    expected = {
+                        axis: (src_vertices[axis].astype(np.float64)
+                               - center[("x", "y", "z").index(axis)])
+                        for axis in ("x", "y", "z")
+                        if axis in (dtype.names or ())
+                    }
+                    for axis, values in expected.items():
+                        if not np.allclose(out_vertices[axis].astype(np.float64),
+                                           values, rtol=1e-6, atol=1e-6):
+                            issues.append(f"顶点 {axis} 位移与记录不一致")
+                            break
+                elif src_vertices.tobytes() != out_vertices.tobytes():
+                    issues.append("顶点数据未平移但成品与源不一致")
+                if src_data[start + vlen:] != out_data[start + vlen:]:
+                    issues.append("顶点后数据段（面/其它 element）不一致")
+    except ExportError:
+        raise
+    except Exception as exc:
+        issues.append(f"二进制数据段复检异常：{exc}")
+    if issues:
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise ExportError("PLY 成品复检失败：" + "；".join(issues))
+    if center is not None:
+        warnings.append("PLY 成品复检通过：顶点已重定位、面/其余数据段字节一致")
+    else:
+        warnings.append("PLY 成品复检通过：数据段字节一致（未重定位）")
+
+
+def _ply_read_ascii_elements(path: Path, header: dict[str, Any]) -> dict[str, list[bytes]]:
+    """按 header 声明读出 ASCII PLY 各 element 的数据行（缺失行不补齐）。"""
+    result: dict[str, list[bytes]] = {}
+    with open(path, "rb") as handle:
+        handle.seek(int(header["data_offset"]))
+        for element in header["elements"]:
+            name = str(element["name"]).lower()
+            lines: list[bytes] = []
+            for _index in range(int(element["count"])):
+                raw = handle.readline()
+                if not raw:
+                    break
+                lines.append(raw)
+            result[name] = lines
+    return result
+
+
+def _ply_ascii_vertex_values(lines: list[bytes],
+                             element: dict[str, Any]) -> list[tuple[float, float, float]]:
+    """把 ASCII vertex 行解析成 (x,y,z) 列表（按 property 名定位列）。"""
+    names = [str(prop["name"]).lower() for prop in element["props"]]
+    try:
+        positions = (names.index("x"), names.index("y"), names.index("z"))
+    except ValueError as exc:
+        raise ValueError("vertex 缺少 x/y/z property") from exc
+    values: list[tuple[float, float, float]] = []
+    for raw in lines:
+        parts = _decode_line(raw).split()
+        if len(parts) <= max(positions):
+            raise ValueError("vertex 行列数不足")
+        values.append(tuple(float(parts[pos]) for pos in positions))
+    return values
 
 
 # ══════════════════════════════ STL ══════════════════════════════
@@ -770,7 +961,15 @@ class MeshParser(Parser):
                 self._export_glb(source, out_path, rules, warnings)
             else:
                 _copy_fallback(source, out_path, warnings, f"未知三维扩展名 {suffix}")
+        except ExportError:
+            # 解析器侧结构/残留自检失败：不能降级“原样复制源文件”蒙混过关
+            raise
         except Exception as exc:  # 导出失败降级（出口自检会拦截未脱敏残留）
+            if suffix == ".ply":
+                # PLY 有强结构约束：原样复制可能保留注释敏感文本，直接阻断
+                raise ExportError(
+                    f"PLY 导出失败（拒绝原样复制，避免交付损坏/未脱敏模型）：{exc}"
+                ) from exc
             _copy_fallback(source, out_path, warnings, f"三维导出失败：{exc}")
         if not out_path.exists():
             raise ExportError("三维文件导出没有产出成品")
@@ -860,14 +1059,21 @@ class MeshParser(Parser):
         warnings: list[str],
     ) -> None:
         header = _read_ply_header(source)
-        header_bytes, text_hits = _ply_build_header(header, rules)
+        fmt = header["format"]
+        byteorder = _ply_byteorder(fmt)
+        # 二进制 PLY：命中行直接删除（不能写变长替换，否则数据段错位）
+        header_bytes, text_hits = _ply_build_header(
+            header, rules, binary=byteorder is not None)
         if text_hits:
-            warnings.append(f"PLY header 已覆盖 {text_hits} 处敏感文本")
+            if byteorder is not None:
+                warnings.append(
+                    f"PLY header 含 {text_hits} 处敏感文本，已删除对应 comment/obj_info 行"
+                    "（二进制 PLY 不改写变长内容，保证数据段偏移/长度不变）")
+            else:
+                warnings.append(f"PLY header 已覆盖 {text_hits} 处敏感文本")
         elif rules:
             warnings.append("PLY header 的 comment/obj_info 中未发现待替换文本")
 
-        fmt = header["format"]
-        byteorder = _ply_byteorder(fmt)
         tmp_path = out_path.with_name(out_path.name + ".tmp")
         try:
             if fmt == "ascii":
@@ -939,6 +1145,8 @@ class MeshParser(Parser):
             warnings.append("PLY 未找到可重定位的 vertex 坐标，几何数据原样保留")
         else:
             warnings.append("PLY 顶点已减去包围盒中心重定位到原点（ASCII 重写）")
+        _ply_verify_output(source, tmp_path, header, header_bytes, None,
+                           center=center, warnings=warnings)
 
     def _export_ply_binary(
         self,
@@ -967,42 +1175,38 @@ class MeshParser(Parser):
         elif not _NUMPY_OK and vertex is not None:
             warnings.append("缺少 numpy，跳过 PLY 几何重定位")
 
-        if not can_recenter:
+        def _write_fallback(note: str = "") -> None:
+            """不重定位：写新 header + 原数据段字节，并做结构复检。"""
             with open(source, "rb") as reader, open(tmp_path, "wb") as writer:
                 writer.write(header_bytes)
                 reader.seek(header["data_offset"])
                 shutil.copyfileobj(reader, writer)
-            if vertex is None:
-                warnings.append("PLY 未找到 vertex 元素，几何数据原样保留")
+            if note:
+                warnings.append(note)
+            _ply_verify_output(source, tmp_path, header, header_bytes, byteorder,
+                               center=None, warnings=warnings)
+
+        if not can_recenter:
+            _write_fallback(
+                "PLY 未找到 vertex 元素，几何数据原样保留" if vertex is None else "")
             return
 
         start, count, dtype = layout  # type: ignore[misc]
         raw_data = source.read_bytes()
-        vertex_offset = header["data_offset"] + start
-        if vertex_offset + count * dtype.itemsize > len(raw_data):
-            warnings.append("PLY 顶点数据长度小于 header 声明，跳过几何重定位")
-            with open(source, "rb") as reader, open(tmp_path, "wb") as writer:
-                writer.write(header_bytes)
-                reader.seek(header["data_offset"])
-                shutil.copyfileobj(reader, writer)
-            return
+        source_data = raw_data[int(header["data_offset"]):]
+        if start + count * dtype.itemsize > len(source_data):
+            raise ExportError(
+                "PLY 数据段长度小于 header 声明（源文件已损坏），拒绝导出以免交付错位模型")
         try:
-            vertex_array = np.frombuffer(bytearray(raw_data), dtype=dtype, count=count,
-                                         offset=vertex_offset)
+            vertex_array = np.frombuffer(bytearray(source_data), dtype=dtype, count=count,
+                                         offset=start)
         except Exception as exc:
             warnings.append(f"PLY 顶点数组解析失败，跳过几何重定位：{exc}")
-            with open(source, "rb") as reader, open(tmp_path, "wb") as writer:
-                writer.write(header_bytes)
-                reader.seek(header["data_offset"])
-                shutil.copyfileobj(reader, writer)
+            _write_fallback()
             return
         names = set(dtype.names or ())
         if not {"x", "y", "z"} <= names:
-            warnings.append("PLY vertex 缺少 x/y/z 属性，跳过几何重定位")
-            with open(source, "rb") as reader, open(tmp_path, "wb") as writer:
-                writer.write(header_bytes)
-                reader.seek(header["data_offset"])
-                shutil.copyfileobj(reader, writer)
+            _write_fallback("PLY vertex 缺少 x/y/z 属性，跳过几何重定位")
             return
         center = [
             (float(vertex_array[axis].min()) + float(vertex_array[axis].max())) / 2.0
@@ -1010,12 +1214,17 @@ class MeshParser(Parser):
         ]
         for axis in ("x", "y", "z"):
             vertex_array[axis] -= center[("x", "y", "z").index(axis)]
-        output = bytearray(raw_data)
-        output[: header["data_offset"]] = header_bytes
-        output[vertex_offset:vertex_offset + count * dtype.itemsize] = vertex_array.tobytes()
+        # 注意：旧实现用 output[:old_header_len] = new_header（bytearray 切片会
+        # 改变长度并把数据整体后移），随后仍按旧 vertex_offset 写顶点 → 数据错位。
+        # 这里改为 header_bytes + 数据段副本，顶点按“新 header 长度 + start”写入。
+        output_data = bytearray(source_data)
+        output_data[start:start + count * dtype.itemsize] = vertex_array.tobytes()
         with open(tmp_path, "wb") as writer:
-            writer.write(output)
-        warnings.append("PLY 顶点已减去包围盒中心重定位到原点（二进制原地改写）")
+            writer.write(header_bytes)
+            writer.write(output_data)
+        warnings.append("PLY 顶点已减去包围盒中心重定位到原点（二进制重写，数据段等长）")
+        _ply_verify_output(source, tmp_path, header, header_bytes, byteorder,
+                           center=center, warnings=warnings)
 
     # ── 导出：STL ──
     def _export_stl(
