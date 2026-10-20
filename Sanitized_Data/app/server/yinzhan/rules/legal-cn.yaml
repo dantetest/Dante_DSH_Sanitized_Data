@@ -138,3 +138,17 @@ rules:
         value_clean: collapse_ws
         max_blocks: 3
     replace: {strategy: surrogate}
+
+  # 护照号（P1.5）：普通电子护照 E+8位、旧版 G、公务 D/S、外交 P；只认标签附近，
+  # 避免与普通编号/合同号混淆。假值由 surrogate 生成（保形由通用工厂处理）。
+  - id: cn.passport_no
+    entity: PASSPORT
+    label: 护照号
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff]
+    priority: 85
+    detect:
+      - type: regex
+        pattern: '(?<![A-Za-z0-9])(?:E[A-Z0-9]\d{7}|[EGDSP]\d{8})(?![A-Za-z0-9])'
+        near: [护照, 护照号, 护照号码, 旅行证件, passport, Passport, PASSPORT]
+    replace: {strategy: surrogate}

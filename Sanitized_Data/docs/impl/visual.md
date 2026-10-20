@@ -546,3 +546,70 @@ engine=ocr;doc=id_card;side=back;fields=0;fallback=1;orient=0  # 读不出两行
 - Lead 需接：`jobs._VISUAL_SPEC` 加 5 个 chat kind 的 etype/label/status；
   `pipeline._RECT_ETYPE_KIND` 补映射以纳入 verify 残留比对；解析器把 `fmt`
   放进 `ctx.options`（`fmt=image` 才启用聊天判定，PDF/TIFF 文本页可跳过）。
+
+---
+
+## 13 证件类型扩展（P1.5，2026-10-20 已实现）
+
+在 `_detect_id_document` 现有锚点体系上扩展 6 类证件（扫描件/照片）。沿用文本块数门控：
+`text_boxes ≥18` 直接不判证件（发票/合同正文）；`12~17` 块禁止 ≥25% 整页扩张，
+只涂锚点邻域；`doc_type` 写入 note 的 `doc=` 作为稳定审计标识（新增类型不新增 kind，
+统一返回 `id_document`，jobs/pipeline 无需为新类型改映射）。
+
+### 13.1 新增类型与锚点
+
+| doc_type（note） | 标题锚点（title） | 字段弱锚点（weak） | 区域策略 |
+|---|---|---|---|
+| `work_permit` | 工作证 / 员工证 / 工牌 | 工号/部门/职位/职务/有效期/姓名 | 标题+≥1 弱锚点；允许整卡/整页 |
+| `residence_permit` | 居住证 | 公民身份号码/签发机关/有效期限/住址/姓名 | 同上 |
+| `hk_mo_permit` | 港澳居民来往内地通行证 / 回乡证 | 证件号码/有效期限/签发机关/姓名 | 同上 |
+| `tw_permit` | 台湾居民来往大陆通行证 / 台胞证 | 证件号码/有效期限/签发机关/姓名 | 同上 |
+| `foreign_pr` | 外国人永久居留身份证 / 外国人永久居留证 / 永久居留证 | 证件号码/国籍/有效期限/签发机关/姓名 | 同上 |
+| `bank_card` | —（无标题） | 银联/VISA/MASTERCARD/信用卡/借记卡/储蓄卡/银行卡 | 强锚点「银行卡号/信用卡号/借记卡号/储蓄卡号」单独触发；或「弱锚点 + Luhn 合法卡号」；**永远不做整页扩张**，只涂锚点邻域/整卡 |
+
+标题类沿用营业执照式门控：标题必须是 ≤14 字的短文本，且再命中 ≥1 个字段弱锚点才触发
+（正文里提到「居住证/工作证」不触发）；标题类 `strong` 留空，避免单纯出现词条就触发。
+`residence_permit` 与身份证共用「公民身份号码」等字段时，标题类置信度更高会优先命中。
+
+### 13.2 银行卡 Luhn 弱锚点
+
+- `_find_bank_card_numbers`：从 OCR 文本提取 13~19 位数字（容忍空格/短横线），
+  **Luhn 校验通过**才作为卡号锚点；
+- `bank_card` 触发条件：强锚点（「银行卡号」等标签）单独命中；或弱锚点（VISA/银联等）
+  + Luhn 卡号；两者都无 → 不命中（例如 VISA 文字 + 非法卡号，见负样本）；
+- 区域 = 锚点并集 + 邻域扩张，`no_whole_page=True` 强制不放大到整页，防合同/对账单里
+  出现银行卡号时被整页涂黑。
+
+### 13.3 测试与实测
+
+合成夹具（`app/tests/test_visual.py` `_add_id_type_fixtures`，虚构文本）实测 note/框：
+
+| 夹具 | note | 框 (像素) |
+|---|---|---|
+| work_permit | `engine=ocr;doc=work_permit;n=4` | (202,150,540,524) |
+| residence_permit | `engine=ocr;doc=residence_permit;n=5` | (187,138,630,609) |
+| hk_mo_permit | `engine=ocr;doc=hk_mo_permit;n=4` | (172,128,628,555) |
+| tw_permit | `engine=ocr;doc=tw_permit;n=4` | (172,128,628,555) |
+| foreign_pr | `engine=ocr;doc=foreign_pr;n=4` | (172,120,580,542) |
+| bank_card | `engine=ocr;doc=bank_card;n=4`（无 whole_page） | (158,196,722,358) |
+| bank_card_invalid（VISA+非法卡号） | 不命中 | — |
+
+测试断言：6 类命中且框覆盖全部锚点文本；银行卡框不越界、无 `whole_page`、面积 <90% 页面；
+VISA+非法卡号不判证件；发票截图/合同页/正文提及营业执照等负样本 0 新增 id_document；
+`mediascan.analyze` 真链路命中；既有 56 项 visual 测试不回归 → **61/61 通过**。
+
+用户测试集（只读，未复制/提交）：
+- 91/92 号发票截图（OCR 53/54 块）→ 门控直接跳过，**0 新增 id_document**；
+- 39/85 号仍按原身份证逻辑（fields/back），无新增类型误判；82/83/84 照片 0 证件命中；
+- 用户 4 份发票/合同 PDF 文本页 → **ID_DOCUMENT 总数 0**。
+
+门禁：e2e **5/5、残留 0**；regression **229 项硬检查全绿**。
+
+### 13.4 限制
+
+- 全部依赖 OCR 可读：OCR 读不出标题/卡号（远景小卡、反光、污损）时不承诺命中；
+  宁可不报也不误报，可配合整卡模式/人工复核。
+- 银行卡只在 Luhn 校验通过或强标签命中时触发；仅拍到卡面照片但卡号不可读时可能漏。
+- 新类型沿用「文本块 ≥18 跳过」：若发票/合同被拆成很多小文本块仍可能进入判定，
+  但 12~17 块只涂锚点邻域、银行卡永不整页，误伤面受控。
+- 护照号规则（P1.5-2）由 Lead 在规则层新增，本模块未改规则。

@@ -1,10 +1,10 @@
 # CSV/TSV 列语义 + 多级/合并表头继承 · P1-B 实现说明
 
 > **状态**：实现稿 · 2026-10-20 · 未 push（按用户要求）
-> **任务**：`task-32`（P1-B 第二项）；上游设计见
+> **任务**：`task-32`（P1-B 第二项）+ `task-38`（P1.5：CSV/TSV 原编码/BOM/换行保留）；上游设计见
 > [`docs/research/08b-文本表格与隐藏数据查漏补缺.md`](../research/08b-文本表格与隐藏数据查漏补缺.md) §3.5 E1/E5/E6 与 §4.5
-> **红线**：遵守 [`docs/red-lines.md`](../red-lines.md)（E4 扩展点）。本任务只改
-> `parsers/text_parser.py`、`detectors/table_det.py`，新增测试/fixtures/文档；
+> **红线**：遵守 [`docs/red-lines.md`](../red-lines.md)（E4 扩展点）。只改
+> `parsers/text_parser.py`、`detectors/table_det.py`，测试/fixtures/文档随行；
 > 未改 pipeline / jobs / api / registry / 其它规则包 / 前端。
 
 ---
@@ -13,9 +13,9 @@
 
 | 路径 | 类型 | 说明 |
 |---|---|---|
-| `app/server/yinzhan/parsers/text_parser.py` | 修改 | `.tsv` 支持；CSV/TSV 用 csv 模块解析成单元格 Block（ref={row,col,sep,line}）+ page.ref 保留 dialect/原行 + doc.meta 标记；导出新增 delimited 分支（按原分隔符/引号重写、行/列数不变） |
+| `app/server/yinzhan/parsers/text_parser.py` | 修改 | `.tsv` 支持；CSV/TSV 用 csv 模块解析成单元格 Block（ref={row,col,sep,line}）+ page.ref 保留 dialect/原行 + doc.meta 标记；导出新增 delimited 分支（按原分隔符/引号重写、行/列数不变）；**P1.5：按原编码/BOM 写回（UTF-8-SIG/UTF-16/GB18030），未知/不可编码字符 warning + 回退 UTF-8** |
 | `app/server/yinzhan/detectors/table_det.py` | 修改 | 支持 CSV/TSV 的行列 ref；多级/合并表头继承（表头块识别 + 纵向/向左继承 + 表头词守卫）；新增 `inherit_merged`/`max_inherit_span` 选项 |
-| `app/tests/test_csv_table.py` | 新增 | 7 个测试组 / **72 项断言**（解析、编码/分隔符/换行变体、列级覆盖、两级/合并表头、无表头退化、导出/复检、规则 scope） |
+| `app/tests/test_csv_table.py` | 新增 | **8 个测试组 / 115 项断言**（解析、编码/BOM/换行保留矩阵、列级覆盖、两级/合并表头、无表头退化、导出/复检、规则 scope） |
 | `app/tests/fixtures/csv_table/` | 新增 | 虚构客户名单 CSV/TSV、两级表头、合并表头、纵向继承、无表头夹具 + `expected.json` |
 | `docs/impl/csv-table.md` | 新增 | 本文件 |
 
@@ -40,7 +40,7 @@ Lead 已接的点（本任务依赖，已完成/进行中）：
 - **选型**：`document.fmt` 保持 `"text"`（Lead 决策 A）——既有 text-scope 规则（common/pipl/trade/legal/…）在 CSV/TSV 上继续逐格生效；`table_column` 只认带 `row/col` ref 的块，所以 `.txt/.md` 天然不触发，不需要 EXT_TO_FMT。
 - **原行保留**：`page.ref = {delimited, delimiter, quotechar, eol, final_newline, raw_rows, row_cols, rows}`。`raw_rows` 在"每条记录恰占一行"时保留原始行文本（含原引号/空格），导出时未修改的行逐行原文写回。
   - 引号内换行会使行与记录不对应 → `raw_rows_ok=False`，导出统一走 writer 重写（语义等价、列数不变）。
-- **编码**：沿用 `_decode_text`（UTF-8 BOM → UTF-16 BOM → UTF-8 → GB18030 → 替换解码），输出统一 UTF-8（输入非 UTF-8 时 warning；**不保留原 BOM/GBK，留 P1 决策**）。
+- **编码（P1.5 已保留）**：沿用 `_decode_text` 解码顺序（UTF-8 BOM → UTF-16 BOM → UTF-8 → GB18030 → 替换解码）；CSV/TSV **导出按解析阶段记录的原编码写回**（见 §2.2b），`.txt/.md` 导出仍为 UTF-8（本任务不改变普通文本行为）。
 - **异常兜底**：`csv.Error` 时 warning + 退回按行解析（不抛给用户）。
 - **列数不齐**：`row_cols` 记录每行列数，导出按各行原列数保留（不补齐/不截断）。
 
@@ -54,7 +54,28 @@ Lead 已接的点（本任务依赖，已完成/进行中）：
    - 该行无修改且 `raw_rows` 可用 → 写**原文行**（保留引号/空格/大小写）；
    - 否则 → 用 `csv.writer(delimiter=原分隔符, quotechar=原引号, QUOTE_MINIMAL)` 重写，列数=原列数；
 4. 行尾拼接：保留原 `eol`（`\r\n` / `\n`）与"文件末尾是否有换行"；
-5. 输出 UTF-8 无 BOM；`pipeline.verify` 重解析成品做残留复检（`residual=0` 才允许交付）。
+5. **按原编码写回**（`_encode_output_preserving`）：`utf-8-sig` 保留 BOM、`utf-16`
+   保留 BOM、`gb18030`（GBK 超集）按原编码写回；未知编码或目标编码无法表示的字符 →
+   **写 warning 并回退 UTF-8**（不静默改编码）；
+6. `pipeline.verify` 重解析成品做残留复检（`residual=0` 才允许交付）。
+
+### 2.2b 编码 / BOM / 换行保留矩阵（P1.5 实测）
+
+`doc.meta` 解析阶段新增/补充：`encoding`（原始编码名）、`encoding_output`（导出目标）、
+`encoding_source`（`bom`/`content`/`fallback`）、`bom`（bool）、`newline`（`CRLF`/`LF`）。
+`page.ref` 继续保留 `eol` / `final_newline` / `raw_rows`。
+
+| 输入（解析识别） | meta 记录 | 导出行为（实测） |
+|---|---|---|
+| UTF-8 无 BOM | `encoding=utf-8`, `bom=False`, `source=content` | UTF-8 无 BOM，无额外 warning |
+| UTF-8 with BOM | `encoding=utf-8-sig`, `bom=True`, `source=bom` | UTF-8 **保留 BOM**（`EF BB BF`） |
+| UTF-16（带 BOM） | `encoding=utf-16`, `bom=True`, `source=bom` | UTF-16 + BOM（Python `utf-16`，LE；BE 输入归一为 LE+BOM） |
+| GBK | `encoding=gb18030`, `bom=False`, `source=content` | **GB18030 写回**；GBK 可表示字符字节与原文一致（GB18030 是 GBK 超集） |
+| GBK + CRLF | 同上 + `newline=CRLF` | 编码、BOM、`\r\n` 同时保留 |
+| 引号内换行（任意编码） | `raw_rows_ok=False` | writer 重写整表，行/列数不变、单元格内容保留 |
+| 列数不齐（`row_cols=[3,2]`） | `row_cols` 保留 | 导出行列结构保持 `[3,2]` |
+| 未知编码 / 解码已用替换字符 | `encoding=utf-8(replace)`, `source=fallback` | warning「原文件编码无法确认…成品按 UTF-8 写回」 |
+| 目标编码无法表示某字符 | — | warning「已回退 UTF-8 写回，原编码 X 未保留」 |
 
 ### 2.3 行为变化（需知晓）
 
@@ -114,7 +135,7 @@ detect:
 
 ```powershell
 cd D:\DSH_DESKTOP_WORKSPACE\Sanitized_Data
-python -X utf8 app/tests/test_csv_table.py        # 本域单测（7 组 / 72 断言）
+python -X utf8 app/tests/test_csv_table.py        # 本域单测（8 组 / 115 断言）
 python -X utf8 app/tests/test_table_column.py     # 既有表格 P0 回归（9 组 / 156 断言）
 cd app\server; python -X utf8 ..\tests\e2e.py     # 5 样例冒烟
 cd ..\..; python -X utf8 app/tests/regression.py  # 红线门禁
@@ -124,16 +145,17 @@ cd ..\..; python -X utf8 app/tests/regression.py  # 红线门禁
 
 | 检查 | 结果 |
 |---|---|
-| `test_csv_table.py` | **7 个测试组 / 72 项断言全绿** |
+| `test_csv_table.py` | **8 个测试组 / 115 项断言全绿** |
 | 解析 | `.tsv` 已注册；CSV 21 Block / 3 行 × 7 列；`delimited/delimiter/quotechar/rows/cols/raw_rows_ok` 正确；引号内逗号保留；`.txt` 仍按行切块、无 row/col ref |
 | 编码/换行 | UTF-8 BOM（`utf-8-sig`，BOM 剥离）、GB18030 解码、分号分隔识别、CRLF 保留、引号内换行（`raw_rows_ok=False` 走 writer）、空文件、列数不齐（`row_cols=[3,2]`）全部通过 |
+| 编码保留（P1.5） | GBK→GB18030 写回（无 BOM）、utf-8-sig→保留 BOM、UTF-16→保留 BOM、GBK+CRLF→编码+换行双保留、GBK+引号换行/列数不齐/5000 字符超长字段均往返一致；未知编码/不可编码字符→warning + UTF-8 回退（不静默）；每项导出 `residual=0`、行/列数不变 |
 | 列级覆盖 | 客户名单 CSV **14/14**（7 列 × 2 行）、TSV **14/14**、两级表头 **10/10**；含缺位身份证、空格手机号、无后缀单位、文本金额 |
 | 两级/合并表头 | 父级分组行（个人信息/客户信息）+ 叶行（姓名/身份证号/手机号/单位/邮箱）取叶行；`姓名,联系方式,,单位` 空槽向左继承出第 2 个电话列（4 个电话值）；纵向"父行联系方式 + 叶行手机号"两列均生效；`inherit_merged=False` / `max_inherit_span=1` 行为符合预期 |
 | 无表头 | table-cn 直接/全量均 0 命中；legacy 规则仍逐格命中（ID_CARD/PHONE/ORG ≥2）；同内容 `.txt` 与泛词表头也不误报 |
 | 导出/复检 | AI/涂黑/TSV 三种：`residual=0`、行数/列数不变（`[7,7,7]`）、表头原文保留、抽样无敏感原值；CRLF 导出仍 CRLF；引号内换行保留为同一单元格 |
 | 规则/注册 | table-cn 11 条 scope 均含 `text`（Lead 已接）；text 格式可编译全部 table 规则；pdf 不含；`doc.fmt=csv` 时检测器仍可用（兼容未来 EXT_TO_FMT） |
 | e2e | **5/5 解析成功、双导出、残留 0** |
-| regression | **213 项硬检查全绿**（软提示：开发中未提交改动/OCR 耗时波动，与 CSV/TSV 无关） |
+| regression | **227 项硬检查全绿**（软提示：开发中未提交改动/OCR 耗时波动，与 CSV/TSV 无关） |
 | 既有表格 P0 | `test_table_column.py` 156 项断言全绿（继承算法重写后行为不退化） |
 
 ---
@@ -143,7 +165,7 @@ cd ..\..; python -X utf8 app/tests/regression.py  # 红线门禁
 | # | 点 | 说明 |
 |---|---|---|
 | 1 | `.csv` block 粒度变化 | 行 → 单元格。规则仍逐格生效；依赖"整行 block"的代码/集成（暂无）需注意 |
-| 2 | 输出编码 | 统一 UTF-8 无 BOM（输入 GBK/UTF-16 会 warning）；保留原 BOM/GBK 列 P1 |
+| 2 | 输出编码 | CSV/TSV 按原编码/BOM 写回（P1.5）：utf-8/utf-8-sig/utf-16/gb18030；未知编码或不可编码字符 → warning + UTF-8 回退。`.txt/.md` 仍统一 UTF-8 |
 | 3 | 引号/空白 | 未修改行原文写回；修改行由 writer 重写 → 引号策略可能规范化（语义等价、列数不变；`raw_rows_ok=False` 时全量重写） |
 | 4 | 多表堆叠 | 同一 CSV 里多张表只识别最前面的表头（P1 多表切分） |
 | 5 | 合并单元格数据区 | CSV 的合并数据格（导出时常见为"仅左上角有值"）会被解析成空列 → 该行该列无实体（与 xlsx/docx 已知边界一致，P1 可取上一行值） |
@@ -160,7 +182,7 @@ cd ..\..; python -X utf8 app/tests/regression.py  # 红线门禁
 | 1 | 同文件多表堆叠只取首个表头 | 用"连续数据行/空行/表头块"分块，或解析器提供表格边界 |
 | 2 | 合并数据格（非表头）值缺失 | 解析时向上继承数据值（需保留"空 vs 缺失"信息） |
 | 3 | 流式/超大 CSV | 流式 reader + 分页 Block（与 jobs 分页协同） |
-| 4 | 输出保留原 BOM/GBK | 产品决策项（Excel 兼容 vs 清理）；需配置项与 warning 策略 |
+| 4 | UTF-16 字节序 | 带 BOM 的 UTF-16 统一按 Python `utf-16`（LE+BOM）写回；BE 输入归一为 LE（BOM 保留，字节序不保证原样） |
 | 5 | 表头词/同义词覆盖 | 维护 `_HEADER_VOCAB` + 规则 `headers`；P2 可做词表热加载 |
 | 6 | CSV 中公式/数值语义 | CSV 无类型，纯数字金额按文本 AMOUNT 处理（value_pattern 守卫）；与 xlsx `numeric_cell` 不同源 |
 
@@ -175,17 +197,18 @@ Lead 加在 `table-cn.yaml` 的 `text` scope 由 Lead 决定保留（对 `.txt/.
 **交付前验收（按顺序）**：
 
 ```powershell
-python -X utf8 app/tests/test_csv_table.py        # 期望：7 组 / >=72 断言全绿
+python -X utf8 app/tests/test_csv_table.py        # 期望：8 组 / >=115 断言全绿
 python -X utf8 app/tests/test_table_column.py     # 期望：9 组 / 156 断言全绿（P0 不退化）
 cd app\server; python -X utf8 ..\tests\e2e.py     # 期望：5/5、残留 0
 cd ..\..; python -X utf8 app/tests/regression.py  # 期望：回归通过、硬项全绿
 git status --short                                # 期望：仅本任务写作用域文件（+并行域改动）
 ```
 
-**验收口径对照**（task-32）：
+**验收口径对照**（task-32 + task-38）：
 
 - ✅ `.tsv` 支持；CSV/TSV 用 csv 模块解析成单元格 Block（ref={row,col,sep}，与 xlsx 一致）+保留原行；
 - ✅ table_det 支持 csv/tsv ref；前 1–3 行多级表头继承到子列；无表头退化为既有规则、不误报；
 - ✅ TextParser 导出按分隔符/引号写回、保持列数/行数；
-- ✅ 测试虚构客户名单/两级表头；覆盖、残留、列数实测见 §4；
+- ✅ **P1.5 编码保留**：GBK/utf-8-sig/UTF-16 按原编码+BOM 写回；CRLF/引号换行/列数不齐/超长字段往返一致；导出后回读编码/BOM/换行一致、`residual=0`、行列数不变；未知编码/不可编码字符 warning 回退 UTF-8；
+- ✅ 现有 `test_csv_table.py` 断言不回归（扩充后 8 组/115 断言全绿）；
 - ✅ 不 push；不提交真实 PII（夹具全部虚构）。

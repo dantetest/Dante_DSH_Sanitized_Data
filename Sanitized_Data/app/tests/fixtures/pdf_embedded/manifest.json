@@ -71,6 +71,17 @@
     480.0,
     480.0
    ]
+  },
+  "text_sensitive": {
+   "file": "text_sensitive.pdf",
+   "image_rect": [
+    60.0,
+    220.0,
+    420.0,
+    447.0
+   ],
+   "expected_text_min": 2,
+   "expected_id": "110101199003074477"
   }
  }
 }

@@ -14,12 +14,15 @@ export
     - CSV/TSV：按原分隔符/引号用 csv.writer 重写被修改的行（未修改且有原始行时
       逐行写回原文），保持行数/列数/引号语义；black → “█” 覆盖原长度；
       surrogate / mask → 写入 replacement；drop → 空单元格。
+    - **CSV/TSV 编码保留（P1.5）**：按解析阶段记录的编码写回——`utf-8-sig` 保留
+      BOM、`utf-16` 保留 BOM、`gb18030`（GBK 超集）按原编码写回；未知编码或目标
+      编码无法表示的字符 → 写 warning 并回退 UTF-8（不静默改编码）。
     - 两者都做「值级传播」：检测器漏掉的单元格/行里若仍出现同一实体值，也按同一
       决策覆盖。
 
 设计取舍：
     - 解码顺序：UTF-8(BOM) → UTF-16(BOM) → UTF-8 → GB18030 → UTF-8 替换字符。
-      编码不是 UTF-8 时写 warning，成品固定 UTF-8。
+      普通文本(.txt/.md)导出仍统一 UTF-8；CSV/TSV 按原编码/BOM 写回。
     - 空行也保留成空 Block，保证普通文本导出时行结构逐字节可还原。
     - CSV/TSV 的 header 语义不在这里判断：交给 detectors/table_det.py 的
       table_column（无表头时自然退化为逐单元格的既有规则）。
@@ -123,6 +126,50 @@ def _csv_line(values: list[str], delimiter: str, quotechar: str) -> str:
     return buffer.getvalue()
 
 
+def _encoding_target(encoding: str) -> tuple[str, bool, str]:
+    """把解析阶段记录的编码名映射为导出目标。
+
+    返回 ``(输出编码, 是否带 BOM, 来源)``；来源 ``bom/content/fallback`` 用于
+    判断是否需要 warning（fallback 表示原编码不可靠，需提示用户）。
+    """
+    text = str(encoding or "").strip().lower()
+    if text == "utf-8-sig":
+        return "utf-8-sig", True, "bom"
+    if text in ("utf-16", "utf-16-le", "utf-16-be"):
+        return "utf-16", True, "bom"
+    if text in ("gb18030", "gbk", "gb2312"):
+        return "gb18030", False, "content"
+    if text == "utf-8":
+        return "utf-8", False, "content"
+    return "utf-8", False, "fallback"
+
+
+def _encode_output_preserving(
+    text: str, encoding: str, warnings: list[str]
+) -> bytes:
+    """按原编码写回字节；无法表示的字符/未知编码 → warning + 回退 UTF-8。
+
+    - ``utf-8-sig``/``utf-16``：encode 时自带 BOM；
+    - ``gb18030``（GBK 超集）：GBK 可表示的字符字节一致；
+    - 未知编码（如解码阶段已用替换字符）→ 不静默改编码，明确 warning 后回退 UTF-8。
+    """
+    target, _bom, source = _encoding_target(encoding)
+    if source == "fallback":
+        warnings.append(
+            f"原文件编码无法确认（记录为 {encoding or '未知'}），成品按 UTF-8 写回，"
+            "未保留原编码（请人工确认）"
+        )
+        return text.encode("utf-8")
+    try:
+        return text.encode(target)
+    except (UnicodeEncodeError, LookupError) as exc:
+        warnings.append(
+            f"成品含 {target} 无法表示的字符（{type(exc).__name__}: {exc}），"
+            f"已回退 UTF-8 写回，原编码 {encoding} 未保留"
+        )
+        return text.encode("utf-8")
+
+
 def _fill_delimited_document(
     document: "Document", text: str, kind: str, encoding: str, warnings: list[str]
 ) -> bool:
@@ -180,8 +227,13 @@ def _fill_delimited_document(
         "rows": len(rows),
     }
     document.pages.append(page)
+    output_encoding, bom, encoding_source = _encoding_target(encoding)
     document.meta = {
-        "encoding": encoding,
+        "encoding": encoding,                 # 解析阶段识别到的原始编码
+        "encoding_output": output_encoding,   # 导出目标（无法还原时见 encoding_source）
+        "encoding_source": encoding_source,   # bom / content / fallback
+        "bom": bom,
+        "newline": "CRLF" if eol == "\r\n" else "LF",
         "line_count": len(raw_pairs),
         "delimited": kind,
         "delimiter": delimiter,
@@ -199,8 +251,6 @@ def _fill_delimited_document(
             f"{kind.upper()} 有 {ragged} 行列数与最大列数（{max_cols}）不一致，"
             "导出时按各行列数原样保留"
         )
-    if encoding not in ("utf-8", "utf-8-sig"):
-        warnings.append(f"输入编码为 {encoding}，成品统一按 UTF-8 输出")
     return True
 
 
@@ -369,16 +419,18 @@ def _export_delimited(
     if unresolved:
         warnings.append(f"有 {unresolved} 处标记无法映射到 CSV/TSV 单元格，请人工复核成品")
 
+    # P1.5：按原编码/BOM 写回（未知编码或不可编码字符 → warning + 回退 UTF-8）
+    meta = document.meta or {}
+    data = _encode_output_preserving(
+        output, str(meta.get("encoding") or "utf-8"), warnings
+    )
     try:
-        with open(out_path, "w", encoding="utf-8", newline="") as handle:
-            handle.write(output)
+        with open(out_path, "wb") as handle:
+            handle.write(data)
     except Exception as exc:
         out_path.unlink(missing_ok=True)
         raise ExportError(f"CSV/TSV 写出失败，未产出成品：{exc}") from exc
 
-    meta_encoding = (document.meta or {}).get("encoding")
-    if meta_encoding and meta_encoding not in ("utf-8", "utf-8-sig"):
-        warnings.append(f"输入编码 {meta_encoding} 已统一转为 UTF-8")
     return ExportResult(
         path=str(out_path), warnings=warnings, size=out_path.stat().st_size
     )

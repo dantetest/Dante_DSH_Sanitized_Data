@@ -668,6 +668,7 @@ _TYPE_LABEL = {
     "CHAT_GROUP": "群名称", "CHAT_TIME": "聊天时间",
     "CHAT_INPUT": "聊天输入框",
     "EMBEDDED_IMAGE": "内嵌图片（敏感）",
+    "PASSPORT": "护照号",
     "QRCODE": "二维码", "BARCODE": "条形码",
 }
 
@@ -763,6 +764,19 @@ _ID_VISUAL_ETYPES = frozenset({
     "ID_DOCUMENT", "ID_PHOTO", "ID_NAME", "ID_NUMBER",
     "ID_ADDRESS", "ID_AUTHORITY", "ID_VALIDITY",
 })
+# 非身份证证件的展示名（扫描器 note 里的 doc= 稳定标识）
+_ID_DOC_LABELS: dict[str, str] = {
+    "passport": "护照",
+    "driver_license": "驾驶证",
+    "business_license": "营业执照",
+    "social_security": "社保卡",
+    "work_permit": "工作证",
+    "residence_permit": "居住证",
+    "hk_mo_permit": "港澳通行证",
+    "tw_permit": "台胞证",
+    "foreign_pr": "外国人永居证",
+    "bank_card": "银行卡",
+}
 
 
 def _time_period(text: str) -> str:
@@ -957,6 +971,12 @@ def _visual_entities(doc: Document, sig_blocks: list | None = None,
         for mark in id_docs:
             meta = _mark_note(mark.note)
             page = getattr(mark, "page", 0)
+            doc_type = meta.get("doc", "")
+            if doc_type and doc_type not in ("id_card",):
+                # 非身份证证件没有字段模板（护照/驾驶证/工作证/居住证/港澳台/
+                # 永居证/银行卡等）：整卡/整区域涂黑，不做字段定位。
+                chosen.append(mark)
+                continue
             side = meta.get("side", "") or "front"
             if meta.get("fallback") == "1":
                 card_fields: list = []
@@ -1000,6 +1020,9 @@ def _visual_entities(doc: Document, sig_blocks: list | None = None,
         if vm.kind == "seal" and any(_inside(vm.rect, r) for r in sig_by_page.get(vm.page, [])):
             continue
         etype, label, status = spec[0], spec[1], spec[2]
+        if vm.kind == "id_document":
+            doc_type = _mark_note(getattr(vm, "note", "")).get("doc", "")
+            label = _ID_DOC_LABELS.get(doc_type, label)
         level = spec[3] if len(spec) > 3 else "L3"
         out.append(Entity(
             id=Entity.new_id(), etype=etype, label=label, value="",

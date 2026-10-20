@@ -28,6 +28,7 @@ import os
 import posixpath
 import re
 import shutil
+import tempfile
 import time
 import uuid
 import zipfile
@@ -621,6 +622,45 @@ OFFICE_MEDIA_REDACT_DEFAULT = _env_flag("YINZHAN_OFFICE_MEDIA", True)
 #: 是否默认 strict 处理（导出 option 优先）
 OFFICE_MEDIA_STRICT_DEFAULT = _env_flag("YINZHAN_OFFICE_STRICT", False)
 
+# ── P1.5 内嵌图片「纯文字」OCR 规则脱敏（media_text.redact_image_text）──
+# 只对 helper 支持的位图格式调用；预算按“整篇文档”统计，超预算保留原图 + warning。
+OFFICE_TEXT_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+#: 文字 OCR 总开关（默认开；`YINZHAN_OFFICE_TEXT_OCR=0` 可整体关闭）
+OFFICE_TEXT_OCR_DEFAULT = _env_flag("YINZHAN_OFFICE_TEXT_OCR", True)
+
+
+def _office_text_enabled() -> bool:
+    """每次导出时动态读取文字 OCR 开关（env 可覆盖，测试/排障用）。"""
+    return _env_flag("YINZHAN_OFFICE_TEXT_OCR", OFFICE_TEXT_OCR_DEFAULT)
+
+
+def _office_text_budget() -> tuple[int, float]:
+    """单次导出的文字 OCR 总预算：(最多图片数, 最长秒数)；0 秒表示不限。"""
+    max_images = _env_positive_int("YINZHAN_OFFICE_TEXT_MAX_IMAGES", 30)
+    try:
+        max_seconds = float(os.environ.get("YINZHAN_OFFICE_TEXT_MAX_SECONDS", "") or 60.0)
+    except (TypeError, ValueError):
+        max_seconds = 60.0
+    return max_images, max(0.0, max_seconds)
+
+
+def _office_text_verify_seconds() -> float:
+    """导出后文字自检的时间预算（秒）；0 表示不限。"""
+    try:
+        return max(0.0, float(
+            os.environ.get("YINZHAN_OFFICE_TEXT_VERIFY_SECONDS", "") or 20.0))
+    except (TypeError, ValueError):
+        return 20.0
+
+
+def _office_redact_text_bytes(data: bytes, part: str,
+                              workdir: Path | None) -> tuple[bytes | None, int, list[str]]:
+    """调用 Lead 提供的 media_text helper；异常由调用方兜底。"""
+    from .. import media_text
+
+    suffix = Path(str(part)).suffix.lower()
+    return media_text.redact_image_text(data, suffix=suffix, workdir=workdir)
+
 
 def _office_media_option(options: dict | None, key: str, default: bool) -> bool:
     raw = (options or {}).get(key)
@@ -786,6 +826,8 @@ def _build_office_media_meta(classified: dict[str, Any], *, fmt: str,
         "fields": int(fields or 0),
         "footnotes": len(footnotes),
         "endnotes": len(endnotes),
+        # P1.5：图片内纯文字会走 media_text.redact_image_text（OCR+规则+黑块）
+        "text_ocr_supported": _office_text_enabled(),
     }
 
 
@@ -799,7 +841,7 @@ def _append_office_media_warnings(document: Document, meta: dict[str, Any],
     if image_count:
         document.warnings.append(
             f"{label}含 {image_count} 张内嵌图片，导出时将自动扫描并涂黑人脸/证件/"
-            "车牌/二维码/条码/聊天截图等目标（图片内纯文字 OCR 规则脱敏为 P1.5）")
+            "车牌/二维码/条码/聊天截图等目标，并对图片内文字做 OCR 规则脱敏（P1.5）")
     if hidden_count:
         document.warnings.append(
             f"{label}含 {hidden_count} 个无法自动脱敏的隐藏对象"
@@ -1096,6 +1138,10 @@ def _office_process_media(path: Path, *, fmt: str, options: dict | None,
         "hits_by_kind": {}, "hidden_total": 0, "hidden_stripped": 0,
         "hidden_kept": 0, "redact_office_media": redact,
         "strict_office_media": strict,
+        # P1.5 文字 OCR 统计
+        "text_images_processed": 0, "text_images_redacted": 0,
+        "text_hits": 0, "text_skipped": 0,
+        "text_verify_checked": 0, "text_verify_hits": 0, "text_verify_skipped": 0,
     }
     try:
         archive = zipfile.ZipFile(path)
@@ -1105,6 +1151,7 @@ def _office_process_media(path: Path, *, fmt: str, options: dict | None,
     replacements: dict[str, bytes] = {}
     replaced_parts: list[str] = []
     removals: set[str] = set()
+    text_workdir: Path | None = None
     try:
         classified = _classify_office_parts(archive, fmt)
         images = list(classified.get("images") or [])
@@ -1127,6 +1174,14 @@ def _office_process_media(path: Path, *, fmt: str, options: dict | None,
                 ocr = None
         ocr_budget = OFFICE_MEDIA_OCR_MAX_IMAGES
         total_pixels = 0
+        # P1.5 文字 OCR：整篇文档预算（图片数/耗时），超预算保留原图 + warning
+        text_max_images, text_max_seconds = _office_text_budget()
+        text_verify_seconds = _office_text_verify_seconds()
+        text_used = 0
+        text_elapsed = 0.0
+        text_budget_warned = False
+        text_enabled = _office_text_enabled()
+        text_replaced_parts: list[str] = []
         for index, part in enumerate(images):
             if index >= OFFICE_MEDIA_MAX_IMAGES:
                 skipped = len(images) - index
@@ -1166,18 +1221,62 @@ def _office_process_media(path: Path, *, fmt: str, options: dict | None,
                 ocr_budget -= 1
             marks, _scan_warns, _scale = _office_scan_pil(
                 pil, ocr=ocr if allow_ocr else None, warnings=warnings)
+            visual_kinds: list[str] = []
+            visual_encoded: bytes | None = None
             if marks:
-                painted, kinds = _office_paint_marks(pil, marks, warnings)
+                painted, visual_kinds = _office_paint_marks(pil, marks, warnings)
                 try:
-                    replacements[part] = _office_encode_image(painted, part)
+                    visual_encoded = _office_encode_image(painted, part)
                 except Exception as exc:
                     stats["images_failed"] += 1
                     warnings.append(f"内嵌图片 {part} 重编码失败，未脱敏：{exc}")
                     continue
-                replaced_parts.append(part)
-                stats["images_redacted"] += 1
-                for kind in kinds:
-                    stats["hits_by_kind"][kind] = stats["hits_by_kind"].get(kind, 0) + 1
+                replacements[part] = visual_encoded
+            # ── P1.5：图片内纯文字 OCR 规则脱敏（在视觉涂黑之后，叠加执行）──
+            text_hits = 0
+            suffix = Path(str(part)).suffix.lower()
+            if redact and suffix in OFFICE_TEXT_SUFFIXES:
+                if not text_enabled:
+                    stats["text_skipped"] += 1
+                elif (text_max_images > 0 and text_used >= text_max_images) or (
+                        text_max_seconds > 0 and text_elapsed >= text_max_seconds):
+                    stats["text_skipped"] += 1
+                    if not text_budget_warned:
+                        text_budget_warned = True
+                        warnings.append(
+                            "内嵌图片文字 OCR 预算已用尽"
+                            f"（{text_max_images} 张/{text_max_seconds:.0f}s），"
+                            "剩余图片只做视觉/码类脱敏，文字内容需人工复核")
+                else:
+                    if text_workdir is None:
+                        text_workdir = Path(tempfile.mkdtemp(prefix="yz_office_text_"))
+                    candidate = visual_encoded if visual_encoded is not None else raw
+                    started = time.time()
+                    try:
+                        text_new, text_hits, text_warns = _office_redact_text_bytes(
+                            candidate, part, text_workdir)
+                    except Exception as exc:
+                        text_new, text_hits, text_warns = None, 0, [
+                            f"内嵌图片 {part} 文字 OCR 失败：{exc}"]
+                    text_elapsed += max(0.0, time.time() - started)
+                    text_used += 1
+                    stats["text_images_processed"] += 1
+                    warnings.extend(str(item) for item in (text_warns or []))
+                    if text_new is not None:
+                        replacements[part] = text_new
+                        text_replaced_parts.append(part)
+                        stats["text_hits"] += int(text_hits or 0)
+                        if text_hits:
+                            stats["text_images_redacted"] += 1
+            # 决定最终成品图片字节
+            if part in replacements:
+                if part not in replaced_parts:
+                    replaced_parts.append(part)
+                if visual_kinds:
+                    stats["images_redacted"] += 1
+                    for kind in visual_kinds:
+                        stats["hits_by_kind"][kind] = (
+                            stats["hits_by_kind"].get(kind, 0) + 1)
             elif strict:
                 try:
                     replacements[part] = _office_blank_image(pil, part)
@@ -1241,7 +1340,12 @@ def _office_process_media(path: Path, *, fmt: str, options: dict | None,
             archive.close()
         except Exception:
             pass
-    # 自检：被替换图片重扫必须 0 命中
+        if text_workdir is not None:
+            try:
+                shutil.rmtree(text_workdir, ignore_errors=True)
+            except Exception:
+                pass
+    # 自检 1：被替换图片重扫视觉/码类必须 0 命中
     if redact and replaced_parts:
         ocr_check = None
         try:
@@ -1260,10 +1364,72 @@ def _office_process_media(path: Path, *, fmt: str, options: dict | None,
             except OSError:
                 pass
             raise ExportError("导出后 Office 内嵌图片复检失败：" + "；".join(leftovers))
+    # 自检 2（P1.5）：被替换图片重跑文字 helper，敏感文字命中必须 0
+    if redact and text_replaced_parts:
+        verify_started = time.time()
+        verify_ocr_ok = False
+        try:
+            from ..ocr import get_ocr as _get_ocr_probe
+
+            _probe = _get_ocr_probe()
+            verify_ocr_ok = bool(getattr(_probe, "available", False))
+        except Exception:
+            verify_ocr_ok = False
+        text_issues: list[str] = []
+        try:
+            with zipfile.ZipFile(path) as check_archive:
+                for part in text_replaced_parts:
+                    if (text_verify_seconds > 0
+                            and time.time() - verify_started > text_verify_seconds):
+                        remaining = max(0, len(text_replaced_parts)
+                                        - stats["text_verify_checked"]
+                                        - stats["text_verify_skipped"])
+                        stats["text_verify_skipped"] += remaining
+                        warnings.append(
+                            f"内嵌图片文字 OCR 自检超时（>{text_verify_seconds:.0f}s），"
+                            f"{remaining} 张未能确认文字残留，请人工复核")
+                        break
+                    try:
+                        data = check_archive.read(part)
+                    except Exception as exc:
+                        stats["text_verify_skipped"] += 1
+                        warnings.append(f"内嵌图片文字自检无法读取 {part}：{exc}")
+                        continue
+                    if not verify_ocr_ok:
+                        stats["text_verify_skipped"] += 1
+                        warnings.append(
+                            f"内嵌图片 {part} 文字残留无法确认（OCR 不可用），请人工复核")
+                        continue
+                    try:
+                        verify_new, verify_hits, verify_warns = _office_redact_text_bytes(
+                            data, part, None)
+                    except Exception as exc:
+                        stats["text_verify_skipped"] += 1
+                        warnings.append(f"内嵌图片文字自检失败 {part}：{exc}")
+                        continue
+                    stats["text_verify_checked"] += 1
+                    warnings.extend("文字自检：" + str(item) for item in (verify_warns or []))
+                    if verify_new is not None or int(verify_hits or 0) > 0:
+                        stats["text_verify_hits"] += max(1, int(verify_hits or 0))
+                        text_issues.append(part)
+        except Exception as exc:
+            text_issues.append(f"{type(exc).__name__}: {exc}")
+        if text_issues:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise ExportError(
+                "导出后 Office 内嵌图片文字复检失败：" + "；".join(text_issues[:6]))
     if not redact and stats["images_total"]:
+        stats["text_skipped"] = max(stats["text_skipped"], stats["images_total"])
         warnings.append(
             f"自动脱敏已关闭（redact_office_media=False）：{stats['images_total']} 张内嵌图片"
             "原样保留，存在外发泄漏风险")
+    if redact and not text_enabled and stats["images_total"]:
+        warnings.append(
+            "内嵌图片文字 OCR 已关闭（YINZHAN_OFFICE_TEXT_OCR=0）："
+            "图片内文字未处理，请人工复核")
     if stats["images_redacted"]:
         kinds = "、".join(f"{k}×{v}" for k, v in sorted(stats["hits_by_kind"].items()))
         warnings.append(
@@ -1274,7 +1440,15 @@ def _office_process_media(path: Path, *, fmt: str, options: dict | None,
     if stats["images_clean"]:
         warnings.append(
             f"{stats['images_clean']} 张内嵌图片未检出视觉/码类目标，已保留原样"
-            "（图片内纯文字 OCR 规则脱敏为 P1.5，建议人工复核）")
+            "（文字 OCR 结果见下一条，建议人工复核）")
+    if stats["text_images_processed"]:
+        warnings.append(
+            f"内嵌图片文字 OCR：处理 {stats['text_images_processed']} 张，"
+            f"命中 {stats['text_hits']} 处，脱敏 {stats['text_images_redacted']} 张")
+    if stats["text_skipped"]:
+        warnings.append(
+            f"{stats['text_skipped']} 张内嵌图片文字 OCR 跳过（预算/格式/未开启），"
+            "文字内容请人工复核")
     return stats
 
 

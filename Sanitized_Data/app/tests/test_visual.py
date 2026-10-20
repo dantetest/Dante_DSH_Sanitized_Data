@@ -271,6 +271,9 @@ def build_fixtures() -> dict:
     # 12) 聊天截图夹具（单聊/群聊/深色/横向/长截图）+ 发票截图负样本
     _add_chat_fixtures(root, out)
 
+    # 13) P1.5 证件类型扩展夹具（工作证/居住证/港澳台/永居证/银行卡）
+    _add_id_type_fixtures(root, out)
+
     return out
 
 
@@ -560,6 +563,86 @@ def _add_chat_fixtures(root: Path, out: dict) -> None:
     img.save(path)
     out["invoice_screenshot"] = {
         "path": path, "size": img.size, "text_boxes": boxes}
+
+
+def _add_id_type_fixtures(root: Path, out: dict) -> None:
+    """P1.5 证件类型扩展合成夹具（虚构文本，不入库）。"""
+
+    def _text(draw, xy, text, size, fill=(25, 25, 25)):
+        font = _font(size)
+        _draw_text(draw, xy, text, size, fill)
+        return tuple(float(v) for v in draw.textbbox(xy, text, font=font))
+
+    def _render(name, width, height, card, items, background=(120, 128, 124),
+                card_color=(250, 250, 246)):
+        img = _new_canvas(width, height, background)
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle(card, radius=18, fill=card_color,
+                               outline=(110, 110, 110), width=2)
+        boxes = []
+        anchors = []
+        for text, nx, ny, size, anchor in items:
+            x = int(card[0] + nx * (card[2] - card[0]))
+            y = int(card[1] + ny * (card[3] - card[1]))
+            rect = _text(draw, (x, y), text, size, (25, 25, 25))
+            boxes.append({"text": text, "rect": rect})
+            if anchor:
+                anchors.append(rect)
+        path = root / f"{name}.png"
+        img.save(path)
+        out[name] = {"path": path, "size": img.size, "text_boxes": boxes,
+                     "card_rect": card, "anchor_rects": anchors}
+
+    _render("work_permit", 1000, 700, (150, 120, 850, 580), [
+        ("工作证", 0.36, 0.08, 40, True),
+        ("姓名 李四", 0.10, 0.30, 28, True),
+        ("工号 A1001", 0.10, 0.46, 26, True),
+        ("部门 技术部", 0.10, 0.62, 26, True),
+        ("有效期 2026-12-31", 0.10, 0.78, 24, True),
+    ])
+    _render("residence_permit", 1100, 760, (120, 110, 980, 650), [
+        ("居住证", 0.38, 0.07, 38, True),
+        ("姓名 王五", 0.10, 0.26, 28, True),
+        ("公民身份号码 310101199001011234", 0.10, 0.42, 24, True),
+        ("住址 上海市浦东新区测试路1号", 0.10, 0.56, 24, True),
+        ("签发机关 上海市公安局", 0.10, 0.70, 24, True),
+        ("有效期限 2020.01.01-2040.01.01", 0.10, 0.84, 22, True),
+    ], background=(232, 226, 214), card_color=(246, 244, 236))
+    _render("hk_mo_permit", 1100, 720, (100, 110, 1000, 610), [
+        ("港澳居民来往内地通行证", 0.20, 0.06, 30, True),
+        ("姓名 陈六", 0.10, 0.28, 28, True),
+        ("证件号码 H12345678", 0.10, 0.46, 26, True),
+        ("有效期限 2030.01.01", 0.10, 0.64, 24, True),
+        ("签发机关 公安部出入境管理局", 0.10, 0.80, 22, True),
+    ], background=(185, 196, 205), card_color=(240, 244, 248))
+    _render("tw_permit", 1100, 720, (100, 110, 1000, 610), [
+        ("台湾居民来往大陆通行证", 0.20, 0.06, 30, True),
+        ("姓名 林七", 0.10, 0.28, 28, True),
+        ("证件号码 12345678", 0.10, 0.46, 26, True),
+        ("有效期限 2030.01.01", 0.10, 0.64, 24, True),
+        ("签发机关 公安部出入境管理局", 0.10, 0.80, 22, True),
+    ], background=(196, 188, 176), card_color=(244, 238, 228))
+    _render("foreign_pr", 1100, 720, (100, 100, 1000, 620), [
+        ("外国人永久居留身份证", 0.18, 0.06, 30, True),
+        ("姓名 JOHN SMITH", 0.10, 0.28, 26, True),
+        ("国籍 USA", 0.10, 0.44, 26, True),
+        ("证件号码 123456789", 0.10, 0.60, 26, True),
+        ("有效期限 2030.01.01", 0.10, 0.76, 24, True),
+    ], background=(120, 134, 150), card_color=(238, 242, 246))
+    # 银联/VISA 银行卡（4111 1111 1111 1111 为 Luhn 合法的虚构测试号）
+    _render("bank_card", 1000, 700, (140, 180, 860, 520), [
+        ("VISA", 0.05, 0.08, 34, True),
+        ("银联", 0.70, 0.08, 30, True),
+        ("银行卡号 4111 1111 1111 1111", 0.07, 0.38, 26, True),
+        ("有效期限 12/28", 0.07, 0.62, 22, False),
+        ("持卡人 ZHANG SAN", 0.07, 0.74, 22, False),
+    ], background=(150, 160, 170), card_color=(246, 248, 250))
+    # 负样本：VISA 卡面但卡号 Luhn 不合法、且无「银行卡号」强锚点 → 不应判证件
+    _render("bank_card_invalid", 1000, 700, (140, 180, 860, 520), [
+        ("VISA", 0.05, 0.08, 34, False),
+        ("4111 1111 1111 1112", 0.07, 0.38, 26, False),
+        ("持卡人 ZHANG SAN", 0.07, 0.74, 22, False),
+    ], background=(150, 160, 170), card_color=(246, 248, 250))
 
 
 # ────────────────────────────── 测试用假级联 ──────────────────────────────
@@ -1178,6 +1261,83 @@ class TestChatScreenshot(unittest.TestCase):
             _image(invoice["path"]), page=0, dpi=0.0,
             options={"text_boxes": invoice["text_boxes"], "fmt": "image"})
         self.assertEqual([m for m in marks if m["kind"].startswith("chat_")], [])
+
+
+class TestIdDocumentTypes(unittest.TestCase):
+    """P1.5 证件类型扩展：工作证/居住证/港澳台/永居证/银行卡（合成虚构件）。"""
+
+    CASES = {
+        "work_permit": "work_permit",
+        "residence_permit": "residence_permit",
+        "hk_mo_permit": "hk_mo_permit",
+        "tw_permit": "tw_permit",
+        "foreign_pr": "foreign_pr",
+        "bank_card": "bank_card",
+    }
+
+    def _run(self, name: str):
+        fixture = FIXTURES[name]
+        image = _image(fixture["path"])
+        width, height = fixture["size"]
+        ctx = _ctx(width, height, fixture["text_boxes"])
+        boxes = visual_targets.iter_text_boxes(ctx)
+        return visual_targets._detect_id_document(image, ctx, boxes)
+
+    def test_new_types_hit(self):
+        for name, doc_type in self.CASES.items():
+            with self.subTest(fixture=name):
+                fixture = FIXTURES[name]
+                width, height = fixture["size"]
+                hits = self._run(name)
+                self.assertEqual(len(hits), 1, [h.note for h in hits])
+                hit = hits[0]
+                self.assertEqual(hit.kind, "id_document")
+                self.assertIn(f"doc={doc_type}", hit.note)
+                x0, y0, x1, y1 = hit.rect
+                self.assertTrue(0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height,
+                                f"{name} 框越界: {hit.rect}")
+                # 框应覆盖全部锚点文本（OCR 证件区域）
+                for anchor in fixture["anchor_rects"]:
+                    area = (anchor[2] - anchor[0]) * (anchor[3] - anchor[1])
+                    covered = _intersection_area(hit.rect, anchor) / area
+                    self.assertGreaterEqual(covered, 0.85,
+                                            f"{name} 锚点未覆盖: {anchor}")
+
+    def test_bank_card_no_whole_page(self):
+        fixture = FIXTURES["bank_card"]
+        width, height = fixture["size"]
+        hits = self._run("bank_card")
+        self.assertEqual(len(hits), 1)
+        note = hits[0].note
+        self.assertIn("doc=bank_card", note)
+        self.assertNotIn("whole_page", note)
+        area = ((hits[0].rect[2] - hits[0].rect[0])
+                * (hits[0].rect[3] - hits[0].rect[1]))
+        self.assertLess(area, float(width) * float(height) * 0.90)
+
+    def test_bank_card_invalid_luhn_not_triggered(self):
+        # VISA 文字 + Luhn 不合法的卡号、且无「银行卡号」强锚点 → 不判证件
+        self.assertEqual(self._run("bank_card_invalid"), [])
+
+    def test_negative_invoice_contract_no_new_type(self):
+        for name in ("invoice_screenshot", "contract_page", "business_mention"):
+            with self.subTest(fixture=name):
+                hits = self._run(name)
+                self.assertEqual(hits, [], f"{name} 误判证件: "
+                                            f"{[(h.kind, h.note) for h in hits]}")
+
+    def test_through_mediascan(self):
+        for name, doc_type in (("work_permit", "work_permit"),
+                               ("bank_card", "bank_card")):
+            with self.subTest(fixture=name):
+                fixture = FIXTURES[name]
+                marks, _warnings = mediascan.analyze(
+                    _image(fixture["path"]), page=0, dpi=0.0,
+                    options={"text_boxes": fixture["text_boxes"],
+                             "fmt": "image"})
+                docs = [m for m in marks if m["kind"] == "id_document"]
+                self.assertEqual(len(docs), 1, marks)
+                self.assertIn(f"doc={doc_type}", docs[0]["note"])
 
 
 class TestPlate(unittest.TestCase):

@@ -136,10 +136,70 @@ def build_scanned_qr(qr_png: Path) -> dict:
     return {"file": "scanned_qr.pdf", "image_rect": list(rect)}
 
 
+
+def _valid_id_number(first17: str) -> str:
+    """生成带合法校验位的虚构 18 位身份证号（规则 cn.idcard 会校验）。"""
+    weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
+    mapping = "10X98765432"
+    total = sum(int(ch) * w for ch, w in zip(first17, weights))
+    return first17 + mapping[total % 11]
+
+
+def make_text_image_png() -> Path:
+    """P1.5 纯文字图片：ASCII 手机号/邮箱/身份证号（虚构，可被规则检测）。"""
+    from PIL import ImageFont
+
+    font_candidates = (r"C:\\Windows\\Fonts\\msyh.ttc", r"C:\\Windows\\Fonts\\arial.ttf",
+                       r"C:\\Windows\\Fonts\\simsun.ttc",
+                       "/System/Library/Fonts/PingFang.ttc",
+                       "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    font = None
+    for candidate in font_candidates:
+        try:
+            if Path(candidate).is_file():
+                font = ImageFont.truetype(candidate, 34)
+                break
+        except Exception:
+            continue
+    if font is None:
+        font = ImageFont.load_default()
+    img = Image.new("RGB", (760, 480), (250, 250, 248))
+    draw = ImageDraw.Draw(img)
+    fake_id = _valid_id_number("11010119900307447")
+    lines = [
+        "Contact Info (fictional)",
+        "Phone: 13800138000",
+        "Email: test@example.com",
+        f"ID: {fake_id}",
+        "Address: Example Road 88",
+    ]
+    y = 40
+    for index, line in enumerate(lines):
+        draw.text((40, y), line, font=font, fill=(20, 20, 20))
+        y += 84
+    path = HERE / "text_img.png"
+    img.save(path)
+    return path
+
+
+def build_text_sensitive(text_png: Path) -> dict:
+    """文本层 + 内嵌纯文字敏感图片（手机/邮箱/身份证号）。"""
+    pdf = fitz.open()
+    page = _text_page(pdf)
+    rect = fitz.Rect(60, 220, 420, 447)      # ≈16.3% 页
+    page.insert_image(rect, filename=str(text_png))
+    path = HERE / "text_sensitive.pdf"
+    pdf.save(str(path), garbage=3, deflate=True)
+    pdf.close()
+    return {"file": "text_sensitive.pdf", "image_rect": list(rect),
+            "expected_text_min": 2, "expected_id": _valid_id_number("11010119900307447")}
+
+
 def main() -> int:
     HERE.mkdir(parents=True, exist_ok=True)
     qr_png = make_qr_png()
     landscape_png = make_landscape_png()
+    text_png = make_text_image_png()
     manifest = {
         "generator": "app/tests/fixtures/pdf_embedded/generate_pdfs.py",
         "note": "全部虚构；图片为 PIL/zxing-cpp 合成，PDF 用 PyMuPDF 生成，可提交。",
@@ -149,6 +209,7 @@ def main() -> int:
             "tiny_qr_only": build_tiny_qr(qr_png),
             "text_only": build_text_only(),
             "scanned_qr": build_scanned_qr(qr_png),
+            "text_sensitive": build_text_sensitive(text_png),
         },
     }
     (HERE / "manifest.json").write_text(

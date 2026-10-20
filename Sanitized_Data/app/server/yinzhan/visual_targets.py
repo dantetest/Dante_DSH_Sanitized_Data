@@ -20,9 +20,12 @@ P0 范围
   0 新增模型/体积；长边 >1600 时按 2×2（cap 640）/3×3（cap 960）分块检测、
   映射回原图合并去重，并在原图较大时向 ctx.warnings 写"照片较大，小脸可能漏检"；
   命中框按「整个头」非对称外扩（上 35% 发际线、左右 25% 耳廓、下 15% 下颌）。
-- ``id_document``：OCR 锚点判定（身份证/护照/驾驶证/营业执照/社保卡），
-  命中后返回整证件区域；面积 ≥ 页面 25% 且文本块不多时返回整页；
-  文本块 ≥18 的发票/合同页直接跳过，12~17 块禁止整页扩张（只涂锚点邻域）。
+- ``id_document``：OCR 锚点判定（身份证/护照/驾驶证/营业执照/社保卡/
+  工作证/居住证/港澳居民来往内地通行证/台湾居民来往大陆通行证/
+  外国人永久居留身份证/银行卡），命中后返回整证件区域；面积 ≥ 页面 25%
+  且文本块不多时返回整页；文本块 ≥18 的发票/合同页直接跳过，12~17 块禁止
+  整页扩张（只涂锚点邻域）。银行卡需 Luhn 校验卡号/强锚点，且永远不做整页扩张。
+  note 用 `doc=id_card/passport/.../bank_card` 稳定标识类型。
 - ``id_photo`` / ``id_name`` / ``id_number`` / ``id_address``：身份证关键字段
   （A 方案）。仅身份证正面触发：按 0/90/180/270 四向旋转，用「期望证件照区」
   Haar 人脸命中确定朝向，再按固定模板把头像/姓名/号码/住址框映射回原图；
@@ -566,7 +569,77 @@ _ID_DOC_SPECS: dict[str, dict[str, Any]] = {
         "weak": ("卡号", "有效期"),
         "title": (),
     },
+    # ── P1.5 证件类型扩展（照片/扫描件；title+字段弱锚点才触发，低误报） ──
+    "work_permit": {
+        "strong": (),
+        "title": ("工作证", "员工证", "工牌"),
+        "weak": ("工号", "部门", "职位", "职务", "有效期", "姓名"),
+    },
+    "residence_permit": {
+        "strong": (),
+        "title": ("居住证",),
+        "weak": ("公民身份号码", "签发机关", "有效期限", "住址", "姓名"),
+    },
+    "hk_mo_permit": {
+        "strong": (),
+        "title": ("港澳居民来往内地通行证", "回乡证"),
+        "weak": ("证件号码", "有效期限", "签发机关", "姓名"),
+    },
+    "tw_permit": {
+        "strong": (),
+        "title": ("台湾居民来往大陆通行证", "台胞证"),
+        "weak": ("证件号码", "有效期限", "签发机关", "姓名"),
+    },
+    "foreign_pr": {
+        "strong": (),
+        "title": ("外国人永久居留身份证", "外国人永久居留证", "永久居留证"),
+        "weak": ("证件号码", "国籍", "有效期限", "签发机关", "姓名"),
+    },
+    # 银行卡：弱锚点（卡组织/卡种文字）+ Luhn 校验过的卡号才触发；
+    # 只涂锚点邻域/整卡，禁止 ≥25% 整页扩张（防合同里银行卡号被整页涂黑）。
+    "bank_card": {
+        "strong": ("银行卡号", "信用卡号", "借记卡号", "储蓄卡号"),
+        "weak": ("银联", "VISA", "MASTERCARD", "信用卡", "借记卡",
+                 "储蓄卡", "银行卡"),
+        "title": (),
+        "no_whole_page": True,
+    },
 }
+
+_CARD_NUMBER_RE = re.compile(r"(?<![\dA-Za-z])(?:\d[ -]?){13,19}(?![\dA-Za-z])")
+
+
+def _luhn_valid(digits: str) -> bool:
+    """银行卡号 Luhn 校验（用于压误报；只对 13~19 位纯数字）。"""
+    if not digits.isdigit() or not (13 <= len(digits) <= 19):
+        return False
+    total = 0
+    parity = len(digits) % 2
+    for index, char in enumerate(digits):
+        value = int(char)
+        if index % 2 == parity:
+            value *= 2
+            if value > 9:
+                value -= 9
+        total += value
+    return total % 10 == 0
+
+
+def _find_bank_card_numbers(text_boxes: Sequence[tuple[str, Box]]) -> list[tuple[str, Box]]:
+    """找 Luhn 校验通过的银行卡号文本框（OCR 可能带空格/短横线）。"""
+    hits: list[tuple[str, Box]] = []
+    for text, rect in text_boxes:
+        compact = re.sub(r"[^0-9]", "", _norm_text(text))
+        if _luhn_valid(compact):
+            hits.append((compact, rect))
+            continue
+        # 一行里可能混有多个数字段（如卡号 + 有效期），逐个候选试 Luhn
+        for match in _CARD_NUMBER_RE.finditer(_norm_text(text)):
+            candidate = re.sub(r"[^0-9]", "", match.group(0))
+            if _luhn_valid(candidate):
+                hits.append((candidate, rect))
+                break
+    return hits
 
 _MRZ_RE = re.compile(r"P<CHN[A-Z0-9<]{8,40}")
 _MRZ_LOOSE_RE = re.compile(r"^[A-Z0-9<]{30,44}$")
@@ -1206,6 +1279,19 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
         n_strong, n_medium, n_weak = len(strong), len(medium), len(weak)
         triggered = False
         conf = 0.0
+        bank_number_boxes: list[Box] = []
+        if doc_type == "bank_card":
+            # 银行卡：强锚点（银行卡号/信用卡号…）单独可触发；
+            # 或「卡组织/卡种文字 + Luhn 校验通过的卡号」组合触发（压低合同/对账单误报）。
+            number_hits = _find_bank_card_numbers(text_boxes)
+            if n_strong >= 1:
+                triggered = True
+                conf = 0.84
+            elif n_weak >= 1 and number_hits:
+                triggered = True
+                conf = 0.78
+            if triggered:
+                bank_number_boxes = [rect for _digits, rect in number_hits]
         if spec.get("title"):
             # 营业执照：必须命中「标题样」的短文本框（「营业执照（副本）」），
             # 且至少再有一个字段锚点；正文里出现「营业执照复印件」不算。
@@ -1230,12 +1316,16 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
             continue
         anchor_rects = [rect for _name, rect in
                         (list(strong) + list(medium) + list(weak) + list(title))]
+        anchor_rects.extend(bank_number_boxes)
         region = _id_region(anchor_rects, text_boxes, width, height)
         area = max(0.0, region[2] - region[0]) * max(0.0, region[3] - region[1])
         page_area = float(width) * float(height) or 1.0
         # 只有「证件版式」的小文本页才允许 25% 整页扩张；发票/合同文本页
         # （text_rich）即使面积够大也最多涂锚点邻域，避免整页误涂。
-        whole_page = (not text_rich) and block_count <= 12 and area >= 0.25 * page_area
+        # 银行卡（no_whole_page）永远不做整页扩张，只涂锚点邻域/整卡。
+        whole_page = (not spec.get("no_whole_page")
+                      and not text_rich) and block_count <= 12 \
+            and area >= 0.25 * page_area
         if whole_page:
             region = (0.0, 0.0, float(width), float(height))
             conf = min(0.98, conf + 0.02)

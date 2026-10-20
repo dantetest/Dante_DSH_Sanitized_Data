@@ -581,6 +581,81 @@ _EMBEDDED_SENSITIVE_KINDS = frozenset((
 ))
 
 
+def _embedded_text_ocr_enabled() -> bool:
+    """P1.5 图片内「纯文字规则」检测开关（默认开；YINZHAN_PDF_EMBEDDED_TEXT_OCR=0 关）。"""
+    raw = os.environ.get("YINZHAN_PDF_EMBEDDED_TEXT_OCR")
+    if raw is None or str(raw).strip() == "":
+        return True
+    return str(raw).strip().lower() not in ("0", "false", "no", "off", "none")
+
+
+def _embedded_image_bytes(page: fitz.Page, xref: int, rgb: Any) -> tuple[bytes | None, str]:
+    """取内嵌图片原始字节/后缀（优先 PDF 内嵌原件，失败时回退渲染 RGB→PNG）。"""
+    data: bytes | None = None
+    suffix = ""
+    try:
+        info = page.parent.extract_image(int(xref))
+        data = info.get("image")
+        ext = str(info.get("ext") or "").strip().lower()
+        if ext:
+            suffix = "." + ext
+    except Exception:
+        data, suffix = None, ""
+    if not data:
+        try:
+            import io
+
+            buf = io.BytesIO()
+            Image.fromarray(rgb).save(buf, format="PNG")
+            data = buf.getvalue()
+            suffix = ".png"
+        except Exception:
+            return None, ""
+    if suffix == ".jpe":
+        suffix = ".jpg"
+    return data, suffix
+
+
+def _run_embedded_text_detect(page: fitz.Page, item: dict[str, Any], rgb: Any,
+                              page_index: int, warn_sink: list[str],
+                              seen: set[str]) -> int:
+    """P1.5：对单张内嵌图片调用 media_text 检测器；返回规则命中数（0=不敏感）。
+
+    helper 只作为**检测器**使用：不采用其返回的脱敏图（仍由 embedded_image
+    整块涂黑）；跳过/预算不足等 warning 原样并入 doc.warnings，不产 mark。
+    """
+    try:
+        from .. import media_text
+    except Exception as exc:  # pragma: no cover - 正常情况下模块一定在
+        _warn_once(warn_sink, seen, f"内嵌图片文字 OCR 不可用：{exc}")
+        return 0
+    data, suffix = _embedded_image_bytes(page, int(item["xref"]), rgb)
+    if not data:
+        _warn_once(warn_sink, seen,
+                   f"第 {page_index + 1} 页内嵌图片文字 OCR 跳过（无法提取图片字节）")
+        return 0
+    try:
+        _new_bytes, count, warns = media_text.redact_image_text(data, suffix or ".png")
+    except Exception as exc:
+        _warn_once(warn_sink, seen,
+                   f"内嵌图片文字 OCR 失败（{type(exc).__name__}），请人工复核")
+        return 0
+    for warning in warns or []:
+        _warn_once(warn_sink, seen, str(warning))
+    try:
+        return max(0, int(count or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _warn_once(warn_sink: list[str], seen: set[str], message: str) -> None:
+    text = str(message or "")
+    if text and text not in seen:
+        seen.add(text)
+        warn_sink.append(text)
+
+
+
 def _embedded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int(os.environ.get(name, "") or default)
@@ -738,6 +813,8 @@ def _scan_embedded_images(page: fitz.Page, page_index: int, doc: Document,
         not in ("", "0", "false", "no", "off")
     processed = 0
     hit_images = 0
+    text_hit_images = 0
+    text_seen_warnings: set[str] = set()
     t0 = time.time() if debug else 0.0
 
     def _ocr_boxes(rgb: Any) -> list[dict[str, Any]]:
@@ -771,6 +848,7 @@ def _scan_embedded_images(page: fitz.Page, page_index: int, doc: Document,
             continue
         processed += 1
         sensitive: list[dict[str, Any]] = []
+        text_hint = False
         try:
             marks, _warn = mediascan.analyze(
                 rgb, page=page_index, dpi=float(dpi),
@@ -780,6 +858,7 @@ def _scan_embedded_images(page: fitz.Page, page_index: int, doc: Document,
                 # 文本类目标（证件/聊天/招牌/车牌文字）需要 OCR 图片内文字
                 boxes = _ocr_boxes(rgb)
                 if boxes:
+                    text_hint = sum(len(str(b["text"]).strip()) for b in boxes) >= 4
                     marks2, _warn2 = mediascan.analyze(
                         rgb, page=page_index, dpi=float(dpi),
                         options={"fmt": "pdf_embedded", "text_boxes": boxes})
@@ -788,15 +867,26 @@ def _scan_embedded_images(page: fitz.Page, page_index: int, doc: Document,
             doc.warnings.append(
                 f"第 {page_index + 1} 页内嵌图片扫描跳过（{type(exc).__name__}）")
             continue
-        if not sensitive:
+        # P1.5：视觉无命中时，对「有文字迹象」的图片再跑纯文字规则检测
+        # （media_text.redact_image_text 只当检测器；命中→整块图片涂黑）。
+        text_count = 0
+        if not sensitive and _embedded_text_ocr_enabled() and (text_hint or not ocr_ready):
+            text_count = _run_embedded_text_detect(
+                page, item, rgb, page_index, doc.warnings, text_seen_warnings)
+            if text_count > 0:
+                text_hit_images += 1
+        if not sensitive and text_count <= 0:
             continue
         display = item["display_rect"]
         if any(mark.kind == "embedded_image" and mark.page == page_index
                and _iou_rect(tuple(mark.rect), display) >= 0.85
                for mark in doc.visual_marks):
             continue
-        note = (f"engine=embedded_image;n={len(sensitive)};"
-                f"area={float(item['area_ratio']):.3f}")
+        area = float(item["area_ratio"])
+        if text_count > 0 and not sensitive:
+            note = f"engine=embedded_image;text={text_count};area={area:.3f}"
+        else:
+            note = f"engine=embedded_image;n={len(sensitive)};area={area:.3f}"
         doc.visual_marks.append(VisualMark(
             kind="embedded_image", page=page_index, rect=display,
             confidence=0.8, note=note))
@@ -805,7 +895,7 @@ def _scan_embedded_images(page: fitz.Page, page_index: int, doc: Document,
         elapsed = (time.time() - t0) * 1000.0
         doc.warnings.append(
             f"内嵌图片扫描 第 {page_index + 1} 页：处理 {processed}/{len(items)} 张，"
-            f"命中 {hit_images} 张，{elapsed:.0f}ms")
+            f"命中 {hit_images} 张（文字 OCR {text_hit_images} 张），{elapsed:.0f}ms")
 
 
 def _verify_embedded_images_black(out_path: Path, entities: Iterable[Entity],

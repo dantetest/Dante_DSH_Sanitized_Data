@@ -17,6 +17,10 @@ python -X utf8 app\tests\test_office_media.py
 | `docx_textbox.docx` | `word/document.xml` 注入 `w:txbxContent` + 孤儿 drawing 部件 | 文本框计入隐藏对象、strict 移除 |
 | `xlsx_hidden.xlsx` | 单元格虚构手机号；内嵌 QR 图 + 普通图；openpyxl 真图表 + 注入 OLE | xlsx 解析/导出/strict |
 | `xlsx_clean.xlsx` | 只有一张普通插图 | 负样本 |
+| `text_pii.png` | PIL 默认字体画的 ASCII 手机号/身份证号/邮箱/金额（虚构） | P1.5 图片内文字 OCR 规则脱敏 |
+| `qr_text.png` | QR 码 + 文字混排 | P1.5 视觉+文字叠加 |
+| `docx_text.docx` / `xlsx_text.xlsx` | 内嵌 `text_pii.png` + 一张普通图 | P1.5 DOCX/XLSX 文字脱敏/自检 |
+| `docx_qr_text.docx` | 内嵌 `qr_text.png` | P1.5 双链路叠加 |
 
 > 所有 PII / marker 均为虚构值（`13800138000`、`OLE-FAKE-BYTES-SECRET`、
 > `TEXTBOX-SECRET-MARKER` 等），不要替换成真实数据；这些文件由测试脚本生成，

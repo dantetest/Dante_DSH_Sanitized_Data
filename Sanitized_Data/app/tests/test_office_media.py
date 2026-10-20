@@ -39,9 +39,9 @@ import cv2                                                  # noqa: E402
 import numpy as np                                          # noqa: E402
 import openpyxl                                             # noqa: E402
 import docx                                                 # noqa: E402
-from PIL import Image, ImageDraw                            # noqa: E402
+from PIL import Image, ImageDraw, ImageFont                   # noqa: E402
 
-from yinzhan import mediascan, pipeline, registry           # noqa: E402
+from yinzhan import mediascan, media_text, pipeline, registry   # noqa: E402
 from yinzhan.jobs import _load_rules                        # noqa: E402
 from yinzhan.ocr import get_ocr                             # noqa: E402
 from yinzhan.parsers import docx_parser as docx_mod         # noqa: E402
@@ -54,6 +54,32 @@ EMF_MARKER = b"EMF-FAKE-BYTES-SECRET"
 TEXTBOX_MARKER = "TEXTBOX-SECRET-MARKER"
 CHART_TITLE = "CHARTTITLE-SECRET"
 QR_TEXT = "https://example.com/SECRET-QR-9f3a"
+
+# P1.5 文字 OCR 较慢：除“文字脱敏”专项用例外，本测试模块默认关闭文字 OCR，
+# 保证 P1-B 视觉/隐藏对象用例的耗时稳定（与产品默认开不冲突，产品侧见 docs）。
+_TEXT_OCR_ENV = "YINZHAN_OFFICE_TEXT_OCR"
+_saved_text_ocr: str | None = None
+
+
+def setUpModule() -> None:  # noqa: N802 - unittest 钩子
+    global _saved_text_ocr
+    _saved_text_ocr = os.environ.get(_TEXT_OCR_ENV)
+    os.environ[_TEXT_OCR_ENV] = "0"
+
+
+def tearDownModule() -> None:  # noqa: N802 - unittest 钩子
+    if _saved_text_ocr is None:
+        os.environ.pop(_TEXT_OCR_ENV, None)
+    else:
+        os.environ[_TEXT_OCR_ENV] = _saved_text_ocr
+
+
+def _text_ocr_on() -> None:
+    os.environ[_TEXT_OCR_ENV] = "1"
+
+
+def _text_ocr_off() -> None:
+    os.environ[_TEXT_OCR_ENV] = "0"
 
 
 # ────────────────────────── 夹具 ──────────────────────────
@@ -117,6 +143,49 @@ def _make_normal_image(path: Path) -> Path:
     draw = ImageDraw.Draw(image)
     draw.rectangle([10, 10, 230, 150], outline=(30, 30, 30), width=2)
     draw.text((20, 60), "ordinary illustration / no target", fill=(20, 20, 20))
+    image.save(path)
+    return path
+
+
+#: P1.5 文字 OCR 测试用的虚构 PII（PIL 默认字体只画 ASCII）
+TEXT_PII_LINES = (
+    "TEL: 13800138000",
+    "ID: 11010519491231002X",
+    "EMAIL: test.user@example.com",
+    "AMOUNT: 12,345.67 CNY",
+)
+
+
+def _text_font():
+    try:
+        return ImageFont.load_default(size=40)
+    except TypeError:  # pragma: no cover - 老 Pillow
+        return ImageFont.load_default()
+
+
+def _make_text_image(path: Path) -> Path:
+    """画一张含 ASCII 手机号/身份证号/邮箱/金额的截图（P1.5 文字 OCR 用）。"""
+    image = Image.new("RGB", (900, 520), (250, 248, 242))
+    draw = ImageDraw.Draw(image)
+    font = _text_font()
+    y = 40
+    for line in TEXT_PII_LINES:
+        draw.text((40, y), line, font=font, fill=(15, 15, 15))
+        y += 100
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
+    return path
+
+
+def _make_qr_text_image(path: Path, qr: Path) -> Path:
+    """QR 码 + 文字叠加图：验证“视觉 + 文字”两条链路叠加脱敏。"""
+    image = Image.new("RGB", (1000, 560), (250, 248, 242))
+    with Image.open(qr) as qr_image:
+        image.paste(qr_image.convert("RGB").resize((240, 240)), (40, 40))
+    draw = ImageDraw.Draw(image)
+    font = _text_font()
+    draw.text((40, 320), "TEL: 13800138000", font=font, fill=(15, 15, 15))
+    draw.text((40, 400), "EMAIL: overlay@example.com", font=font, fill=(15, 15, 15))
     image.save(path)
     return path
 
@@ -250,6 +319,41 @@ def _build_xlsx_clean(path: Path, normal: Path) -> Path:
     return path
 
 
+def _build_docx_text(path: Path, text_image: Path, normal: Path) -> Path:
+    """DOCX：一张“文字截图” + 一张普通图（P1.5 文字 OCR 自动脱敏）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = docx.Document()
+    document.add_paragraph("正文：内嵌一张含文字信息的截图")
+    document.add_picture(str(text_image))
+    document.add_picture(str(normal))
+    document.save(str(path))
+    return path
+
+
+def _build_docx_qr_text(path: Path, qr_text_image: Path) -> Path:
+    """DOCX：QR + 文字叠加图（视觉与文字链路都要命中）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = docx.Document()
+    document.add_paragraph("正文：二维码与文字混排截图")
+    document.add_picture(str(qr_text_image))
+    document.save(str(path))
+    return path
+
+
+def _build_xlsx_text(path: Path, text_image: Path, normal: Path) -> Path:
+    """XLSX：一张“文字截图” + 一张普通图。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "内嵌文字截图测试"
+    from openpyxl.drawing.image import Image as XLImage
+
+    sheet.add_image(XLImage(str(text_image)), "C2")
+    sheet.add_image(XLImage(str(normal)), "C20")
+    workbook.save(str(path))
+    return path
+
+
 class Fixtures:
     root: Path | None = None
 
@@ -299,6 +403,47 @@ class Fixtures:
         path = root / "xlsx_clean.xlsx"
         if not path.exists():
             _build_xlsx_clean(path, cls.normal)
+        return path
+
+    # ── P1.5 文字 OCR 夹具 ──
+    @classmethod
+    def text_image(cls) -> Path:
+        root = cls.get()
+        path = root / "text_pii.png"
+        if not path.exists():
+            _make_text_image(path)
+        return path
+
+    @classmethod
+    def qr_text_image(cls) -> Path:
+        root = cls.get()
+        path = root / "qr_text.png"
+        if not path.exists():
+            _make_qr_text_image(path, cls.qr)
+        return path
+
+    @classmethod
+    def docx_text(cls) -> Path:
+        root = cls.get()
+        path = root / "docx_text.docx"
+        if not path.exists():
+            _build_docx_text(path, cls.text_image(), cls.normal)
+        return path
+
+    @classmethod
+    def docx_qr_text(cls) -> Path:
+        root = cls.get()
+        path = root / "docx_qr_text.docx"
+        if not path.exists():
+            _build_docx_qr_text(path, cls.qr_text_image())
+        return path
+
+    @classmethod
+    def xlsx_text(cls) -> Path:
+        root = cls.get()
+        path = root / "xlsx_text.xlsx"
+        if not path.exists():
+            _build_xlsx_text(path, cls.text_image(), cls.normal)
         return path
 
 
@@ -367,6 +512,24 @@ def _image_mean(image_bytes: bytes) -> float:
 def _zip_has_part(path: Path, part: str) -> bool:
     with zipfile.ZipFile(path) as archive:
         return part in archive.namelist()
+
+
+def _text_hits(image_bytes: bytes, suffix: str = ".png") -> int:
+    """直接调用 Lead 的 media_text helper 检测文字敏感命中数。"""
+    registry.load_plugins()
+    _new_bytes, hits, _warns = media_text.redact_image_text(image_bytes, suffix)
+    return int(hits or 0)
+
+
+def _find_text_part(path: Path) -> str:
+    """找出 zip 里“含文字敏感信息”的图片部件（P1.5 helper 可检出）。"""
+    for part in _zip_media_parts(path):
+        suffix = Path(part).suffix.lower()
+        if suffix not in media_text.SUPPORTED_SUFFIXES:
+            continue
+        if _text_hits(_part_bytes(path, part), suffix) > 0:
+            return part
+    raise AssertionError("源文件里找不到 helper 可检出文字敏感信息的图片")
 
 
 # ────────────────────────── 1. 解析：meta 字段 ──────────────────────────
@@ -680,6 +843,191 @@ class TestRedactSwitch(unittest.TestCase):
                                     int(media.get("image_count") or 0))
         finally:
             docx_mod.OFFICE_MEDIA_REDACT_DEFAULT = original
+
+
+# ────────────────────────── P1.5：内嵌图片纯文字 OCR 规则脱敏 ──────────────────────────
+
+class TestDocxTextRedaction(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _text_ocr_on()
+        cls.source = Fixtures.docx_text()
+        cls.parser = _parser(cls.source)
+        cls.doc = cls.parser.parse(cls.source, _ctx())
+        cls.out = Fixtures.get() / "docx_text_out.docx"
+        cls.res = pipeline.export(cls.doc, cls.parser, [], cls.out, {"mode": "human"})
+        cls.stats = (cls.doc.extra or {}).get("office_media") or {}
+        cls.text_part = _find_text_part(cls.source)
+
+    @classmethod
+    def tearDownClass(cls):
+        _text_ocr_off()
+
+    def test_parse_announces_text_ocr(self):
+        media = (self.doc.meta or {}).get("embedded_media") or {}
+        self.assertTrue(media.get("text_ocr_supported"))
+        self.assertIn("OCR 规则脱敏", " ".join(self.doc.warnings))
+
+    def test_text_hits_recorded(self):
+        self.assertGreaterEqual(int(self.stats.get("text_hits") or 0), 1)
+        self.assertGreaterEqual(int(self.stats.get("text_images_processed") or 0), 1)
+        self.assertGreaterEqual(int(self.stats.get("text_images_redacted") or 0), 1)
+        self.assertIn("内嵌图片文字 OCR", " ".join(self.res.warnings))
+
+    def test_text_image_redacted_and_rescan_zero(self):
+        source_bytes = _part_bytes(self.source, self.text_part)
+        output_bytes = _part_bytes(self.out, self.text_part)
+        self.assertNotEqual(source_bytes, output_bytes, "文字截图应被重写脱敏")
+        self.assertEqual(_text_hits(output_bytes, Path(self.text_part).suffix), 0,
+                         "成品文字截图重扫 helper 仍有命中")
+
+    def test_normal_image_preserved(self):
+        others = [part for part in _zip_media_parts(self.source)
+                  if part != self.text_part]
+        self.assertTrue(others)
+        for part in others:
+            self.assertEqual(_part_bytes(self.source, part),
+                             _part_bytes(self.out, part),
+                             f"无文字/视觉目标的图片 {part} 不应被改动")
+
+    def test_verify_and_office_open(self):
+        ver = pipeline.verify(self.out, [], self.parser, _ctx())
+        self.assertTrue(ver.get("verified"))
+        self.assertEqual(ver.get("residual"), 0)
+        self.assertEqual(int((self.stats or {}).get("text_verify_hits") or 0), 0)
+        self.assertTrue(docx.Document(str(self.out)).paragraphs)
+
+
+class TestXlsxTextRedaction(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _text_ocr_on()
+        cls.source = Fixtures.xlsx_text()
+        cls.parser = _parser(cls.source)
+        cls.doc = cls.parser.parse(cls.source, _ctx())
+        cls.out = Fixtures.get() / "xlsx_text_out.xlsx"
+        cls.res = pipeline.export(cls.doc, cls.parser, [], cls.out, {"mode": "human"})
+        cls.stats = (cls.doc.extra or {}).get("office_media") or {}
+        cls.text_part = _find_text_part(cls.source)
+
+    @classmethod
+    def tearDownClass(cls):
+        _text_ocr_off()
+
+    def test_text_hits_recorded(self):
+        self.assertGreaterEqual(int(self.stats.get("text_hits") or 0), 1)
+        self.assertEqual(int(self.stats.get("text_verify_hits") or 0), 0)
+
+    def test_image_redacted(self):
+        output_bytes = _part_bytes(self.out, self.text_part)
+        self.assertEqual(_text_hits(output_bytes, Path(self.text_part).suffix), 0)
+
+    def test_verify_and_excel_open(self):
+        ver = pipeline.verify(self.out, [], self.parser, _ctx())
+        self.assertTrue(ver.get("verified"))
+        self.assertTrue(openpyxl.load_workbook(str(self.out)).active)
+
+
+class TestVisualPlusTextOverlap(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _text_ocr_on()
+        cls.source = Fixtures.docx_qr_text()
+        cls.parser = _parser(cls.source)
+        cls.doc = cls.parser.parse(cls.source, _ctx())
+        cls.out = Fixtures.get() / "docx_qr_text_out.docx"
+        cls.res = pipeline.export(cls.doc, cls.parser, [], cls.out, {"mode": "human"})
+        cls.stats = (cls.doc.extra or {}).get("office_media") or {}
+        cls.part = _zip_media_parts(cls.source)[0]
+
+    @classmethod
+    def tearDownClass(cls):
+        _text_ocr_off()
+
+    def test_both_channels_hit(self):
+        self.assertGreaterEqual(int(self.stats.get("images_redacted") or 0), 1)
+        self.assertIn("qrcode", self.stats.get("hits_by_kind") or {})
+        self.assertGreaterEqual(int(self.stats.get("text_hits") or 0), 1)
+
+    def test_output_rescan_zero(self):
+        data = _part_bytes(self.out, self.part)
+        self.assertEqual(_scan_marks(data), [], "成品仍有视觉/码类命中")
+        self.assertEqual(_text_hits(data, Path(self.part).suffix), 0,
+                         "成品仍有文字敏感命中")
+        ver = pipeline.verify(self.out, [], self.parser, _ctx())
+        self.assertTrue(ver.get("verified"))
+
+
+class TestTextBudget(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _text_ocr_on()
+
+    @classmethod
+    def tearDownClass(cls):
+        _text_ocr_off()
+
+    def test_seconds_budget_skips_remaining(self):
+        source = Fixtures.docx_text()
+        parser = _parser(source)
+        doc = parser.parse(source, _ctx())
+        saved = os.environ.get("YINZHAN_OFFICE_TEXT_MAX_SECONDS")
+        os.environ["YINZHAN_OFFICE_TEXT_MAX_SECONDS"] = "0.001"
+        try:
+            out = Fixtures.get() / "docx_text_budget_out.docx"
+            res = pipeline.export(doc, parser, [], out, {"mode": "human"})
+        finally:
+            if saved is None:
+                os.environ.pop("YINZHAN_OFFICE_TEXT_MAX_SECONDS", None)
+            else:
+                os.environ["YINZHAN_OFFICE_TEXT_MAX_SECONDS"] = saved
+        stats = (doc.extra or {}).get("office_media") or {}
+        self.assertGreaterEqual(int(stats.get("text_skipped") or 0), 1)
+        self.assertIn("文字 OCR 预算", " ".join(res.warnings))
+
+    def test_image_count_budget(self):
+        source = Fixtures.docx_text()
+        parser = _parser(source)
+        doc = parser.parse(source, _ctx())
+        saved = os.environ.get("YINZHAN_OFFICE_TEXT_MAX_IMAGES")
+        os.environ["YINZHAN_OFFICE_TEXT_MAX_IMAGES"] = "1"
+        try:
+            out = Fixtures.get() / "docx_text_budget2_out.docx"
+            pipeline.export(doc, parser, [], out, {"mode": "human"})
+        finally:
+            if saved is None:
+                os.environ.pop("YINZHAN_OFFICE_TEXT_MAX_IMAGES", None)
+            else:
+                os.environ["YINZHAN_OFFICE_TEXT_MAX_IMAGES"] = saved
+        stats = (doc.extra or {}).get("office_media") or {}
+        self.assertGreaterEqual(int(stats.get("text_skipped") or 0), 1)
+
+
+class TestTextSelfCheckBlocks(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _text_ocr_on()
+
+    @classmethod
+    def tearDownClass(cls):
+        _text_ocr_off()
+
+    def test_export_blocks_when_text_residual(self):
+        source = Fixtures.docx_text()
+        parser = _parser(source)
+        doc = parser.parse(source, _ctx())
+        original = docx_mod._office_redact_text_bytes
+        # 模拟“涂黑无效”：helper 永远报告命中但返回原图字节 → 自检必须拦截
+        docx_mod._office_redact_text_bytes = (  # type: ignore[assignment]
+            lambda data, part, workdir: (data, 1, []))
+        try:
+            out = Fixtures.get() / "docx_text_selfcheck_out.docx"
+            with self.assertRaises(Exception) as caught:
+                pipeline.export(doc, parser, [], out, {"mode": "human"})
+            self.assertIn("文字复检失败", str(caught.exception))
+            self.assertFalse(out.exists(), "文字自检失败时应删除成品")
+        finally:
+            docx_mod._office_redact_text_bytes = original  # type: ignore[assignment]
 
 
 # ────────────────────────── main ──────────────────────────

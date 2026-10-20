@@ -145,7 +145,7 @@ def _table_entities(det) -> list[tuple[str, str, str]]:
     return out
 
 
-def _export_and_verify(path: Path, mode: str, name: str) -> tuple[Path, dict]:
+def _export_and_verify(path: Path, mode: str, name: str) -> tuple[Path, dict, list[str]]:
     doc, det = _full_detect(path)
     pipeline.decide(det.entities, det.rules, pipeline.Session())
     if mode == "human":
@@ -155,9 +155,9 @@ def _export_and_verify(path: Path, mode: str, name: str) -> tuple[Path, dict]:
     parser = registry.find_parser(path)
     out = _WORK / "out" / name
     out.parent.mkdir(parents=True, exist_ok=True)
-    pipeline.export(doc, parser, det.entities, out, {"mode": mode})
+    result = pipeline.export(doc, parser, det.entities, out, {"mode": mode})
     info = pipeline.verify(out, det.entities, parser, _ctx())
-    return out, info
+    return out, info, list(result.warnings or [])
 
 
 def _write_text(name: str, content: str, encoding: str = "utf-8",
@@ -171,9 +171,22 @@ def _write_text(name: str, content: str, encoding: str = "utf-8",
     return path
 
 
+def _write_bytes(name: str, data: bytes) -> Path:
+    path = _WORK / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
 def _read_csv_rows(path: Path, delimiter: str = ",") -> list[list[str]]:
     with open(path, "r", encoding="utf-8", newline="") as handle:
         return [list(row) for row in csv.reader(handle, delimiter=delimiter)]
+
+
+def _read_csv_rows_bytes(data: bytes, encoding: str,
+                         delimiter: str = ",") -> list[list[str]]:
+    text = data.decode(encoding)
+    return [list(row) for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
 
 
 def _expected() -> dict:
@@ -202,6 +215,12 @@ def test_parser_delimited():
     check("meta.delimiter=','", meta.get("delimiter") == ",", str(meta.get("delimiter")))
     check("meta.rows/cols", meta.get("rows") == 3 and meta.get("cols") == 7, str(meta))
     check("meta.raw_rows_ok", meta.get("raw_rows_ok") is True, str(meta))
+    check("meta.encoding= utf-8 / output=utf-8 / bom=False / source=content / newline=LF",
+          meta.get("encoding") == "utf-8"
+          and meta.get("encoding_output") == "utf-8"
+          and meta.get("bom") is False
+          and meta.get("encoding_source") == "content"
+          and meta.get("newline") == "LF", str(meta))
     blocks = doc.pages[0].blocks
     check("3 行 × 7 列非空单元格 = 21 Block", len(blocks) == 21, str(len(blocks)))
     check("单元格 ref 带 row/col/sep",
@@ -248,6 +267,10 @@ def test_parser_variants():
     check("UTF-8 BOM：encoding=utf-8-sig",
           (bom_doc.meta or {}).get("encoding") == "utf-8-sig",
           str((bom_doc.meta or {}).get("encoding")))
+    check("UTF-8 BOM：meta.bom=True / output=utf-8-sig",
+          (bom_doc.meta or {}).get("bom") is True
+          and (bom_doc.meta or {}).get("encoding_output") == "utf-8-sig",
+          str(bom_doc.meta))
     header = bom_doc.pages[0].blocks[0].text
     check("BOM 已剥离（首格=姓名）", header == "姓名", header)
 
@@ -258,6 +281,10 @@ def test_parser_variants():
     check("GBK：按 gb18030 解码",
           (gbk_doc.meta or {}).get("encoding") == "gb18030",
           str((gbk_doc.meta or {}).get("encoding")))
+    check("GBK：meta.bom=False / output=gb18030",
+          (gbk_doc.meta or {}).get("bom") is False
+          and (gbk_doc.meta or {}).get("encoding_output") == "gb18030",
+          str(gbk_doc.meta))
     check("GBK：单元格文本正确",
           any(block.text == "张伟" for block in gbk_doc.pages[0].blocks))
 
@@ -274,7 +301,10 @@ def test_parser_variants():
     check("CRLF：page.ref.eol=\\r\\n",
           (crlf_doc.pages[0].ref or {}).get("eol") == "\r\n",
           repr((crlf_doc.pages[0].ref or {}).get("eol")))
-    crlf_out, crlf_info = _export_and_verify(crlf_path, "ai", "crlf_out.csv")
+    check("CRLF：meta.newline=CRLF",
+          (crlf_doc.meta or {}).get("newline") == "CRLF",
+          str((crlf_doc.meta or {}).get("newline")))
+    crlf_out, crlf_info, _crlf_warnings = _export_and_verify(crlf_path, "ai", "crlf_out.csv")
     check("CRLF 导出仍为 CRLF", b"\r\n" in crlf_out.read_bytes())
     check("CRLF 导出 residual=0", crlf_info.get("residual") == 0, str(crlf_info))
 
@@ -287,7 +317,8 @@ def test_parser_variants():
     check("引号内换行：raw_rows_ok=False（走 writer 重写）",
           (multi_doc.meta or {}).get("raw_rows_ok") is False,
           str((multi_doc.meta or {}).get("raw_rows_ok")))
-    multi_out, _info = _export_and_verify(multi_path, "ai", "multiline_out.csv")
+    multi_out, _info, _multi_warnings = _export_and_verify(
+        multi_path, "ai", "multiline_out.csv")
     multi_rows = _read_csv_rows(multi_out)
     check("引号内换行：导出行/列数不变",
           len(multi_rows) == 2 and all(len(row) == 2 for row in multi_rows),
@@ -310,6 +341,167 @@ def test_parser_variants():
     check("列数不齐：row_cols=[3,2]",
           (ragged_doc.pages[0].ref or {}).get("row_cols") == [3, 2],
           str((ragged_doc.pages[0].ref or {}).get("row_cols")))
+
+
+# ────────────────────────────── 2b. 原编码/BOM/换行保留（P1.5） ──────────────────────────────
+
+
+def test_encoding_preservation():
+    section("2b. 原编码/BOM/换行保留（P1.5）：GBK / utf-8-sig / UTF-16 / CRLF / 引号换行 / 超长字段")
+    from yinzhan.parsers.text_parser import _encode_output_preserving
+
+    content = "姓名,手机号,备注\n张伟,13817264451,普通备注\n李四,13901827733,第二条\n"
+    expected_rows = [row for row in csv.reader(io.StringIO(content))]
+
+    def _verify_roundtrip(path: Path, out_name: str, encoding: str,
+                          expect_bom: bool, label: str) -> None:
+        out, info, warnings = _export_and_verify(path, "ai", out_name)
+        raw = out.read_bytes()
+        check(f"{label}：导出无静默改编码 warning",
+              not any("回退 UTF-8" in warn or "统一转为 UTF-8" in warn
+                      for warn in warnings), str(warnings))
+        try:
+            raw.decode(encoding)
+            decodable = True
+        except Exception:
+            decodable = False
+        check(f"{label}：导出字节可按原编码回读", decodable)
+        if expect_bom:
+            check(f"{label}：导出保留 BOM",
+                  raw.startswith(b"\xef\xbb\xbf") or raw.startswith(b"\xff\xfe")
+                  or raw.startswith(b"\xfe\xff"), raw[:4].hex())
+        else:
+            check(f"{label}：导出无 BOM", not raw.startswith(b"\xef\xbb\xbf"),
+                  raw[:4].hex())
+        rows = _read_csv_rows_bytes(raw, encoding)
+        check(f"{label}：导出行数不变", len(rows) == len(expected_rows),
+              f"{len(rows)} vs {len(expected_rows)}")
+        check(f"{label}：导出列数不变",
+              [len(row) for row in rows] == [len(row) for row in expected_rows],
+              str([len(row) for row in rows]))
+        check(f"{label}：residual=0", info.get("residual") == 0, str(info))
+        # 抽样：敏感原值不应回读出现
+        with open(out, "rb") as handle:
+            body = handle.read()
+        leaked = [value for value in ("张伟", "13817264451", "李四", "13901827733")
+                  if value in body.decode(encoding)]
+        check(f"{label}：无敏感原值残留", not leaked, str(leaked))
+
+    # ① GBK（无 BOM）
+    gbk_path = _write_bytes("enc_gbk.csv", content.encode("gbk"))
+    gbk_doc = _parse(gbk_path)
+    meta = gbk_doc.meta or {}
+    check("GBK：encoding=gb18030 / output=gb18030 / bom=False / source=content",
+          meta.get("encoding") == "gb18030"
+          and meta.get("encoding_output") == "gb18030"
+          and meta.get("bom") is False
+          and meta.get("encoding_source") == "content", str(meta))
+    _verify_roundtrip(gbk_path, "enc_gbk_out.csv", "gb18030", expect_bom=False,
+                      label="GBK")
+
+    # ② UTF-8 BOM（utf-8-sig）：导出保留 BOM
+    sig_path = _write_bytes("enc_sig.csv", b"\xef\xbb\xbf" + content.encode("utf-8"))
+    sig_doc = _parse(sig_path)
+    sig_meta = sig_doc.meta or {}
+    check("utf-8-sig：encoding=utf-8-sig / output=utf-8-sig / bom=True",
+          sig_meta.get("encoding") == "utf-8-sig"
+          and sig_meta.get("encoding_output") == "utf-8-sig"
+          and sig_meta.get("bom") is True, str(sig_meta))
+    _verify_roundtrip(sig_path, "enc_sig_out.csv", "utf-8-sig", expect_bom=True,
+                      label="utf-8-sig")
+
+    # ③ UTF-16（带 BOM）
+    utf16_path = _write_bytes("enc_utf16.csv", content.encode("utf-16"))
+    utf16_doc = _parse(utf16_path)
+    utf16_meta = utf16_doc.meta or {}
+    check("UTF-16：encoding=utf-16 / output=utf-16 / bom=True",
+          utf16_meta.get("encoding") == "utf-16"
+          and utf16_meta.get("encoding_output") == "utf-16"
+          and utf16_meta.get("bom") is True, str(utf16_meta))
+    _verify_roundtrip(utf16_path, "enc_utf16_out.csv", "utf-16", expect_bom=True,
+                      label="UTF-16")
+
+    # ④ GBK + CRLF：编码与换行同时保留
+    crlf_gbk = _write_bytes("enc_gbk_crlf.csv",
+                            content.replace("\n", "\r\n").encode("gbk"))
+    crlf_doc = _parse(crlf_gbk)
+    check("GBK+CRLF：meta.newline=CRLF",
+          (crlf_doc.meta or {}).get("newline") == "CRLF", str(crlf_doc.meta))
+    crlf_out, crlf_info, _w = _export_and_verify(crlf_gbk, "ai", "enc_gbk_crlf_out.csv")
+    crlf_raw = crlf_out.read_bytes()
+    check("GBK+CRLF：导出仍为 CRLF", b"\r\n" in crlf_raw and b"\n" in crlf_raw)
+    check("GBK+CRLF：导出可按原编码回读",
+          len(_read_csv_rows_bytes(crlf_raw, "gb18030")) == 3)
+    check("GBK+CRLF：residual=0", crlf_info.get("residual") == 0, str(crlf_info))
+
+    # ⑤ GBK + 引号内换行：raw_rows_ok=False → writer 重写，单元格内容保留
+    multi_gbk = _write_bytes("enc_gbk_multi.csv",
+                             '姓名,备注\n张伟,"多行\n备注"\n'.encode("gbk"))
+    multi_doc = _parse(multi_gbk)
+    check("GBK+引号换行：raw_rows_ok=False 且编码保留",
+          (multi_doc.meta or {}).get("raw_rows_ok") is False
+          and (multi_doc.meta or {}).get("encoding") == "gb18030",
+          str(multi_doc.meta))
+    multi_out, _i, _w2 = _export_and_verify(multi_gbk, "ai", "enc_gbk_multi_out.csv")
+    multi_rows = _read_csv_rows_bytes(multi_out.read_bytes(), "gb18030")
+    check("GBK+引号换行：导出行/列不变且单元格内容保留",
+          len(multi_rows) == 2 and [len(row) for row in multi_rows] == [2, 2]
+          and multi_rows[1][1] == "多行\n备注", str(multi_rows))
+
+    # ⑥ GBK + 列数不齐
+    ragged_gbk = _write_bytes("enc_gbk_ragged.csv",
+                              "姓名,手机号,备注\n张伟,13817264451\n".encode("gbk"))
+    ragged_doc = _parse(ragged_gbk)
+    check("GBK+列数不齐：row_cols=[3,2]",
+          (ragged_doc.pages[0].ref or {}).get("row_cols") == [3, 2],
+          str((ragged_doc.pages[0].ref or {}).get("row_cols")))
+    ragged_out, ragged_info, _w3 = _export_and_verify(
+        ragged_gbk, "ai", "enc_gbk_ragged_out.csv")
+    ragged_rows = _read_csv_rows_bytes(ragged_out.read_bytes(), "gb18030")
+    check("GBK+列数不齐：导出行列保持 [3,2]",
+          [len(row) for row in ragged_rows] == [3, 2],
+          str([len(row) for row in ragged_rows]))
+    check("GBK+列数不齐：residual=0",
+          ragged_info.get("residual") == 0, str(ragged_info))
+
+    # ⑦ GBK + 超长字段（5000 字符）：原样往返、列数不变
+    long_field = "x" * 5000
+    long_gbk = _write_bytes(
+        "enc_gbk_long.csv",
+        f"姓名,备注\n张伟,{long_field}\n".encode("gbk"))
+    long_out, long_info, _w4 = _export_and_verify(
+        long_gbk, "ai", "enc_gbk_long_out.csv")
+    long_rows = _read_csv_rows_bytes(long_out.read_bytes(), "gb18030")
+    check("GBK+超长字段：长度与内容保持",
+          len(long_rows) == 2 and len(long_rows[0]) == 2
+          and len(long_rows[1]) == 2 and long_rows[1][1] == long_field,
+          f"rows={len(long_rows)} lens={[len(r) for r in long_rows]}")
+    check("GBK+超长字段：residual=0",
+          long_info.get("residual") == 0, str(long_info))
+
+    # ⑧ 未知编码：解码已用替换字符 → 导出 warning + 回退 UTF-8（不静默）
+    bad_path = _write_bytes("enc_unknown.csv", b"\xff\xff\xff\xff")
+    bad_doc = _parse(bad_path)
+    bad_meta = bad_doc.meta or {}
+    check("未知编码：encoding=utf-8(replace) / source=fallback",
+          str(bad_meta.get("encoding", "")).endswith("(replace)")
+          and bad_meta.get("encoding_source") == "fallback", str(bad_meta))
+    bad_out = _WORK / "out" / "enc_unknown_out.csv"
+    bad_out.parent.mkdir(parents=True, exist_ok=True)
+    bad_result = pipeline.export(bad_doc, registry.find_parser(bad_path), [], bad_out, {})
+    check("未知编码：导出 warning 明确回退",
+          any("原文件编码无法确认" in warn for warn in (bad_result.warnings or [])),
+          str(bad_result.warnings))
+    check("未知编码：成品按 UTF-8 可读",
+          bad_out.read_bytes().decode("utf-8") is not None)
+
+    # ⑨ 目标编码无法还原/不可编码字符：warning + 回退 UTF-8（不静默）
+    warnings: list[str] = []
+    data = _encode_output_preserving("中文█", "ascii", warnings)
+    check("无法还原/不可编码字符：回退 UTF-8 且有 warning",
+          data.decode("utf-8") == "中文█"
+          and any(("回退 UTF-8" in warn) or ("未保留原编码" in warn)
+                  for warn in warnings), str(warnings))
 
 
 # ────────────────────────────── 3. 整列覆盖 ──────────────────────────────
@@ -428,7 +620,7 @@ def test_export_roundtrip():
                  "13817264451", "138 1726 4451", "zhang@example.com",
                  "li@example.com", "某单位", "某某贸易有限公司", "12,000.00"]
 
-    ai_out, ai_info = _export_and_verify(csv_path, "ai", "client_ai.csv")
+    ai_out, ai_info, ai_warnings = _export_and_verify(csv_path, "ai", "client_ai.csv")
     ai_rows = _read_csv_rows(ai_out)
     check("AI 版 residual=0", ai_info.get("residual") == 0, str(ai_info))
     check("AI 版行数不变", len(ai_rows) == len(original_rows), f"{len(ai_rows)}")
@@ -440,7 +632,8 @@ def test_export_roundtrip():
     leaked = [value for value in sensitive if value in ai_text]
     check("AI 版无敏感原值残留（抽样）", not leaked, str(leaked))
 
-    human_out, human_info = _export_and_verify(csv_path, "human", "client_human.csv")
+    human_out, human_info, _human_warnings = _export_and_verify(
+        csv_path, "human", "client_human.csv")
     human_rows = _read_csv_rows(human_out)
     check("涂黑版 residual=0", human_info.get("residual") == 0, str(human_info))
     check("涂黑版列数不变",
@@ -452,7 +645,7 @@ def test_export_roundtrip():
     check("涂黑版无敏感原值残留（抽样）", not leaked_human, str(leaked_human))
 
     tsv_path = FIXTURES / "client_list.tsv"
-    tsv_out, tsv_info = _export_and_verify(tsv_path, "ai", "client_ai.tsv")
+    tsv_out, tsv_info, _tsv_warnings = _export_and_verify(tsv_path, "ai", "client_ai.tsv")
     tsv_rows = _read_csv_rows(tsv_out, delimiter="\t")
     check("TSV 导出 residual=0", tsv_info.get("residual") == 0, str(tsv_info))
     check("TSV 导出保持制表符分隔",
@@ -493,6 +686,7 @@ def test_rule_scope_and_registration():
 _TESTS = [
     test_parser_delimited,
     test_parser_variants,
+    test_encoding_preservation,
     test_detector_coverage,
     test_multilevel_headers,
     test_no_header_degradation,
