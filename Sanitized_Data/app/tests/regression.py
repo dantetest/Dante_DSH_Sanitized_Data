@@ -772,6 +772,59 @@ def check_http(gate: Gate, base: dict) -> dict:
                   for k in ("default", "invalid", "whole")),
               _fmt_val({k: (idm.get(k) or {}).get("stage")
                         for k in ("default", "invalid", "whole")}))
+    # P1-A API：时间模糊 / 未成年人严格模式 / 组合风险
+    p1a = mp.get("p1a_api") or {}
+    td = p1a.get("time_default") or {}
+    tb = p1a.get("time_blur") or {}
+    mn = p1a.get("minor") or {}
+    st = mn.get("strict") or {}
+    rej = p1a.get("minor_strict_reject") or {}
+    gate.hard("P1-A 时间模糊：默认关闭且原文时刻保留",
+              td.get("time_blur") is False
+              and td.get("text_has_exact_time") is True,
+              _fmt_val({"time_blur": td.get("time_blur"),
+                        "text_has_exact_time": td.get("text_has_exact_time")}))
+    gate.hard("P1-A 时间模糊：开启后 TIME 实体 + 时刻→时段 + 日期保留",
+              tb.get("time_blur") is True
+              and int(tb.get("time_entities") or 0) >= 1
+              and tb.get("no_exact_time") is True
+              and tb.get("date_kept") is True
+              and tb.get("period_ok") is True,
+              _fmt_val({"time_blur": tb.get("time_blur"),
+                        "time_entities": tb.get("time_entities"),
+                        "surrogates": tb.get("surrogates"),
+                        "no_exact_time": tb.get("no_exact_time"),
+                        "date_kept": tb.get("date_kept"),
+                        "period_ok": tb.get("period_ok"),
+                        "err": p1a.get("error")}))
+    gate.hard("P1-A 时间模糊：AI 导出 residual=0",
+              (tb.get("verify") or {}).get("residual") == 0,
+              _fmt_val(tb.get("verify")))
+    risk = tb.get("combination_risk") or {}
+    risk_cats = set(risk.get("categories") or [])
+    gate.hard("P1-A 组合风险：位置/联系人/时间≥3 类且 level=high",
+              {"位置", "联系人", "时间"} <= risk_cats and risk.get("level") == "high",
+              _fmt_val(risk))
+    gate.hard("P1-A 未成年人：<14 虚构身份证号 → minor_detected=true",
+              mn.get("minor_detected") is True
+              and any("未满十四" in str(w) for w in (mn.get("warnings") or [])),
+              _fmt_val({"minor_detected": mn.get("minor_detected"),
+                        "warnings": mn.get("warnings")}))
+    gate.hard("P1-A 未成年人严格模式：minor_strict + id_card_mode=whole",
+              st.get("status") == 200
+              and st.get("snapshot_minor_strict") is True
+              and st.get("snapshot_id_card_mode") == "whole",
+              _fmt_val({"status": st.get("status"),
+                        "minor_strict": st.get("snapshot_minor_strict"),
+                        "id_card_mode": st.get("snapshot_id_card_mode")}))
+    gate.hard("P1-A 未成年人严格模式：导出不可换名且 residual=0",
+              st.get("export_no_id") is True
+              and (st.get("verify") or {}).get("residual") == 0,
+              _fmt_val({"export_no_id": st.get("export_no_id"),
+                        "verify": st.get("verify")}))
+    gate.hard("P1-A 未成年人严格模式：未检出时返回 400",
+              rej.get("status") == 400,
+              _fmt_val(rej))
     gate.hard("主路径有实体命中",
               (mp.get("job_entities") or {}).get("total", 0) > 0,
               _fmt_val((mp.get("job_entities") or {}).get("types")))
@@ -906,6 +959,42 @@ def check_id_card_capabilities(gate: Gate) -> None:
               _fmt_val({"fields_warnings": ff.get("warnings"),
                         "whole_warnings": wf.get("warnings"),
                         "back_warnings": bf.get("warnings")}))
+
+
+# ══════════════════════════ 5.7 P1-A 第一波（聊天/招牌/未成年/时间模糊/组合风险） ══════════════════════════
+def check_p1a_capabilities(gate: Gate) -> None:
+    """P1-A 真链路：聊天逐项/招牌扫描（jobs→导出→verify）+ API 契约（未成年/时间模糊/风险）。"""
+    gate.set_current("功能红线 · P1-A 第一波")
+    gate.group("功能红线 · P1-A 第一波（聊天/招牌/未成年/时间模糊/组合风险）")
+
+    # 1) 聊天截图逐项（单聊/群聊/深色/横向/长截图）
+    chat = qa.chat_chain_test()
+    cases = chat.get("cases") or {}
+    gate.hard("聊天截图逐项：5 类布局均命中 CHAT_* 且导出遮盖/verify 通过",
+              chat.get("ok") is True,
+              _fmt_val({"ok": chat.get("ok"), "err": chat.get("err"),
+                        "cases": {k: {"types": v.get("types"),
+                                      "missing": v.get("missing"),
+                                      "err": v.get("export_error")}
+                                  for k, v in cases.items()}}))
+    neg = chat.get("negatives") or {}
+    gate.hard("聊天逐项负样本 0 误报（发票/合同/空白/名片）",
+              bool(neg) and all(v.get("ok") for v in neg.values()),
+              _fmt_val(neg))
+
+    # 2) 招牌扫描器（门牌/路牌/店招/单位铭牌）
+    signs = qa.signs_chain_test()
+    gate.hard("招牌扫描：4 类各至少 1 个实体且导出遮盖/verify 通过",
+              signs.get("ok") is True,
+              _fmt_val({"ok": signs.get("ok"), "err": signs.get("err"),
+                        "cases": {k: {"types": v.get("types"),
+                                      "hit": v.get("hit"),
+                                      "err": v.get("export_error")}
+                                  for k, v in (signs.get("cases") or {}).items()}}))
+    sneg = signs.get("negatives") or {}
+    gate.hard("招牌负样本 0 误报（合同/名片/风景）",
+              bool(sneg) and all(v.get("ok") for v in sneg.values()),
+              _fmt_val(sneg))
 
 
 # ══════════════════════════ 6. MCP 工具（F9） ══════════════════════════
@@ -1195,6 +1284,12 @@ def run_checks() -> int:
         check_id_card_capabilities(gate)
     except Exception:
         gate.hard("身份证 A 方案检查异常", False, traceback.format_exc(limit=2))
+
+    # 4.7 P1-A 第一波（聊天/招牌真链路；未成年/时间模糊/组合风险在 HTTP 组断言）
+    try:
+        check_p1a_capabilities(gate)
+    except Exception:
+        gate.hard("P1-A 第一波检查异常", False, traceback.format_exc(limit=2))
 
     # 5 HTTP 服务 + 主路径
     http_bundle: dict = {}

@@ -1281,6 +1281,11 @@ def _capture_http_once(port: int) -> dict:
                 mp["id_card_mode_api"] = _capture_id_card_modes(base, sample)
             except Exception as exc:  # noqa: BLE001
                 mp["id_card_mode_api"] = {"error": f"{type(exc).__name__}: {exc}"}
+            # P1-A API：时间模糊 / 未成年人严格模式 / 组合风险
+            try:
+                mp["p1a_api"] = capture_p1a_api(base)
+            except Exception as exc:  # noqa: BLE001
+                mp["p1a_api"] = {"error": f"{type(exc).__name__}: {exc}"}
         except Exception as exc:  # noqa: BLE001
             mp["mark"] = {"error": f"{type(exc).__name__}: {exc}"}
         exp = mp["exports"]
@@ -2172,6 +2177,294 @@ def id_card_chain_test() -> dict:
         return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
 
 
+# ════════════════════════ P1-A 第一波（聊天/招牌/未成年/时间模糊/组合风险） ════════════════════════
+def _valid_id_number(birth: str = "20150101", seq: str = "123",
+                     region: str = "310101") -> str:
+    """生成虚构但校验位合法的 18 位身份证号（仅测试用）。"""
+    body = f"{region}{birth}{seq}"
+    weights = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
+    total = sum(int(c) * w for c, w in zip(body, weights))
+    return body + "10X98765432"[total % 11]
+
+
+def _wait_job_inproc(job, timeout: float = 180) -> None:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if getattr(job, "stage", "") in ("ready", "error"):
+            return
+        time.sleep(0.1)
+
+
+def _entity_rects(ents) -> list[tuple[str, tuple]]:
+    out: list[tuple[str, tuple]] = []
+    for e in ents:
+        for sp in (e.spans or []):
+            if sp.rect:
+                out.append((e.etype, tuple(float(v) for v in sp.rect)))
+                break
+    return out
+
+
+def chat_chain_test() -> dict:
+    """P1-A：聊天截图逐项识别 → jobs 实体 CHAT_* → human 导出遮盖 → verify。"""
+    ensure_ready()
+    try:
+        from PIL import Image
+        from yinzhan import registry
+        from yinzhan.jobs import MANAGER
+        import test_visual as tv
+
+        registry.load_plugins()
+        root = WORK / "fixtures_chat_p1a"
+        root.mkdir(parents=True, exist_ok=True)
+        fixtures: dict = {}
+        tv._add_chat_fixtures(root, fixtures)
+        expected = {
+            "chat_single": {"CHAT_AVATAR", "CHAT_NAME", "CHAT_TIME", "CHAT_INPUT"},
+            "chat_group": {"CHAT_GROUP", "CHAT_AVATAR", "CHAT_INPUT"},
+            "chat_dark": {"CHAT_AVATAR", "CHAT_NAME", "CHAT_TIME", "CHAT_INPUT"},
+            "chat_landscape": {"CHAT_AVATAR", "CHAT_NAME", "CHAT_INPUT"},
+            "chat_long": {"CHAT_AVATAR", "CHAT_NAME", "CHAT_TIME", "CHAT_INPUT"},
+        }
+        results: dict = {}
+        for name, need in expected.items():
+            item = fixtures.get(name) or {}
+            path = item.get("path")
+            rec: dict = {"ok": False}
+            if not path or not Path(path).is_file():
+                rec["err"] = "fixture 缺失"
+                results[name] = rec
+                continue
+            job = MANAGER.create(Path(path))
+            _wait_job_inproc(job)
+            ents = [e for e in list(job.entities) if e.etype.startswith("CHAT_")]
+            types = {e.etype for e in ents}
+            rec.update({"stage": job.stage, "types": sorted(types),
+                        "missing": sorted(need - types)})
+            try:
+                exp = MANAGER.export(job.id, "human")
+                out = Path(exp["out"])
+                img = Image.open(out).convert("RGB")
+                ratios = [_black_ratio(img, r) for _t, r in _entity_rects(ents)]
+                rec["black_ratios"] = ratios
+                rec["verify"] = dict(exp.get("verify") or {})
+                rec["ok"] = (rec["stage"] == "ready" and not rec["missing"]
+                             and bool(ratios) and all(v >= 0.6 for v in ratios)
+                             and (rec["verify"] or {}).get("residual") == 0)
+            except Exception as exc:  # noqa: BLE001
+                rec["export_error"] = f"{type(exc).__name__}: {exc}"
+            results[name] = rec
+
+        negatives: dict = {}
+        for name in ("invoice_screenshot", "contract_page", "blank_page",
+                     "business_mention"):
+            item = fixtures.get(name) or {}
+            path = item.get("path")
+            if not path or not Path(path).is_file():
+                continue
+            job = MANAGER.create(Path(path))
+            _wait_job_inproc(job)
+            chat = [e.etype for e in job.entities if e.etype.startswith("CHAT_")]
+            negatives[name] = {"chat_entities": chat, "ok": not chat}
+        card = SAMPLES / "名片.png"
+        if card.is_file():
+            job = MANAGER.create(card)
+            _wait_job_inproc(job)
+            chat = [e.etype for e in job.entities if e.etype.startswith("CHAT_")]
+            negatives["sample_名片.png"] = {"chat_entities": chat, "ok": not chat}
+        ok = (bool(results) and all(r.get("ok") for r in results.values())
+              and all(v.get("ok") for v in negatives.values()))
+        return {"ok": bool(ok), "cases": results, "negatives": negatives}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+SIGN_ETYPE = {"door_address": "DOOR_ADDRESS", "road_sign": "ROAD_SIGN",
+              "shop_sign": "SHOP_SIGN", "org_plaque": "ORG_PLAQUE"}
+
+
+def signs_chain_test() -> dict:
+    """P1-A：招牌/门牌/路牌/铭牌扫描器 → jobs 实体 → human 导出遮盖 → verify。"""
+    ensure_ready()
+    try:
+        from PIL import Image
+        from yinzhan import registry
+        from yinzhan.jobs import MANAGER
+
+        registry.load_plugins()
+        fx = TESTS / "fixtures" / "signs"
+        manifest = fx / "manifest.json"
+        if not manifest.is_file():
+            return {"ok": False, "err": "fixtures/signs/manifest.json 缺失"}
+        cases = json.loads(manifest.read_text("utf-8")).get("cases") or []
+        results: dict = {}
+        for case in cases:
+            path = fx / str(case.get("file"))
+            kind = str(case.get("kind") or "")
+            etype = SIGN_ETYPE.get(kind, "")
+            if not etype:
+                # manifest 里也列了负样本（kind=null），负样本由 negatives 单独断言
+                continue
+            rec: dict = {"ok": False, "expect": etype}
+            if not path.is_file():
+                rec["err"] = "fixture 缺失"
+                results[kind] = rec
+                continue
+            job = MANAGER.create(path)
+            _wait_job_inproc(job)
+            sign_ents = [e for e in job.entities if e.etype in SIGN_ETYPE.values()]
+            types = {e.etype for e in sign_ents}
+            rec.update({"stage": job.stage, "types": sorted(types),
+                        "hit": etype in types})
+            try:
+                exp = MANAGER.export(job.id, "human")
+                out = Path(exp["out"])
+                img = Image.open(out).convert("RGB")
+                ratios = [_black_ratio(img, r) for _t, r in _entity_rects(sign_ents)]
+                rec["black_ratios"] = ratios
+                rec["verify"] = dict(exp.get("verify") or {})
+                rec["ok"] = bool(rec["hit"] and ratios
+                                 and all(v >= 0.6 for v in ratios)
+                                 and (rec["verify"] or {}).get("residual") == 0)
+            except Exception as exc:  # noqa: BLE001
+                rec["export_error"] = f"{type(exc).__name__}: {exc}"
+            results[kind] = rec
+        negatives: dict = {}
+        for name in ("neg_document.png", "neg_card.png", "neg_scenery.png"):
+            path = fx / name
+            if not path.is_file():
+                continue
+            job = MANAGER.create(path)
+            _wait_job_inproc(job)
+            sig = [e.etype for e in job.entities if e.etype in SIGN_ETYPE.values()]
+            negatives[name] = {"sign_entities": sig, "ok": not sig}
+        ok = (len(results) == 4 and all(r.get("ok") for r in results.values())
+              and negatives and all(v.get("ok") for v in negatives.values()))
+        return {"ok": bool(ok), "cases": results, "negatives": negatives}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+# ── 未成年 / 时间模糊 / 组合风险：HTTP 真实链路（jobs API） ──
+def _job_via_api(base: str, body: dict) -> dict:
+    r = http_json(base + "/api/jobs", "POST", body)
+    try:
+        jb = json.loads(r["body"] or b"{}")
+    except Exception:
+        jb = {}
+    out = {"create_status": r["status"], **jb}
+    jid = jb.get("job_id")
+    if jid:
+        snap, stage, poll_s = _wait_job(base, jid)
+        out.update({"stage": stage, "poll_s": poll_s, "snapshot": snap})
+    return out
+
+
+def _export_text_via_api(base: str, jid: str) -> tuple[str, dict]:
+    rx = http_json(base + f"/api/jobs/{jid}/export", "POST", {"mode": "ai"},
+                   timeout=120)
+    try:
+        rec = json.loads(rx["body"] or b"{}")
+    except Exception:
+        rec = {}
+    if rx["status"] != 200:
+        return "", rec
+    rd = http_bytes(base + f"/api/jobs/{jid}/file?mode=ai", timeout=120)
+    return (rd.get("body") or b"").decode("utf-8", "replace"), rec
+
+
+def capture_p1a_api(base: str) -> dict:
+    """P1-A API 契约：时间模糊（默认关/开启）、未成年人推断+严格模式、组合风险。"""
+    d = WORK / "p1a_api"
+    d.mkdir(parents=True, exist_ok=True)
+    minor_id = _valid_id_number()
+    time_doc = d / "p1a_time.txt"
+    time_doc.write_text(
+        "会议时间：2026-10-20 14:35:22\n"
+        "地点：上海市浦东新区测试路1号\n"
+        "联系人：张伟 13800138000\n", "utf-8")
+    minor_doc = d / "p1a_minor.txt"
+    minor_doc.write_text(
+        f"学生姓名：小明\n身份证号：{minor_id}\n监护人电话：13800138000\n",
+        "utf-8")
+    out: dict = {"fixtures": {"minor_id": minor_id}}
+    # 1) 时间模糊默认关
+    j = _job_via_api(base, {"path": str(time_doc)})
+    jid = j.get("job_id") or ""
+    text_default, _rec = _export_text_via_api(base, jid) if jid else ("", {})
+    out["time_default"] = {
+        "stage": j.get("stage"),
+        "time_blur": (j.get("snapshot") or {}).get("time_blur"),
+        "text_has_exact_time": "14:35" in text_default,
+        "text": text_default[:200],
+    }
+    # 2) 时间模糊开启
+    j2 = _job_via_api(base, {"path": str(time_doc), "time_blur": True})
+    jid2 = j2.get("job_id") or ""
+    text_blur = ""
+    rec_blur: dict = {}
+    if jid2:
+        text_blur, rec_blur = _export_text_via_api(base, jid2)
+    try:
+        eb = json.loads((http_json(base + f"/api/jobs/{jid2}/entities")
+                         .get("body") or b"{}"))
+    except Exception:
+        eb = {}
+    time_ents = [e for e in (eb.get("entities") or []) if e.get("type") == "TIME"]
+    snap2 = j2.get("snapshot") or {}
+    out["time_blur"] = {
+        "stage": j2.get("stage"),
+        "time_blur": snap2.get("time_blur"),
+        "time_entities": len(time_ents),
+        "surrogates": [e.get("surrogate") for e in time_ents][:3],
+        "no_exact_time": ("14:35" not in text_blur
+                          and "14：35" not in text_blur),
+        "date_kept": ("2026-10-20" in text_blur
+                      or "2026年10月20日" in text_blur),
+        "period_ok": any(p in text_blur for p in
+                         ("凌晨", "上午", "中午", "下午", "晚上")),
+        "verify": rec_blur.get("verify"),
+        "combination_risk": snap2.get("combination_risk"),
+        "text": text_blur[:300],
+    }
+    # 3) 未成年人推断 + 严格模式
+    jm = _job_via_api(base, {"path": str(minor_doc)})
+    jidm = jm.get("job_id") or ""
+    snapm = jm.get("snapshot") or {}
+    strict: dict = {"status": None}
+    if jidm:
+        rs = http_json(base + f"/api/jobs/{jidm}/minor-strict", "POST", {})
+        try:
+            sb = json.loads(rs["body"] or b"{}")
+        except Exception:
+            sb = {}
+        text_strict, rec_strict = _export_text_via_api(base, jidm)
+        strict = {"status": rs["status"],
+                  "minor_strict": sb.get("minor_strict"),
+                  "id_card_mode": sb.get("id_card_mode"),
+                  "minor_detected": sb.get("minor_detected"),
+                  "snapshot_minor_strict": sb.get("minor_strict"),
+                  "snapshot_minor_detected": sb.get("minor_detected"),
+                  "snapshot_id_card_mode": sb.get("id_card_mode"),
+                  "export_no_id": minor_id not in text_strict,
+                  "verify": rec_strict.get("verify"),
+                  "warnings": (sb.get("warnings") or [])[-3:]}
+    out["minor"] = {
+        "stage": jm.get("stage"),
+        "minor_detected": snapm.get("minor_detected"),
+        "warnings": (snapm.get("warnings") or [])[:5],
+        "strict": strict,
+    }
+    # 4) 非未成年任务启用严格模式 → 400
+    if jid:
+        r400 = http_json(base + f"/api/jobs/{jid}/minor-strict", "POST", {})
+        out["minor_strict_reject"] = {
+            "status": r400["status"],
+            "body": (r400["body"] or b"")[:200].decode("utf-8", "replace"),
+        }
+    return out
+
+
 # ════════════════════════ 已知边界软记录 ════════════════════════
 def capture_known_limits() -> dict:
     ensure_ready()
@@ -2246,6 +2539,23 @@ def capture_known_limits() -> dict:
         "known_gaps_not_fixed": {
             "side_face_low_head_miss": "用户测试集 83 双人低头侧脸仍漏（Haar 模型上限，"
                                        "已写 docs/impl/visual.md，P1 YuNet 建议；本轮不修）",
+        },
+        # P1-A 第一波语义与已知限制（只做软记录）
+        "p1a_features": {
+            "chat_kinds": ["chat_avatar", "chat_name", "chat_group",
+                           "chat_time", "chat_input"],
+            "chat_only_image_fmt": "fmt == image（PDF/TIFF 不跑聊天逐项）",
+            "sign_kinds": ["road_sign", "door_address", "shop_sign", "org_plaque"],
+            "minor_inference": "仅由身份证号生日推断 <14（无身份证号不判定）",
+            "time_blur": "默认 False；开启后仅模糊「完整日期+时刻」的时刻，日期保留",
+            "combination_risk": "≥2 类准标识符提示 level/categories，只提示不自动改",
+            "known_limits": [
+                "聊天逐项依赖 OCR 可读文字+微信式左右气泡布局（非聊天截图/无 OCR 不承诺）",
+                "招牌扫描对近白纸面/无文字场景白纸门控跳过（宁可不报，不承诺）",
+                "未成年人推断只认身份证号生日，不估计人脸年龄",
+                "时间模糊默认关闭，需调用方显式开启",
+                "组合风险只提示，不自动整图涂黑",
+            ],
         },
         "pdf_text_layer_pages_skipped_ocr": {
             "min_text_chars": int(m.group(1)) if m else None,
@@ -2594,6 +2904,13 @@ def write_snapshot(base: dict, path: Path) -> None:
       f"前端选择器={idm.get('frontend_selector')}")
     A("- **边界（产品语义）**：身份证反面在 `fields` 档遮签发机关+有效期限两行，"
       "国徽/标题/其余卡面保留；两面字段都读不出时整卡回退并提示切「整卡涂黑」。")
+    p1a = kl.get("p1a_features") or {}
+    A(f"- **P1-A 第一波**：聊天逐项 kinds={p1a.get('chat_kinds')}"
+      f"（{p1a.get('chat_only_image_fmt')}）；招牌 kinds={p1a.get('sign_kinds')}；"
+      f"未成年人={p1a.get('minor_inference')}；"
+      f"时间模糊={p1a.get('time_blur')}；组合风险={p1a.get('combination_risk')}")
+    for _lim in (p1a.get("known_limits") or []):
+        A(f"  - 已知限制：{_lim}")
     gaps = kl.get("known_gaps_not_fixed") or {}
     if gaps:
         A("- **已知不修（本轮确认，不当作回归）**：")

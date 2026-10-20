@@ -42,6 +42,7 @@
 | F17 | **前端整图涂黑**按钮（后端 `/mark` rect=[0,0,1,1] → black 实体铺满页面） | 回归 API 级断言（black/coverage） |
 | F18 | 判决书类文本检测（跨行案号/地址、标签姓名、竖排审判员、带空格金额） | `test_legal_detect.py` |
 | F19 | **身份证 A 方案**：默认 `fields` 档正面遮头像/姓名/身份证号/住址（性别/民族/出生保持可见），**反面遮签发机关+有效期限（国徽/标题/其余卡面保留）**；可选 `whole` 整卡涂黑；`POST /api/jobs` 默认 fields、非法值回退 fields；正面无脸/无法定向、反面两行读不出 → 整卡回退并提示 | `test_visual`（48 项）+ 回归真链路合成证件夹具（API 默认/非法、fields 正面四字段+保留行、fields 反面两字段+国徽标题保留、whole 整页、两面 fallback） |
+| F20 | **P1-A 第一波**：聊天截图逐项（头像/昵称/群名/时间/输入框，仅图片、微信式布局、不整屏）；门牌/路牌/店招/单位铭牌 OCR 锚点扫描（默认 pending、白纸门控）；未成年人身份证生日推断 <14 → 提示 + 人工 `POST /minor-strict`（证件整卡+全部实体强制涂黑）；时间模糊 `time_blur`（默认关，仅完整日期+时刻→时段，日期保留）；组合风险 `combination_risk`（≥2 类准标识符只提示） | `test_visual`（56 项）+ `test_sign_targets`（39 项）+ 回归真链路：聊天合成图 5 类 CHAT_*、发票/名片 0 误报；招牌 4 类实体+导出黑；未成年虚构证件推断/minor-strict/未检出 400；时间模糊 TIME 替换与日期保留；组合风险类别断言 |
 
 > 允许的"变化"：新增识别类型/更多实体（例如以后人脸、条码、PIPL/表格规则被检出）**不算破坏**；但"原有必须命中的变少 / 导出失败 / 残留>0 / 元数据或隐藏数据回来了 / 服务外呼"一律算破坏。
 > 新增实体必须逐条解释：预期覆盖增强视为合理新增（软提示）；无法解释的才按误报处理（需 owner 修规则）。
@@ -51,10 +52,10 @@
 1. **开工前**：跑 `python -X utf8 app/tests/regression.py`，全绿才动代码（基线见 `app/tests/baseline/`）。
 2. **每个可感知改动后**：先跑对应模块单测，再跑完整 regression + e2e；红项必须修好或回滚，不得"带病继续"。
 3. **收口/提交前（全套）**，按顺序：
-   1) 各域测试：`python -X utf8 app/tests/run_all.py --only barcodes,finance,trade,visual,legal,pipl,table,pdfhidden,tiff`；
+   1) 各域测试：`python -X utf8 app/tests/run_all.py --only barcodes,finance,trade,visual,legal,pipl,table,pdfhidden,signs,tiff`；
    2) e2e：`cd app/server && python -X utf8 ../tests/e2e.py`（必须 5/5、残留 0）；
    3) 红线门禁：`python -X utf8 app/tests/regression.py`（必须退出码 0）；
-   4) 一条命令全套：`python -X utf8 app/tests/run_all.py`（当前 10 个套件，regression + 9 个功能域）；
+   4) 一条命令全套：`python -X utf8 app/tests/run_all.py`（当前 **11 个套件**，regression + 10 个功能域）；
    5) `git status` 只包含预期文件；`git diff` 人工过一遍；不 push（按用户要求，等通知）。
 4. **新增规则/依赖**必须额外过：
    - 新规则在既有样例上的**误报检查**（对比基线，新增命中要逐条解释）；
@@ -143,19 +144,20 @@
 - 回归：虚构 xlsx 夹具断言表头列级覆盖 + openpyxl 读回单元格类型为数字；样例 `对账单.xlsx` 新增
   「人名×1、表格账号列×1、金额（数值）×4」共 6 实体属**预期覆盖增强**（软提示，不算回归）。
 
-## 五、当前基线（2026-10-20 身份证 A 方案收口）
+## 五、当前基线（2026-10-20 P1-A 第一波收口）
 
 | 项 | 数值 |
 |---|---|
 | 基线文件 | `app/tests/baseline/baseline.json` + `SNAPSHOT.md`（版本化，`--update-baseline --reason` 重录） |
-| 代码状态 | HEAD `e78d2be` + 身份证 A 方案未提交工作树（`engine_clean=false` 已如实记录） |
+| 代码状态 | HEAD `9930db6` + P1-A 第一波未提交工作树（`engine_clean=false` 已如实记录） |
 | 规则包 | **8 个**（common/finance-cn/legal-cn/medical-cn/geo-cn/trade-cn/pipl-cn/table-cn），自有规则 **103 条** |
 | 编译规则数 | pdf/text 88、docx 99、xlsx 102、image/tiff 85、mesh 13 |
-| 5 个既有样例 | 实体 52 个（对账单 13→19 为预期新增），双导出 residual 全 0，元数据/隐藏数据全清（本轮无证件样例，**功能基线数值不变**） |
-| 红线门禁 | `regression.py` **204 项检查全绿（硬项失败 0）**（+N 软提示）；退出码 0 |
-| 全套测试 | `run_all.py` **10 个套件**全绿：regression + barcodes/finance/trade/visual/legal/pipl/table/pdfhidden/tiff（test_visual 47 项） |
+| 5 个既有样例 | 实体 52 个（对账单 13→19 为预期新增），双导出 residual 全 0，元数据/隐藏数据全清（本轮无聊天/招牌/证件样例，**功能基线数值不变**） |
+| 红线门禁 | `regression.py` **215 项检查全绿（硬项失败 0）**（+2 软提示）；退出码 0 |
+| 全套测试 | `run_all.py` **11 个套件**全绿：regression + barcodes/finance/trade/visual/legal/pipl/table/pdfhidden/signs/tiff（test_visual 56 项、test_sign_targets 39 项） |
 | 身份证 A 方案 | `fields` 默认（正面头像/姓名/号码/住址；反面签发机关/有效期限；性别/民族/出生、国徽/标题保留）、`whole` 可选整卡；API 默认/非法值回退 fields；无法定向/两行读不出回退整卡 |
-| 已知不修 | 用户测试集 83 双人低头侧脸仍漏（Haar 上限，P1 YuNet） |
+| P1-A 第一波 | 聊天截图逐项（5 类 CHAT_*，仅图片、微信式布局）；招牌/门牌/路牌/铭牌 OCR 扫描（4 kind，pending）；未成年人身份证生日推断 + `/minor-strict`；时间模糊 `time_blur`；组合风险 `combination_risk` |
+| 已知不修 | 83 双人低头侧脸（Haar 上限，YuNet 因 WIDER FACE CC BY-NC-ND 未随包）；聊天需 OCR/微信式布局；招牌无 OCR/白底不承诺 |
 
 ## 六、变更记录
 
@@ -167,3 +169,4 @@
 | 2026-10-20 | **P0 第二波（PIPL 收口）**：PDF 隐藏数据剥离 + verify 拦截、图片 EXIF Orientation 转正、`pipl-cn`(21)/`table-cn`(11) 规则包 + 校验器、`numeric_cell` 数值写回、10 条规则 scope 扩 image/tiff、前端整图涂黑；基线规则 71→103（8 包）、对账单 +6 实体（预期）、`regression.py` 177 项硬检查、`run_all.py` 10 套件全绿 | Lead + 6 域开发 + qa |
 | 2026-10-20 | **身份证 A 方案**（用户追加要求）：默认 `fields` 只遮头像/姓名/身份证号/住址，`whole` 可选整卡；jobs `id_card_mode` + `_visual_entities` 按档过滤 + 证件内 OCR 文字实体让位 + 照片较大 warning；API/前端选择器；`pipeline._RECT_ETYPE_KIND` 字段复检映射；回归新增 17 项真链路检查（API 默认/非法、fields 四字段+保留行、whole 整页、反面、无脸回退），`regression.py` **199 项**；5 样例无证件，规则/实体基线数值不变 | Lead + faces + designer + qa |
 | 2026-10-20 | **身份证 A 方案增量**（用户再追加）：反面 `fields` 档也遮签发机关+有效期限（ID_AUTHORITY/ID_VALIDITY，国徽/标题/其余卡面保留）；jobs side/字段过滤 + pipeline 复检映射；回归新增反面 7 项真链路检查（201 项全绿）；5 样例无证件，规则/实体基线数值不变 | Lead + faces + qa |
+| 2026-10-20 | **P1-A 第一波**：聊天截图逐项（CHAT_AVATAR/NAME/GROUP/TIME/INPUT；仅 image、微信式布局、合成 5 类 0 误报）、招牌扫描器（sign_targets：门牌/路牌/店招/单位铭牌，OCR 锚点+白纸门控）、未成年人提示+严格模式（`/minor-strict` 整卡+全部黑）、时间模糊 `time_blur`、组合风险提示；前端安全提示条/时间开关/新类型；`test_visual` 56、`test_sign_targets` 39、`regression.py` **215 项**、`run_all.py` **11 套件**；5 样例无新增，基线数值不变 | Lead + faces + codes + designer + qa |

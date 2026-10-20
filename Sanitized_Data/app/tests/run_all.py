@@ -63,6 +63,8 @@ def _specs() -> list[dict]:
          "label": "表格表头列级检测（table-cn）自测"},
         {"key": "pdfhidden", "file": TESTS / "test_pdf_hidden.py", "timeout": 600,
          "label": "PDF 隐藏数据（附件/批注/表单/JS/缩略图）剥离自测"},
+        {"key": "signs", "file": TESTS / "test_sign_targets.py", "timeout": 600,
+         "label": "P1-A 招牌扫描器（门牌/路牌/店招/单位铭牌）自测"},
         {"key": "tiff", "file": TESTS / "test_tiff.py", "timeout": 900,
          "label": "正射 TIF 域自测（可选）"},
     ]

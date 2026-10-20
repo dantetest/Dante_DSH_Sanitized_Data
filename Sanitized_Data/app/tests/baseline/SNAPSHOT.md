@@ -1,8 +1,8 @@
 # 数据隐站 · 基线快照（BASELINE SNAPSHOT）
 
-- 冻结时间：2026-10-20T19:54:13+0800
-- git HEAD：`9b3f5df`（9b3f5dfc923acaa039175bbec04284f84a5a7963）  分支 `main`
-- 引擎源码改动：无（干净）
+- 冻结时间：2026-10-20T21:01:55+0800
+- git HEAD：`9930db6`（9930db6d4628351f096a6e5fe09f1909e916c7fc）  分支 `main`
+- 引擎源码改动：有未提交改动，基线需复核
 - Python：3.12.9  · 平台：win32
 - 无 GDAL：True  · 无 trimesh：True
 
@@ -22,7 +22,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 |---|---|---|
 | H1 | 基线样例全部解析成功 | 5/5 |
 | H2 | 两种导出全部成功、residual=0、成品存在非空、元数据已清 | exports_ok=10/10，residual_total=0 |
-| H3 | e2e 退出码 0 | exit=0，9.23s |
+| H3 | e2e 退出码 0 | exit=0，8.74s |
 | H4 | 规则包完整、无 load_errors、id 全局唯一、必填字段/scope/策略合法 | packs=8，defined=103，load_errors=0，violations=0 |
 | H5 | 解析器/检测器全部注册成功 | parsers=docx,image,mesh,pdf,text,tiff,xlsx；detectors=dict,joined_regex,ner,numeric_cell,regex,table_column |
 | H6 | 服务只监听 127.0.0.1 | runtime.host=127.0.0.1；代码 HOST=127.0.0.1 |
@@ -38,7 +38,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 | # | 软参考项 | 基线值 | 说明 |
 |---|---|---|---|
-| S1 | 性能：e2e 总耗时 / OCR 页耗时 | e2e 9.23s | 超过基线 50% 报警（red-lines F12）|
+| S1 | 性能：e2e 总耗时 / OCR 页耗时 | e2e 8.74s | 超过基线 50% 报警（red-lines F12）|
 | S2 | 已知边界现状 | 见 §6 | 后续 P0 会改，**不得断言永远如此** |
 | S3 | 新增命中 | 基线实体总数 52 | 新增类型/数量只提示，不判失败 |
 
@@ -104,7 +104,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 - 注册：parsers=['docx', 'image', 'mesh', 'pdf', 'text', 'tiff', 'xlsx']；detectors=['dict', 'joined_regex', 'ner', 'numeric_cell', 'regex', 'table_column']；replacers={'surrogate': True, 'black': True, 'mask': True}
 - OCR：available=True，backend=ppocrv6，error=None
 - `/api/health`：status=200，net=**blocked**，version=1.0.0，ocr=True
-- runtime.json：host=127.0.0.1，port=18774；netstat 监听行=['TCP    127.0.0.1:18774        0.0.0.0:0              LISTENING       11652']
+- runtime.json：host=127.0.0.1，port=18777；netstat 监听行=['TCP    127.0.0.1:18777        0.0.0.0:0              LISTENING       384']
 - 外呼静态扫描：hits=[]，URL 字面量上下文 [('https://cka.blctek.com:8443，', 'documentation_or_comment'), ('http://{shown}:{port}', 'templated_local_url'), ('http://{public}:{port}', 'templated_local_url')]；本地浏览器拉起=[{'file': 'app\\server\\yinzhan\\app.py', 'line': 112, 'text': 'threading.Timer(0.6, lambda: webbrowser.open(url)).start()'}]
 - 审计 INSERT 列：['ts', 'job_id', 'doc_name', 'doc_hash', 'fmt', 'counts', 'rule_pack', 'mode', 'out_hash', 'out_name', 'prev_sig', 'sig']；疑似原值列=[]
 - 依赖：requirements=['pillow', 'lxml', 'pymupdf', 'python-docx', 'openpyxl', 'rapidocr', 'rapidocr-onnxruntime', 'onnxruntime', 'opencv-python-headless', 'zxing-cpp', 'rasterio', 'pyproj', 'cryptography']；网络客户端依赖=无
@@ -125,7 +125,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 ### 5.2 真实 HTTP 主路径（上传 → 任务 → ready → 双导出 → 下载）
 
 - 样例：委托代理合同.pdf（2959 bytes）
-- 上传：status=200；任务：j_b4ccf7a5；stage=ready
+- 上传：status=200；任务：j_21ef9b8e；stage=ready
 - 实体类型：{'手机号': 1, '固定电话': 1, '案号': 1, '统一社会信用代码': 1, '地址': 1, '律师事务所': 1, '金额': 2, '当事人/代理人': 2, '人名': 2, '机构名称': 1, '身份证号': 1, '银行卡号': 1}
 - 预览：{'status': 200, 'kind': 'raster', 'pages': 2, 'blocks': 25, 'entities': 15}；渲染：{'status': 200, 'ctype': 'image/png', 'bytes': 92728, 'png_magic': True}
 - ai：status=200，bytes=7203，verify={'verified': True, 'residual': 0, 'checked': 15, 'visual_residual': 0, 'media': {'count': 0, 'confirmed': False}, 'pdf_hidden': {}, 'issues': []}，下载 status=200，magic=%PDF-1.7，非空=True
@@ -150,6 +150,12 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 - 前端整图涂黑（rect=[0,0,1,1] → black 实体）：{'backend_mark_normalized_rect': True, 'frontend_button': True}
 - **身份证 A 方案**：默认 `fields`；正面字段=['id_photo', 'id_name', 'id_number', 'id_address']，反面字段=['id_authority', 'id_validity']；可选 `['fields', 'whole']` 整卡涂黑；jobs id_card_mode=True，证件内 OCR 文字实体让位=True，前端选择器=True
 - **边界（产品语义）**：身份证反面在 `fields` 档遮签发机关+有效期限两行，国徽/标题/其余卡面保留；两面字段都读不出时整卡回退并提示切「整卡涂黑」。
+- **P1-A 第一波**：聊天逐项 kinds=['chat_avatar', 'chat_name', 'chat_group', 'chat_time', 'chat_input']（fmt == image（PDF/TIFF 不跑聊天逐项））；招牌 kinds=['road_sign', 'door_address', 'shop_sign', 'org_plaque']；未成年人=仅由身份证号生日推断 <14（无身份证号不判定）；时间模糊=默认 False；开启后仅模糊「完整日期+时刻」的时刻，日期保留；组合风险=≥2 类准标识符提示 level/categories，只提示不自动改
+  - 已知限制：聊天逐项依赖 OCR 可读文字+微信式左右气泡布局（非聊天截图/无 OCR 不承诺）
+  - 已知限制：招牌扫描对近白纸面/无文字场景白纸门控跳过（宁可不报，不承诺）
+  - 已知限制：未成年人推断只认身份证号生日，不估计人脸年龄
+  - 已知限制：时间模糊默认关闭，需调用方显式开启
+  - 已知限制：组合风险只提示，不自动整图涂黑
 - **已知不修（本轮确认，不当作回归）**：
   - `side_face_low_head_miss`：用户测试集 83 双人低头侧脸仍漏（Haar 模型上限，已写 docs/impl/visual.md，P1 YuNet 建议；本轮不修）
 - **正射 TIF 中性化（D3 已批准）**：成品物理上仍保留 LOCAL_CS 本地任意 CRS 的 GeoTIFF 结构标签（34264/34735/34737，GIS 可打开）。红线是**没有真实世界坐标**：源 ModelPixelScale / ModelTiepoint / EPSG / GDAL_METADATA / RPC / ICC / EXIF / GPS 一旦残留即 FAIL；LOCAL_CS 结构本身不算残留（详见 `docs/impl/tiff.md §10`）。
@@ -162,7 +168,7 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 
 ## 8. 本次基线更新理由（人工填写）
 
-> 身份证 A 方案增量（反面签发机关/有效期）后干净 HEAD 基线：204 项/10 套件；5 样例无证件，规则 103/实体 52 不变
+> P1-A 第一波收口：聊天截图逐项/招牌扫描器/未成年人提示与严格模式/时间模糊/组合风险；新增 11 域(含 signs)、215 项；5 样例无新增
 
 ## 9. 基线更新记录（最近 10 次）
 
@@ -177,4 +183,5 @@ python -X utf8 app/tests/regression.py --update-baseline   # 仅在确认是改�
 | 2026-10-20T19:26:41+0800 | 789e91d | True | 身份证 A 方案收口后干净 HEAD 基线：默认 fields/whole 可选、199 项/10 套件；5 样例无证件，规则 103/实体 52 不变 |
 | 2026-10-20T19:48:09+0800 | d7297a3 | False | 身份证 A 方案增量收口：反面 fields 档遮签发机关+有效期限（ID_AUTHORITY/ID_VALIDITY，国徽/标题保留）；正/反两面 fallback 语义；5 样例无证件，规则 103/实体 52 功能基线不变；新增反面 7 项真链路检查 |
 | 2026-10-20T19:54:13+0800 | 9b3f5df | True | 身份证 A 方案增量（反面签发机关/有效期）后干净 HEAD 基线：204 项/10 套件；5 样例无证件，规则 103/实体 52 不变 |
+| 2026-10-20T21:01:55+0800 | 9930db6 | False | P1-A 第一波收口：聊天截图逐项/招牌扫描器/未成年人提示与严格模式/时间模糊/组合风险；新增 11 域(含 signs)、215 项；5 样例无新增 |
 
