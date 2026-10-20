@@ -205,7 +205,7 @@ def build(rule: Rule, value: str, ctx: ReplaceContext) -> Decision
 | GET | `/` | 控制台页面 |
 | GET | `/api/health` | `{ok, version, net, engine:{ocr, parsers[], packs[]}}` |
 | POST | `/api/upload` | 原始字节，头 `X-Filename`（URL 编码）→ `{upload_id, name, size, sha256}` |
-| POST | `/api/jobs` | `{upload_id}` 或 `{path}`，`strictness` → `{job_id}` |
+| POST | `/api/jobs` | `{upload_id}` 或 `{path}`，`strictness`，可选 `id_card_mode:"fields"\|"whole"`（默认 fields）→ `{job_id}` |
 | GET | `/api/jobs` | 最近任务列表 |
 | GET | `/api/jobs/{id}` | 状态：`{id, name, fmt, stage, progress, counts:{total,done,pending}, pages, error, warnings}` |
 | GET | `/api/jobs/{id}/entities` | `{entities:[Entity...]}` |
@@ -341,6 +341,14 @@ verify(exported, entities, parser, ctx, *, doc=None, options=None) -> dict
 - 车牌：新增完整牌面色块检测（HSV 蓝/绿/黄底 + 矩形拟合），OCR 仅确认；不可读回退 OCR 框并 note `color/<色>;unconfirmed`。
 - 证件：文本块数门控（≥18 块不判证件；12–17 块禁止 ≥25% 整页扩张，只涂锚点邻域），避免发票/合同整页误伤。
 - 码类低置信门控：`/detect`（仅检测未解码）且面积 >5% 页面的候选不自动打码，写 warning 让用户人工确认（`jobs._visual_entities`）。
+
+### 11.5 身份证脱敏档位（2026-10-20 用户选 A）
+
+- 任务级参数 `id_card_mode`：`fields`（默认，只遮头像/姓名/身份证号/住址）/ `whole`（整卡或整页黑）。
+- 扫描器 `visual_targets` 对身份证正面额外返回 `id_photo/id_name/id_number/id_address` 四个 kind；`id_document` 保留给整卡档；note 约定：`side=front|back;fields=n;orient=0|90|180|270`，定位失败时 `fallback=1`。
+- `jobs._visual_entities` 按档位过滤：fields 只取四个字段（正面定位失败回退整卡，并 warning）；whole 只取 id_document；身份证反面 fields 模式不涂字段，只 warning 提示可切整卡。
+- `_VISUAL_SPEC` 新映射：`ID_PHOTO/ID_NAME/ID_NUMBER/ID_ADDRESS` 对应中文「证件头像/证件姓名/证件号码/证件住址」。
+- Verify：`_RECT_ETYPE_KIND` 补上述字段 kind，成品重扫后按字段图 IoU 复检。
 
 ### 11.4 规则与表格
 
