@@ -1,34 +1,26 @@
 {
   "schema": "sanitized-data-baseline/v1",
   "meta": {
-    "captured_at": "2026-10-20T22:58:57+0800",
-    "git_head": "b455d9c757a583dfeab48050adc35df61de84318",
-    "git_head_short": "b455d9c",
+    "captured_at": "2026-10-20T23:48:37+0800",
+    "git_head": "01e1719aa87e506894238594c363a015991b01ab",
+    "git_head_short": "01e1719",
     "git_branch": "main",
     "engine_dirty_status": [],
     "engine_clean": true,
-    "tests_dirty_status": [],
+    "tests_dirty_status": [
+      "M Sanitized_Data/app/tests/README.md",
+      " M Sanitized_Data/app/tests/qa_common.py",
+      " M Sanitized_Data/app/tests/regression.py",
+      " M Sanitized_Data/app/tests/run_all.py"
+    ],
     "python": "3.12.9",
     "platform": "win32",
     "repo": "D:\\DSH_DESKTOP_WORKSPACE\\Sanitized_Data",
     "no_gdal": true,
     "no_trimesh": true,
     "e2e_command": "cd app\\server; $env:PYTHONIOENCODING='utf-8'; python -X utf8 ..\\tests\\e2e.py",
-    "update_reason": "P1.5 收口后干净 HEAD 基线：内嵌图文字 OCR/6 类证件/CSV 编码/护照号；规则 104、14 套件、241 项；5 样例不变",
+    "update_reason": "P0 修复收口：PLY 三子格式导出结构自检/失败阻断（不再复制源文件）、TIF Orientation Pillow 转正且成品无 274（rasterio 路径 warning 已知限制）；test_mesh 纳入 run_all（15 套件）；5 样例实体 52/规则 104/residual 0 不回归",
     "update_history": [
-      {
-        "at": "2026-10-20T19:18:42+0800",
-        "head": "e78d2be",
-        "engine_clean": false,
-        "reason": "身份证 A 方案收口：默认 fields（只遮头像/姓名/身份证号/住址）+ whole 可选；API 默认/非法值回退 fields、反面 fields 提示切整卡、无脸回退整卡；5 样例无证件，规则 103/实体 52 功能基线不变；新增 16 项真链路门禁",
-        "samples": {
-          "files_total": 5,
-          "files_ok": 5,
-          "exports_ok": 10,
-          "residual_total": 0
-        },
-        "rules": 103
-      },
       {
         "at": "2026-10-20T19:26:41+0800",
         "head": "789e91d",
@@ -145,12 +137,25 @@
           "residual_total": 0
         },
         "rules": 104
+      },
+      {
+        "at": "2026-10-20T23:48:37+0800",
+        "head": "01e1719",
+        "engine_clean": true,
+        "reason": "P0 修复收口：PLY 三子格式导出结构自检/失败阻断（不再复制源文件）、TIF Orientation Pillow 转正且成品无 274（rasterio 路径 warning 已知限制）；test_mesh 纳入 run_all（15 套件）；5 样例实体 52/规则 104/residual 0 不回归",
+        "samples": {
+          "files_total": 5,
+          "files_ok": 5,
+          "exports_ok": 10,
+          "residual_total": 0
+        },
+        "rules": 104
       }
     ]
   },
   "e2e": {
     "exit_code": 0,
-    "elapsed_s": 8.82,
+    "elapsed_s": 8.29,
     "ok": true,
     "summary_lines": [
       "汇总：5/5 个文件解析成功",
@@ -161,12 +166,12 @@
     ],
     "stdout_tail": [
       "  ▸ 对账单.xlsx",
-      "    xlsx · 1 页 · 25 块 · 识别 19 处 · 解析 15ms · 检测 0ms",
+      "    xlsx · 1 页 · 25 块 · 识别 19 处 · 解析 0ms · 检测 5ms",
       "    手机号×3  固定电话×1  统一社会信用代码×1  律师事务所×1  人名×3  金额（数值）×4  身份证号×3  银行卡号×2  表格账号列×1",
-      "    ✓ 换名导出 5375B · 残留 0",
-      "    ✓ 涂黑导出 5168B · 残留 0",
+      "    ✓ 换名导出 5374B · 残留 0",
+      "    ✓ 涂黑导出 5167B · 残留 0",
       "  ▸ 正射影像.tif",
-      "    tiff · 1 页 · 4 块 · 识别 3 处 · 解析 1134ms · 检测 10ms",
+      "    tiff · 1 页 · 4 块 · 识别 3 处 · 解析 1047ms · 检测 2ms",
       "    图幅号×1  控制点号×1  坐标系名称×1",
       "    ✓ 换名导出 33774B · 残留 0",
       "    ✓ 涂黑导出 26353B · 残留 0",
@@ -176,12 +181,12 @@
       "  全部通过"
     ],
     "stderr_tail": [
-      "[INFO] 2026-10-20 22:59:01,275 [RapidOCR] base.py:23: Using engine_name: onnxruntime",
-      "[INFO] 2026-10-20 22:59:01,285 [RapidOCR] download_file.py:60: File exists and is valid: C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\ch_ppocr_mobile_v2.0_cls_mobile.onnx",
-      "[INFO] 2026-10-20 22:59:01,285 [RapidOCR] main.py:63: Using C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\ch_ppocr_mobile_v2.0_cls_mobile.onnx",
-      "[INFO] 2026-10-20 22:59:01,396 [RapidOCR] base.py:23: Using engine_name: onnxruntime",
-      "[INFO] 2026-10-20 22:59:01,418 [RapidOCR] download_file.py:60: File exists and is valid: C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\PP-OCRv6_rec_small.onnx",
-      "[INFO] 2026-10-20 22:59:01,418 [RapidOCR] main.py:63: Using C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\PP-OCRv6_rec_small.onnx"
+      "[INFO] 2026-10-20 23:48:40,372 [RapidOCR] base.py:23: Using engine_name: onnxruntime",
+      "[INFO] 2026-10-20 23:48:40,381 [RapidOCR] download_file.py:60: File exists and is valid: C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+      "[INFO] 2026-10-20 23:48:40,381 [RapidOCR] main.py:63: Using C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+      "[INFO] 2026-10-20 23:48:40,483 [RapidOCR] base.py:23: Using engine_name: onnxruntime",
+      "[INFO] 2026-10-20 23:48:40,503 [RapidOCR] download_file.py:60: File exists and is valid: C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\PP-OCRv6_rec_small.onnx",
+      "[INFO] 2026-10-20 23:48:40,503 [RapidOCR] main.py:63: Using C:\\Users\\Dante\\AppData\\Roaming\\Python\\Python312\\site-packages\\rapidocr\\models\\PP-OCRv6_rec_small.onnx"
     ]
   },
   "samples": {
@@ -351,7 +356,7 @@
         "bytes": 37440,
         "sha256": "221f860f5ff347195e6d634cee0cfbefcc471bf27d0a38ccb49a25a985c5ae3d",
         "fmt": "docx",
-        "parse_ms": 33,
+        "parse_ms": 15,
         "pages": 1,
         "blocks": 25,
         "doc_meta": {
@@ -362,7 +367,7 @@
           "template": "Normal.dotm"
         },
         "pack_label": "common,finance-cn,geo-cn,legal-cn,medical-cn,pipl-cn,table-cn,trade-cn",
-        "detect_ms": 45,
+        "detect_ms": 39,
         "entities": 9,
         "metadata_forbidden_values_count": 5
       },
@@ -456,7 +461,7 @@
         "bytes": 48407,
         "sha256": "f04d33de8ca0d80069dd562ae49a936a12507a576788cb068ceb06967e691e28",
         "fmt": "image",
-        "parse_ms": 1363,
+        "parse_ms": 1386,
         "pages": 1,
         "blocks": 8,
         "doc_meta": {
@@ -464,7 +469,7 @@
           "mode": "RGB"
         },
         "pack_label": "common,finance-cn,geo-cn,legal-cn,medical-cn,pipl-cn,trade-cn",
-        "detect_ms": 0,
+        "detect_ms": 1,
         "entities": 6,
         "metadata_forbidden_values_count": 0
       },
@@ -593,7 +598,7 @@
         "bytes": 2959,
         "sha256": "7dfff6fe3bf8bf0dbabccb68a800e3df626ef4abba1f62fa36260aaae55d9f5f",
         "fmt": "pdf",
-        "parse_ms": 103,
+        "parse_ms": 107,
         "pages": 2,
         "blocks": 30,
         "doc_meta": {
@@ -608,7 +613,7 @@
           "pdf_js": false
         },
         "pack_label": "common,finance-cn,geo-cn,legal-cn,medical-cn,pipl-cn,trade-cn",
-        "detect_ms": 17,
+        "detect_ms": 16,
         "entities": 15,
         "metadata_forbidden_values_count": 5
       },
@@ -684,7 +689,7 @@
               "out": {
                 "nonempty_fields": {
                   "created": "2026-10-19 15:53:22",
-                  "modified": "2026-10-20 14:59:12"
+                  "modified": "2026-10-20 15:48:51"
                 },
                 "parts": {
                   "docProps/core.xml": true,
@@ -692,7 +697,7 @@
                   "docProps/custom.xml": false
                 },
                 "app_text": "Microsoft Excel Compatible / Openpyxl 3.1.5|3.1",
-                "core_text": "2026-10-19T15:53:22Z|2026-10-20T14:59:12Z",
+                "core_text": "2026-10-19T15:53:22Z|2026-10-20T15:48:51Z",
                 "forbidden_hits": [],
                 "identity_fields_empty": true
               },
@@ -714,7 +719,7 @@
               "out": {
                 "nonempty_fields": {
                   "created": "2026-10-19 15:53:22",
-                  "modified": "2026-10-20 14:59:12"
+                  "modified": "2026-10-20 15:48:51"
                 },
                 "parts": {
                   "docProps/core.xml": true,
@@ -722,7 +727,7 @@
                   "docProps/custom.xml": false
                 },
                 "app_text": "Microsoft Excel Compatible / Openpyxl 3.1.5|3.1",
-                "core_text": "2026-10-19T15:53:22Z|2026-10-20T14:59:12Z",
+                "core_text": "2026-10-19T15:53:22Z|2026-10-20T15:48:51Z",
                 "forbidden_hits": [],
                 "identity_fields_empty": true
               },
@@ -752,7 +757,7 @@
         "bytes": 5327,
         "sha256": "dea4d8b7c26cf410d9f7414ecc8e71c0aea70cc6922e2940b62ffd666342c4ed",
         "fmt": "xlsx",
-        "parse_ms": 0,
+        "parse_ms": 13,
         "pages": 1,
         "blocks": 25,
         "doc_meta": {
@@ -761,7 +766,7 @@
           "title": "2025年3月对账单"
         },
         "pack_label": "common,finance-cn,geo-cn,legal-cn,medical-cn,pipl-cn,table-cn,trade-cn",
-        "detect_ms": 0,
+        "detect_ms": 17,
         "entities": 19,
         "metadata_forbidden_values_count": 5
       },
@@ -792,7 +797,7 @@
             "size": 33774,
             "warnings": [
               "rasterio 路线：保留原 dtype/波段，写出本地任意 CRS + 内部金字塔；换名/涂黑处理文本框 2 个、涂黑框 1 个",
-              "已做坐标中性化：随机平移+旋转，成品为本地任意 CRS（θ=-0.233821°，dx=-842.022m，dy=-448.226m）；参数已交上层加密保存"
+              "已做坐标中性化：随机平移+旋转，成品为本地任意 CRS（θ=-2.355018°，dx=2210.606m，dy=4373.767m）；参数已交上层加密保存"
             ],
             "verified": true,
             "residual": 0,
@@ -856,7 +861,7 @@
             "size": 26353,
             "warnings": [
               "rasterio 路线：保留原 dtype/波段，写出本地任意 CRS + 内部金字塔；换名/涂黑处理文本框 0 个、涂黑框 3 个",
-              "已做坐标中性化：随机平移+旋转，成品为本地任意 CRS（θ=-1.555568°，dx=-1103.949m，dy=3410.957m）；参数已交上层加密保存"
+              "已做坐标中性化：随机平移+旋转，成品为本地任意 CRS（θ=-2.545403°，dx=-4655.31m，dy=-1426.525m）；参数已交上层加密保存"
             ],
             "verified": true,
             "residual": 0,
@@ -967,7 +972,7 @@
         "bytes": 1440312,
         "sha256": "a8776f3de09528a28149726e81c152ea4f6a2b9b46f70d1a76e2523dccb2cf0f",
         "fmt": "tiff",
-        "parse_ms": 1120,
+        "parse_ms": 1099,
         "pages": 1,
         "blocks": 4,
         "doc_meta": {
@@ -977,6 +982,7 @@
           "dtype": "uint8",
           "compression": "none",
           "engine": "rasterio",
+          "orientation": 1,
           "full_read": true,
           "preview_scale": 1.0
         },
@@ -1493,7 +1499,7 @@
       "host": "127.0.0.1",
       "port": 18779,
       "url": "http://127.0.0.1:18779",
-      "pid": 19852
+      "pid": 14152
     },
     "health": {
       "status": 200,
@@ -1677,13 +1683,13 @@
       "source_sha256": "7dfff6fe3bf8bf0dbabccb68a800e3df626ef4abba1f62fa36260aaae55d9f5f",
       "upload": {
         "status": 200,
-        "upload_id": "u_219ce5a4a263",
+        "upload_id": "u_e8a03d7dc5fe",
         "size": 2959,
         "sha256": "7dfff6fe3bf8bf0dbabccb68a800e3df626ef4abba1f62fa36260aaae55d9f5f"
       },
       "job_create": {
         "status": 200,
-        "job_id": "j_a738ea62",
+        "job_id": "j_2c6484c0",
         "name": "委托代理合同.pdf",
         "fmt": "pdf"
       },
@@ -1759,21 +1765,21 @@
           }
         },
         "entity_ids": [
-          "e_1ca0ea92",
-          "e_e434cdbd",
-          "e_47ce9b56",
-          "e_19cd46fb",
-          "e_fca6341c",
-          "e_96926fdb",
-          "e_9d037a5a",
-          "e_71c70977",
-          "e_d2533918",
-          "e_08950420",
-          "e_af28e577",
-          "e_4a4ee75c",
-          "e_594676d0",
-          "e_f2c942ea",
-          "e_d5168dff"
+          "e_34f2c847",
+          "e_927bf606",
+          "e_1b796d7c",
+          "e_531dffe8",
+          "e_0d934736",
+          "e_0afdc68f",
+          "e_17abbf8b",
+          "e_3f3c8023",
+          "e_189589df",
+          "e_7e3164c3",
+          "e_4041c1ab",
+          "e_18e99d70",
+          "e_f37832f4",
+          "e_0d5a2c0b",
+          "e_3119c822"
         ]
       },
       "preview": {
@@ -1795,7 +1801,7 @@
           "ok": true,
           "name": "委托代理合同_换名_20261020-0001.pdf",
           "bytes": 7203,
-          "sha256": "174295b445a1f831e37eacc5e9653df878afa51880a0c54aebbddb8ba39437ab",
+          "sha256": "18df253e67d387e1e250e02e8770c641c7ced56b2f7f978df72700ed36388cb1",
           "mode": "ai",
           "verify": {
             "verified": true,
@@ -1815,7 +1821,7 @@
             "ctype": "application/octet-stream",
             "disposition": "attachment; filename*=UTF-8''%E5%A7%94%E6%89%98%E4%BB%A3%E7%90%86%E5%90%88%E5%90%8C_%E6%8D%A2%E5%90%8D_20261020-0001.pdf",
             "bytes": 7203,
-            "sha256": "174295b445a1f831e37eacc5e9653df878afa51880a0c54aebbddb8ba39437ab",
+            "sha256": "18df253e67d387e1e250e02e8770c641c7ced56b2f7f978df72700ed36388cb1",
             "magic": "%PDF-1.7",
             "pdf_magic_ok": true,
             "nonempty": true,
@@ -1828,7 +1834,7 @@
           "ok": true,
           "name": "委托代理合同_已隐去_20261020-0002.pdf",
           "bytes": 2825,
-          "sha256": "853e637795ad9c1d89e515f06dae4777d168c48df05e12a376e282ac5faaf443",
+          "sha256": "d682eeb004b72dc6c8aaa65cd1b27e7253c824f91b567afeab121833908760f8",
           "mode": "human",
           "verify": {
             "verified": true,
@@ -1848,7 +1854,7 @@
             "ctype": "application/octet-stream",
             "disposition": "attachment; filename*=UTF-8''%E5%A7%94%E6%89%98%E4%BB%A3%E7%90%86%E5%90%88%E5%90%8C_%E5%B7%B2%E9%9A%90%E5%8E%BB_20261020-0002.pdf",
             "bytes": 2825,
-            "sha256": "853e637795ad9c1d89e515f06dae4777d168c48df05e12a376e282ac5faaf443",
+            "sha256": "d682eeb004b72dc6c8aaa65cd1b27e7253c824f91b567afeab121833908760f8",
             "magic": "%PDF-1.7",
             "pdf_magic_ok": true,
             "nonempty": true,
@@ -1879,7 +1885,7 @@
         "value_fields_present": [],
         "stats": {
           "records": 2,
-          "last": "2026-10-20T22:59:18+08:00"
+          "last": "2026-10-20T23:48:57+08:00"
         }
       },
       "audit_verify": {
@@ -1924,7 +1930,7 @@
         "default": {
           "create_status": 200,
           "create_id_card_mode": "fields",
-          "job_id": "j_16270a9b",
+          "job_id": "j_a4de08e2",
           "stage": "ready",
           "poll_s": 0.28,
           "id_card_mode": "fields",
@@ -1936,9 +1942,9 @@
         "invalid": {
           "create_status": 200,
           "create_id_card_mode": "fields",
-          "job_id": "j_3346cc20",
+          "job_id": "j_2f616ff3",
           "stage": "ready",
-          "poll_s": 0.29,
+          "poll_s": 0.32,
           "id_card_mode": "fields",
           "warnings": [
             "金额一致性缩放 2 处",
@@ -1948,9 +1954,9 @@
         "whole": {
           "create_status": 200,
           "create_id_card_mode": "whole",
-          "job_id": "j_665f5a4e",
+          "job_id": "j_0456a86b",
           "stage": "ready",
-          "poll_s": 0.29,
+          "poll_s": 0.28,
           "id_card_mode": "whole",
           "warnings": [
             "金额一致性缩放 2 处",
@@ -2048,12 +2054,12 @@
       "ctype": "application/json; charset=utf-8"
     },
     "netstat": [
-      "TCP    127.0.0.1:18779        0.0.0.0:0              LISTENING       19852"
+      "TCP    127.0.0.1:18779        0.0.0.0:0              LISTENING       14152"
     ],
     "server_log_tail": [
-      "[2026-10-20 22:59:18] 跨站请求被拒 origin=http://evil.example.com host=127.0.0.1:18779 xfh=None"
+      "[2026-10-20 23:48:56] 跨站请求被拒 origin=http://evil.example.com host=127.0.0.1:18779 xfh=None"
     ],
-    "startup_s": 2.61,
+    "startup_s": 2.56,
     "attempt": 1
   },
   "health": {
@@ -2123,23 +2129,23 @@
       "host": "127.0.0.1",
       "port": 18779,
       "url": "http://127.0.0.1:18779",
-      "pid": 19852
+      "pid": 14152
     }
   },
   "perf_soft": {
-    "e2e_elapsed_s": 8.82,
+    "e2e_elapsed_s": 8.29,
     "sample_parse_ms": {
-      "住院病历.docx": 33,
-      "名片.png": 1363,
-      "委托代理合同.pdf": 103,
-      "对账单.xlsx": 0,
-      "正射影像.tif": 1120
+      "住院病历.docx": 15,
+      "名片.png": 1386,
+      "委托代理合同.pdf": 107,
+      "对账单.xlsx": 13,
+      "正射影像.tif": 1099
     },
     "sample_detect_ms": {
-      "住院病历.docx": 45,
-      "名片.png": 0,
-      "委托代理合同.pdf": 17,
-      "对账单.xlsx": 0,
+      "住院病历.docx": 39,
+      "名片.png": 1,
+      "委托代理合同.pdf": 16,
+      "对账单.xlsx": 17,
       "正射影像.tif": 0
     },
     "alert_ratio": 1.5
@@ -2291,6 +2297,25 @@
         "CSV/TSV 未知编码回退 UTF-8 并 warning（不静默）"
       ]
     },
+    "p0_fixes": {
+      "ply_binary_self_check": {
+        "formats": [
+          "ascii",
+          "binary_little_endian",
+          "binary_big_endian"
+        ],
+        "verify": "header/element 长度、数据段长度、顶点-center 平移、面逐字节",
+        "on_fail": "ExportError + 删除成品（不再复制源文件）"
+      },
+      "tiff_orientation": {
+        "pillow_path": "parse/render/export 转正，KEEP_TAGS 不含 274",
+        "rasterio_path": "不转正像素 + warning（已知限制），成品无 274"
+      },
+      "known_limits": [
+        "PLY ASCII 行式数据段长度可变化（顶点/面仍完整重读）",
+        "rasterio 大图路径不转正 Orientation 像素（预览/OCR 按原始朝向）"
+      ]
+    },
     "pdf_text_layer_pages_skipped_ocr": {
       "min_text_chars": 8,
       "ocr_only_when_text_short": true
@@ -2332,5 +2357,5 @@
       "restored_ok": true
     }
   },
-  "captured_at": "2026-10-20T22:59:20+0800"
+  "captured_at": "2026-10-20T23:48:58+0800"
 }

@@ -1156,6 +1156,60 @@ def check_p15_capabilities(gate: Gate) -> None:
               _fmt_val({"err": csv_res.get("err"), "bad": bad}))
 
 
+# ══════════════════════════ 5.10 P0 修复（PLY/TIF） ══════════════════════════
+def check_p0_fixes(gate: Gate) -> None:
+    """P0 真链路：PLY 三子格式完整/篡改截断阻断；TIF Orientation 转正/无 274/rasterio 限制。"""
+    gate.set_current("功能红线 · P0 PLY/TIF 修复")
+    gate.group("功能红线 · P0 修复（PLY 二进制完整性 / TIF Orientation）")
+
+    ply = qa.mesh_ply_chain_test()
+    cases = ply.get("cases") or {}
+    gate.hard("PLY 三子格式：jobs→导出→独立重读（顶点按 center 平移/面一致/header 无敏感）",
+              ply.get("ok") is True,
+              _fmt_val({"ok": ply.get("ok"), "err": ply.get("err"),
+                        "cases": {k: {"fmt": v.get("format"),
+                                      "header_has_phone": v.get("header_has_phone"),
+                                      "faces_ok": v.get("faces_ok"),
+                                      "vertex_mismatch": v.get("vertex_mismatch"),
+                                      "data_len": [v.get("data_len_src"),
+                                                   v.get("data_len_out")],
+                                      "err": v.get("err")}
+                                  for k, v in cases.items()}}))
+    gate.hard("PLY 二进制数据段长度不变（无几何错位）",
+              all((cases.get(k) or {}).get("data_len_src") is not None
+                  and (cases.get(k) or {}).get("data_len_src")
+                  == (cases.get(k) or {}).get("data_len_out")
+                  for k in ("le", "be")),
+              _fmt_val({k: [v.get("data_len_src"), v.get("data_len_out")]
+                        for k, v in cases.items() if k in ("le", "be")}))
+    guard = ply.get("truncated_guard") or {}
+    gate.hard("PLY 截断源：ExportError 且不留成品（不再复制源文件）",
+              guard.get("ok") is True,
+              _fmt_val(guard))
+    tamper = ply.get("tamper") or {}
+    gate.hard("PLY 篡改成品：自检 ExportError 且删除损坏成品",
+              tamper.get("ok") is True, _fmt_val(tamper))
+
+    tif = qa.tiff_orientation_chain_test()
+    pillow = tif.get("pillow") or {}
+    plain = tif.get("plain") or {}
+    raster = tif.get("rasterio") or {}
+    gate.hard("TIF Pillow 路径：Orientation=6 parse/render/export 转正（60×120）",
+              pillow.get("ok") is True,
+              _fmt_val({k: pillow.get(k) for k in
+                        ("engine", "orientation", "applied", "page_size",
+                         "out_size", "pixels_ok", "out_orientation_tag", "err")}))
+    gate.hard("TIF 成品无 tag 274 / KEEP_TAGS 不含 274",
+              not pillow.get("out_orientation_tag")
+              and pillow.get("keeptags_no_274") is True,
+              _fmt_val({"tag": pillow.get("out_orientation_tag"),
+                        "keeptags_no_274": pillow.get("keeptags_no_274")}))
+    gate.hard("TIF 无 Orientation 源：尺寸不变且成品无 274",
+              plain.get("ok") is True, _fmt_val(plain))
+    gate.hard("TIF rasterio 路径：不转正像素但 warning + 成品无 274（已知限制）",
+              raster.get("ok") is True, _fmt_val(raster))
+
+
 # ══════════════════════════ 6. MCP 工具（F9） ══════════════════════════
 def check_mcp(gate: Gate) -> None:
     gate.set_current("契约完整性 · MCP 工具")
@@ -1461,6 +1515,12 @@ def run_checks() -> int:
         check_p15_capabilities(gate)
     except Exception:
         gate.hard("P1.5 检查异常", False, traceback.format_exc(limit=2))
+
+    # 4.10 P0 修复（PLY/TIF）
+    try:
+        check_p0_fixes(gate)
+    except Exception:
+        gate.hard("P0 修复检查异常", False, traceback.format_exc(limit=2))
 
     # 5 HTTP 服务 + 主路径
     http_bundle: dict = {}

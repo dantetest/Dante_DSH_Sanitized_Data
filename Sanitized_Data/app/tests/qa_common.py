@@ -3191,6 +3191,243 @@ def csv_encoding_chain_test() -> dict:
         return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
 
 
+# ════════════ P0 修复（PLY 二进制完整性 / TIF Orientation） ════════════
+def mesh_ply_chain_test() -> dict:
+    """P0：PLY ascii/little/big 三子格式 jobs→导出→独立重读；篡改/截断阻断且不留成品。"""
+    ensure_ready()
+    try:
+        import struct
+        import test_mesh as tm
+        from yinzhan import registry
+        from yinzhan.jobs import MANAGER, OUTPUT_DIR
+        from yinzhan.parsers import mesh_parser as mesh_mod
+        from yinzhan.udm import ParseContext
+
+        registry.load_plugins()
+
+        def _ctx() -> ParseContext:
+            return ParseContext(ocr=None, workdir=str(WORK))
+
+        results: dict = {}
+        for label, fixture in (("ascii", tm.Fixtures.ply_ascii),
+                               ("le", tm.Fixtures.ply_le),
+                               ("be", tm.Fixtures.ply_be)):
+            src = fixture()
+            rec: dict = {"ok": False}
+            job = _p1b_job(src)
+            rec["stage"] = job.stage
+            parsed_text = " ".join(b.text for page in job.doc.pages
+                                   for b in page.blocks)
+            rec["parsed_has_phone"] = tm.SECRET_PHONE in parsed_text
+            rec["entity_values"] = [e.value for e in job.entities
+                                    if e.value][:4]
+            try:
+                exp = MANAGER.export(job.id, "human")
+                out = Path(exp["out"])
+                source = tm._read_ply(src)
+                output = tm._read_ply(out)
+                rec.update({"format": output.get("format"),
+                            "verify": exp.get("verify"),
+                            "header_has_phone": tm.SECRET_PHONE in tm._header_text(out),
+                            "faces_ok": [tuple(f) for f in output.get("faces") or []]
+                            == [tuple(f) for f in tm.FACES]})
+                if str(source.get("format", "")).startswith("binary"):
+                    rec["data_len_src"] = len(source.get("data") or b"")
+                    rec["data_len_out"] = len(output.get("data") or b"")
+                center = tm._source_center(source.get("verts") or [])
+                bad = 0
+                for sv, ov in zip(source.get("verts") or [], output.get("verts") or []):
+                    for axis in range(3):
+                        if abs(ov[axis] - (sv[axis] - center[axis])) > 1e-4:
+                            bad += 1
+                rec["vertex_mismatch"] = bad
+                rec["verts_n"] = len(output.get("verts") or [])
+                reparsed = registry.find_parser(out).parse(out, _ctx())
+                rec["reparse_vertices"] = (reparsed.meta or {}).get("vertices")
+                good = bool(job.stage == "ready" and rec["parsed_has_phone"]
+                            and len(job.entities) >= 1
+                            and not rec["header_has_phone"]
+                            and rec["faces_ok"] and bad == 0
+                            and rec["verts_n"] == len(tm.VERTS)
+                            and rec["reparse_vertices"] == len(tm.VERTS))
+                if rec.get("format", "").startswith("binary"):
+                    good = good and rec["data_len_src"] == rec["data_len_out"]
+                rec["ok"] = bool(good)
+            except Exception as exc:  # noqa: BLE001
+                rec["err"] = repr(exc)
+            results[label] = rec
+
+        # 截断源 → 导出失败且不留成品（不再复制源文件）
+        guard: dict = {}
+        try:
+            before = set(p.name for p in OUTPUT_DIR.glob("*")) if OUTPUT_DIR.exists() else set()
+            jt = _p1b_job(tm.Fixtures.ply_truncated())
+            try:
+                MANAGER.export(jt.id, "human")
+                guard = {"raised": False}
+            except Exception as exc:  # noqa: BLE001
+                guard = {"raised": True, "type": type(exc).__name__,
+                         "msg": str(exc)[:200]}
+            after = set(p.name for p in OUTPUT_DIR.glob("*")) if OUTPUT_DIR.exists() else set()
+            guard["new_outputs"] = sorted(after - before)
+            guard["ok"] = bool(guard.get("raised")
+                               and "PLY" in guard.get("msg", "")
+                               and not guard.get("new_outputs"))
+        except Exception as exc:  # noqa: BLE001
+            guard = {"ok": False, "err": repr(exc)}
+
+        # 篡改成品字节 → 自检 ExportError 且删除损坏成品
+        tamper: dict = {}
+        try:
+            src = tm.Fixtures.ply_le()
+            _doc0, _res0, out, _vals = tm._export(src)
+            header = mesh_mod._read_ply_header(src)
+            header_bytes, _hits = mesh_mod._ply_build_header(header, [], binary=True)
+            corrupted = tm.Fixtures.get() / "regression_corrupted.ply"
+            data = bytearray(out.read_bytes())
+            data[-1] = (data[-1] + 1) % 256
+            corrupted.write_bytes(data)
+            try:
+                mesh_mod._ply_verify_output(src, corrupted, header,
+                                            header_bytes, "<", center=None,
+                                            warnings=[])
+                tamper = {"raised": False}
+            except Exception as exc:  # noqa: BLE001
+                tamper = {"raised": True, "type": type(exc).__name__,
+                          "msg": str(exc)[:160]}
+            tamper["corrupted_exists"] = corrupted.exists()
+            tamper["ok"] = bool(tamper.get("raised")
+                                and "PLY 成品复检失败" in tamper.get("msg", "")
+                                and not tamper["corrupted_exists"])
+        except Exception as exc:  # noqa: BLE001
+            tamper = {"ok": False, "err": repr(exc)}
+
+        ok = (len(results) == 3 and all(r.get("ok") for r in results.values())
+              and guard.get("ok") and tamper.get("ok"))
+        return {"ok": bool(ok), "cases": results, "truncated_guard": guard,
+                "tamper": tamper}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
+def tiff_orientation_chain_test() -> dict:
+    """P0：TIFF Orientation=6 → Pillow 路径 parse/render/export 转正且成品无 274；rasterio 已知限制。"""
+    ensure_ready()
+    try:
+        import test_tiff as tt
+        from PIL import Image, ImageOps
+        from yinzhan import georef, registry
+        from yinzhan.jobs import MANAGER
+        from yinzhan.parsers import tiff_parser
+        from yinzhan.udm import ParseContext
+
+        registry.load_plugins()
+        src = tt.Fixtures.orientation()
+        old = georef.HAS_RASTERIO
+        res: dict = {}
+        try:
+            georef.HAS_RASTERIO = False
+            job = _p1b_job(src)
+            meta = dict(getattr(job.doc, "meta", None) or {})
+            page = job.doc.pages[0]
+            pillow = {"engine": meta.get("engine"),
+                      "orientation": meta.get("orientation"),
+                      "applied": meta.get("orientation_applied"),
+                      "page_size": [page.width, page.height],
+                      "warnings": [w for w in (job.doc.warnings or [])
+                                   if "Orientation" in str(w)][:3]}
+            from yinzhan import pipeline as _pipeline
+            from yinzhan.parsers import tiff_parser as _tp
+            png = job.parser.render(job.doc, 0, "orig")
+            render_size = None
+            if png:
+                import io as _io
+                with Image.open(_io.BytesIO(png)) as rendered:
+                    render_size = list(rendered.size)
+            out = WORK / "p0_orientation6_out.tif"
+            exp = _pipeline.export(job.doc, job.parser, list(job.entities),
+                                   out, {"mode": "human"})
+            exp = {"out": str(out), "warnings": exp.warnings, "verify": {}}
+            with Image.open(src) as image:
+                expected = ImageOps.exif_transpose(image).convert("RGB")
+            with Image.open(out) as exported:
+                exported_rgb = exported.convert("RGB")
+                pixels_ok = (exported_rgb.size == expected.size
+                             and list(exported_rgb.getdata()) == list(expected.getdata())
+                             if exported_rgb.size == expected.size else False)
+                out_size = list(exported_rgb.size)
+            with Image.open(out) as exported2:
+                exif_274 = exported2.getexif().get(274)
+            pillow.update({"render_size": render_size,
+                           "out_size": out_size,
+                           "expected_size": list(expected.size),
+                           "pixels_ok": bool(pixels_ok),
+                           "out_orientation_tag": exif_274,
+                           "keeptags_no_274": 274 not in tiff_parser.KEEP_TAGS,
+                           "verify": exp.get("verify")})
+            pillow["ok"] = bool(pillow.get("engine") == "pillow"
+                                and pillow.get("orientation") == 6
+                                and pillow.get("applied") is True
+                                and pillow.get("page_size") == [60.0, 120.0]
+                                and render_size == [60, 120]
+                                and any("Orientation=6" in w and "转正" in w
+                                        for w in pillow.get("warnings") or [])
+                                and pixels_ok and not exif_274
+                                and 274 not in tiff_parser.KEEP_TAGS)
+            # 无 Orientation 的 TIF：正常尺寸、成品无 274
+            plain = WORK / "p0_plain.tif"
+            Image.new("RGB", (48, 32), (200, 120, 40)).save(plain)
+            jp = _p1b_job(plain)
+            from yinzhan import pipeline as _pipeline2
+            outp = WORK / "p0_plain_out.tif"
+            _pipeline2.export(jp.doc, jp.parser, list(jp.entities), outp,
+                              {"mode": "human"})
+            ep = {"out": str(outp), "verify": {}}
+            with Image.open(outp) as im2:
+                plain_rec = {"size": list(im2.size),
+                             "tag": im2.getexif().get(274),
+                             "verify": ep.get("verify")}
+            plain_rec["ok"] = bool(plain_rec["size"] == [48, 32]
+                                   and not plain_rec["tag"])
+            res["plain"] = plain_rec
+            res["pillow"] = pillow
+        finally:
+            georef.HAS_RASTERIO = old
+        # rasterio 路径（真实环境有 rasterio）：不转正像素但成品无 274（已知限制）
+        raster = {"has_rasterio": bool(georef.has_rasterio())}
+        if raster["has_rasterio"]:
+            try:
+                job2 = _p1b_job(src)
+                meta2 = dict(getattr(job2.doc, "meta", None) or {})
+                raster.update({"engine": meta2.get("engine"),
+                               "orientation": meta2.get("orientation"),
+                               "warnings": [w for w in (job2.doc.warnings or [])
+                                            if "Orientation" in str(w)][:3]})
+                from yinzhan import pipeline as _pipeline3
+                out2 = WORK / "p0_rasterio_out.tif"
+                _pipeline3.export(job2.doc, job2.parser, list(job2.entities),
+                                  out2, {"mode": "human"})
+                with Image.open(out2) as im3:
+                    raster["out_tag"] = im3.getexif().get(274)
+                raster["ok"] = bool(
+                    raster.get("engine") == "rasterio"
+                    and any("rasterio 路径暂不转正" in str(w)
+                            or "不转正像素" in str(w)
+                            for w in raster.get("warnings") or [])
+                    and not raster.get("out_tag"))
+            except Exception as exc:  # noqa: BLE001
+                raster.update({"ok": False, "err": repr(exc)})
+        else:
+            raster["ok"] = True   # 无 rasterio 时该已知限制不适用
+        res["rasterio"] = raster
+        return {"ok": bool((res.get("pillow") or {}).get("ok")
+                           and (res.get("plain") or {}).get("ok")
+                           and raster.get("ok")),
+                **res}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "err": f"{type(exc).__name__}: {exc}"}
+
+
 # ════════════════════════ 已知边界软记录 ════════════════════════
 def capture_known_limits() -> dict:
     ensure_ready()
@@ -3327,6 +3564,23 @@ def capture_known_limits() -> dict:
                 "PDF 内嵌图文字检测仅文本层页且面积≥5%；开关可关",
                 "证件类型扩展只按 OCR 锚点判型；银行卡不做整页扩张",
                 "CSV/TSV 未知编码回退 UTF-8 并 warning（不静默）",
+            ],
+        },
+        # P0 修复语义（只做软记录）
+        "p0_fixes": {
+            "ply_binary_self_check": {
+                "formats": ["ascii", "binary_little_endian",
+                            "binary_big_endian"],
+                "verify": "header/element 长度、数据段长度、顶点-center 平移、面逐字节",
+                "on_fail": "ExportError + 删除成品（不再复制源文件）",
+            },
+            "tiff_orientation": {
+                "pillow_path": "parse/render/export 转正，KEEP_TAGS 不含 274",
+                "rasterio_path": "不转正像素 + warning（已知限制），成品无 274",
+            },
+            "known_limits": [
+                "PLY ASCII 行式数据段长度可变化（顶点/面仍完整重读）",
+                "rasterio 大图路径不转正 Orientation 像素（预览/OCR 按原始朝向）",
             ],
         },
         "pdf_text_layer_pages_skipped_ocr": {
@@ -3697,6 +3951,11 @@ def write_snapshot(base: dict, path: Path) -> None:
       f"CSV 编码保留={p15.get('csv_encoding_preserve')}；"
       f"护照规则={p15.get('passport_rule')}")
     for _lim in (p15.get("known_limits") or []):
+        A(f"  - 已知限制：{_lim}")
+    p0 = kl.get("p0_fixes") or {}
+    A(f"- **P0 修复**：PLY 二进制结构自检={p0.get('ply_binary_self_check')}；"
+      f"TIF Orientation={p0.get('tiff_orientation')}")
+    for _lim in (p0.get("known_limits") or []):
         A(f"  - 已知限制：{_lim}")
     gaps = kl.get("known_gaps_not_fixed") or {}
     if gaps:

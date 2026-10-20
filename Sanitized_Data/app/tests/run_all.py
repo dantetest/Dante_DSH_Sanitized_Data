@@ -7,7 +7,8 @@
      ``test_trade.py`` / ``test_visual.py`` / ``test_legal_detect.py`` /
      ``test_pipl_rules.py`` / ``test_table_column.py`` /
      ``test_pdf_hidden.py`` / ``test_sign_targets.py`` / ``test_office_media.py`` /
-     ``test_csv_table.py`` / ``test_pdf_embedded.py`` / ``test_tiff.py``（存在才跑）。
+     ``test_csv_table.py`` / ``test_pdf_embedded.py`` / ``test_mesh.py`` /
+     ``test_tiff.py``（存在才跑）。
 
 用法（Windows 控制台必须 -X utf8）：
 
@@ -72,6 +73,8 @@ def _specs() -> list[dict]:
          "label": "P1-B CSV/TSV 列语义与多级表头自测"},
         {"key": "pdfembedded", "file": TESTS / "test_pdf_embedded.py", "timeout": 600,
          "label": "P1-B PDF 文本层内嵌图检测/涂黑自测"},
+        {"key": "mesh", "file": TESTS / "test_mesh.py", "timeout": 600,
+         "label": "P0 PLY 三维完整性（三子格式/结构自检/失败阻断）自测"},
         {"key": "tiff", "file": TESTS / "test_tiff.py", "timeout": 900,
          "label": "正射 TIF 域自测（可选）"},
     ]
