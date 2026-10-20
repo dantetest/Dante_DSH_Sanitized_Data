@@ -367,3 +367,12 @@ verify(exported, entities, parser, ctx, *, doc=None, options=None) -> dict
 - 组合风险：Job.combination_risk={level,categories}（位置/证件/人脸/车辆/联系人/时间 ≥2 类），只写 warning，不自动改。
 - 前端：投放台/对照台时间模糊开关、未成年红条+严格模式按钮、组合风险黄条+整图涂黑、聊天/招牌类型映射；创建 job body 增加 	ime_blur。
 - 已知限制：聊天截图需 OCR 且为微信式布局；招牌无 OCR/白底不承诺；未成年人仅身份证生日推断；时间模糊默认关；组合风险只提示不消除重识别。
+
+### 11.7 P1-B（2026-10-20，进行中）
+
+- Office：docx_parser/xlsx_parser 按 zip 全量枚举 media/embeddings/charts/drawings/activeX/文本框/脚注等，写 doc.meta["embedded_media"]：
+  count=无法自动脱敏、需确认的隐藏对象数；images/image_count=可自动脱敏内嵌图片；parts/hidden_objects/hidden_object_count/auto_redact/unsupported_images/textboxes/fields/footnotes/endnotes；doc.meta["hidden_objects"] 同列表；doc.extra["office_media"] 审计统计。
+  导出选项 edact_office_media（默认 true，图片自动扫描+涂黑+zip 回写；无命中保留 warning）、strict_office_media（默认 false；无命中图片置空白、隐藏对象剥离/失败 ExportError）、llow_unprocessed_media（隐藏对象确认放行）。导出后解析器自检被替换图片重扫命中=0。jobs 确认文案改为「隐藏对象」；verify 只按 count 判定，图片存在不视为未处理。
+  已知：图片内纯文字 P1.5；strict 会改变外观；无命中图可能仍带 EXIF；XFA/SmartArt/SVG 文本未处理。
+- CSV/TSV：	ext_parser 支持 .tsv；CSV/TSV 单元格 Block ef={row,col,sep,line}，doc.meta.delimited/delimiter/quotechar/rows/cols；	able_det 支持 text/CSV/TSV ref 与多级/合并表头继承；	able-cn scope 增加 	ext；导出按原分隔符/引号写回、行/列数不变；document.fmt 仍为 	ext。
+- PDF 内嵌图：pdf_parser 对文本层页 get_images() 面积 ≥5% 页面图片，解码渲染后 mediascan 扫描（face/id/plate/qr/barcode/chat/sign，文本锚点类先 OCR），命中 → isual_marks kind=embedded_image（note engine=embedded_image;n=;area=），jobs 映射 EMBEDDED_IMAGE 内嵌图片（black L3），pipeline 复检映射；导出后解析器黑像素≥95% 复检。扫描页仍走既有链路；图片内纯文字 P1.5。
