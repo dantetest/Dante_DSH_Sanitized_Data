@@ -92,7 +92,19 @@ powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 | 文件 | 说明 |
 |---|---|
 | `dist\Sanitized_Data\` | 绿色版目录，可直接压缩分发 |
-| `dist_installer\Sanitized_Data_Setup_1.0.0_x64.exe` | 安装包（需要装 Inno Setup 6） |
+| `out\desktop\Sanitized_Data-1.1.0-win64-portable.zip` | 绿色版压缩包（构建脚本自动生成） |
+| `dist_installer\Sanitized_Data_Setup_1.1.0_x64.exe` | 安装包（需要装 Inno Setup 6/7） |
+
+v1.1.0 产物的体积与 SHA-256 见 [§五 构建记录](#五v110-重建记录2026-10-21)。
+
+> **构建脚本编码要求**：`desktop/build_win.ps1` 与 `desktop/installer.iss` 必须保存为
+> **UTF-8 with BOM**——Windows PowerShell 5.1 与 Inno Setup 才会按 UTF-8 解析中文；
+> 无 BOM 时中文注释会吞掉引号导致脚本解析失败（v1.1.0 构建时踩到过）。
+> 编辑脚本后请确认 BOM 仍存在（`Get-Content -Encoding Byte` 前 3 字节为 `239 187 191`）。
+>
+> **无人值守构建**：脚本在自检前会对产物 exe 执行 `Unblock-File`，避免
+> 「打开文件 - 安全警告」对话框阻塞构建；若在无交互桌面会话里构建卡住，先检查是否
+> 有该对话框。
 
 ---
 
@@ -148,7 +160,7 @@ git push github main
 | `hdiutil create ... UDZO` | 打成 dmg |
 | 冒烟测试 | 挂载 dmg、起 app、`curl /api/health` |
 | `upload-artifact` | 产物在 Actions 页面下载 |
-| tag 时自动挂 Release | 打 `v1.0.0` 标签就出一条 Release |
+| tag 时自动挂 Release | 打 `v*` 标签（如 `v1.1.0`）就出一条 Release |
 
 **触发方式**：GitHub 页面 → Actions → build-desktop → Run workflow；或者 push 一个 `v*` 标签。
 
@@ -184,15 +196,17 @@ git push github main
 |---|---|
 | P0 启动器（`desktop/main.py`） | ✅ 完成，已实测：服务起得来、数据落 AppData、单实例可用 |
 | P0 路径适配（`yinzhan/paths.py`） | ✅ 完成，三种形态（源码 / 桌面 / 环境变量覆盖）都验证过 |
-| P1 PyInstaller 打包 | 🟡 脚本就绪（`app.spec` + `build_win.ps1`），待在本机跑一次 |
-| P2 Inno Setup 安装包 | 🟡 脚本就绪（`installer.iss`），待装 Inno Setup 6 后编译 |
-| P3 macOS 免签名测试包 | 🟡 workflow 就绪，待镜像到 GitHub 后触发 |
+| P1 PyInstaller 打包 | ✅ 完成（v1.1.0，2026-10-21）：`dist\Sanitized_Data\` 已重建，记录见 §五 |
+| P2 Inno Setup 安装包 | ✅ 完成（v1.1.0，2026-10-21）：`dist_installer\Sanitized_Data_Setup_1.1.0_x64.exe`，记录见 §五 |
+| P3 macOS 免签名测试包 | 🟡 workflow 就绪；v1.1.0 macOS 包未构建（待镜像到 GitHub 后触发） |
 | P4 正式签名公证 | ⏸ 需要 Apple 开发者账号 |
-| P5 托盘 / 开机自启 | ⏸ 未开始 |
+| P5 托盘 / 开机自启 | ⏸ 未开始（窗口 + 自动浏览器兜底、单实例已实现） |
+
+> §四 是 v1.0.0 的首次构建记录，保留作历史对照；v1.1.0 构建记录见 §五。
 
 ---
 
-## 四、第一次真实构建记录（2026-10-19）
+## 四、第一次真实构建记录（v1.0.0，2026-10-19）
 
 ### Windows
 
@@ -225,8 +239,8 @@ git push github main
 ✓ 住院病历.docx    9 实体   0.4s   复检残留 0
 ✓ 对账单.xlsx     13 实体   0.2s   复检残留 0
 ✓ 名片.png         6 实体   2.5s   复检残留 0
-✓ 技术咨询合同.pdf  12 实体  12.0s   复检残留 0
-✓ 云基函.pdf       13 实体   8.0s   复检残留 0
+✓ 样例合同.pdf      12 实体  12.0s   复检残留 0
+✓ 样例函件.pdf      13 实体   8.0s   复检残留 0
 ```
 
 安装包在无交互桌面会话里无法完成 GUI 安装流程，**需在真实桌面上双击验证**；
@@ -238,3 +252,40 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 冒烟测试只检查了 `/api/health` 返回 200，没有检查解析器数量。
 **已修正**：workflow 的冒烟测试现在会断言 `parsers >= 5`、`detectors >= 3`、`ocr == True`，
 下次构建会自动拦下这类问题。
+
+---
+
+## 五、v1.1.0 重建记录（2026-10-21）
+
+> 构建内容：P1-A / P1-B / P1.5 能力与 P0 缺陷修复合入后的第一个正式安装包；版本号统一升到
+> `1.1.0`（`config.py` / `app.spec` / `installer.iss` / `build_win.ps1` / Web 页面）。
+> 代码基线：`7c553ab`；发布提交：tag `v1.1.0`。本次构建同时包含发布前修复：
+> R04 地址假值泄漏、R13 金额验证假阳性、Windows 端口冲突检测、OpenCV Haar 级联数据打包。
+
+| 项 | 结果 |
+|---|---|
+| 版本 | `1.1.0` |
+| 构建时间 | 2026-10-21 12:31–12:34（Asia/Shanghai） |
+| 构建机 | Windows 10 Pro 19045 x64，Python 3.12.9 |
+| 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
+| PyInstaller | 6.22.3（onedir；含 `yinzhan` 子模块 44 个、cv2 数据文件 110 个） |
+| Inno Setup | 7.1.0（编译耗时 118s） |
+| 绿色版目录 `dist\Sanitized_Data\` | **418.8 MiB**（解压后） |
+| 绿色版压缩包 `out\desktop\Sanitized_Data-1.1.0-win64-portable.zip` | **187,452,485 B（178.8 MiB）** / SHA-256 `0C7722498A51325B2B42355EFF6D25086B94EEC604260F256B2EFEBABBB2ADC4` |
+| 安装包 `dist_installer\Sanitized_Data_Setup_1.1.0_x64.exe` | **164,420,430 B（156.8 MiB）** / SHA-256 `88692234BC3A9105BB8F0D017462C5FFE67A34A7B3B54AA00CABC5C9270EC10D` |
+
+### 5.1 打包后自检
+
+| 检查项 | 期望 | v1.1.0 实测 |
+|---|---|---|
+| `/api/health` → `version` | `1.1.0` | ✅ `1.1.0`（独立端口 18760 + 临时数据目录） |
+| `/api/health` → `engine.ocr` | `true` | ✅ `true` |
+| `/api/health` → `engine.parsers` | ≥ 7（docx/image/mesh/pdf/text/tiff/xlsx） | ✅ 7 个全部加载 |
+| `/api/health` → `engine.scanners` | 含 `barcode` 等 | ✅ `barcode,visual_targets,sign_targets` |
+| 最小脱敏链路（解析 → 导出 → 复检残留 0） | 通过 | ✅ 安装版实测：上传→双导出（AI/人读）`verify residual=0` |
+| silent 安装到临时目录 → 启动 → 卸载 | 通过 | ✅ 安装成功（HKCU 卸载项 1.1.0）→ 启动/health/导出通过 → 卸载 exit 0、程序目录删除、数据目录保留 |
+
+> 安装/卸载与最小链路的完整记录见 [qa/install-acceptance-v1.1.0.md](qa/install-acceptance-v1.1.0.md)。
+> 环境提示：本机曾在 DSH 工作区内直接执行安装包时 Setup 初始化退出（exit 1），把安装包复制到
+> 普通目录后安装成功——判断为工作区历史沙箱 ACL 残留影响，不是安装包缺陷；正式分发从 Release
+> 下载到普通目录双击即可。

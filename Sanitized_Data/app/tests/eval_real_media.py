@@ -849,6 +849,9 @@ _ENGINE_SNAPSHOT_FILES = (
     "yinzhan/parsers/image_parser.py", "yinzhan/parsers/pdf_parser.py",
     "yinzhan/parsers/tiff_parser.py", "yinzhan/parsers/docx_parser.py",
     "yinzhan/parsers/xlsx_parser.py",
+    # 替换器/内嵌图文字 helper 也会直接影响成品内容（R04 地址泄漏根因所在），
+    # 必须纳入指纹，否则引擎快照无法覆盖这类回归。
+    "yinzhan/replacers/surrogate.py", "yinzhan/media_text.py",
 )
 
 

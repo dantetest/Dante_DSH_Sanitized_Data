@@ -13,7 +13,9 @@ Office/PDF 解析器在做完视觉/码类扫描后，可以调用本模块把�
 """
 from __future__ import annotations
 
+import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,42 @@ from .udm import Decision, ParseContext
 MAX_PIXELS = 12_000_000
 MAX_ENTITIES = 500
 SUPPORTED_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+
+
+def _safe_temp_dir(workdir: Path | None) -> Path:
+    """建一个确定可写的唯一临时目录（用完即删）。
+
+    不用 ``tempfile.mkdtemp``：部分受限环境（DSH Windows 沙箱 / 杀软 /
+    组策略）里按 0o700 创建的目录会被 ACL 拒绝写入，导致 OCR 静默跳过；
+    这里用默认权限建唯一子目录，并依次尝试调用方 workdir、系统 TEMP、
+    产品数据目录。
+    """
+    candidates: list[Path] = []
+    if workdir is not None:
+        candidates.append(Path(workdir))
+    try:
+        candidates.append(Path(tempfile.gettempdir()))
+    except Exception:                                  # noqa: BLE001
+        pass
+    try:
+        from . import paths as _paths
+        candidates.append(Path(_paths.data_root()) / "work")
+    except Exception:                                  # noqa: BLE001
+        pass
+    last_exc: OSError | None = None
+    for base in candidates:
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            tmp = base / f"yz_media_text_{uuid.uuid4().hex[:12]}"
+            tmp.mkdir()
+            probe = tmp / ".write_probe"
+            probe.write_bytes(b"x")
+            probe.unlink()
+            return tmp
+        except OSError as exc:
+            last_exc = exc
+            continue
+    raise OSError(f"内嵌图文字 OCR 临时目录不可写：{last_exc}")
 
 
 def redact_image_text(data: bytes, suffix: str = ".png",
@@ -52,9 +90,10 @@ def redact_image_text(data: bytes, suffix: str = ".png",
     except Exception as exc:
         return None, 0, [f"内嵌图文字 OCR 不可用：{exc}"]
 
-    own_tmp = workdir is None
-    tmp = Path(tempfile.mkdtemp(prefix="yz_media_text_")) if own_tmp else Path(workdir)
-    tmp.mkdir(parents=True, exist_ok=True)
+    try:
+        tmp = _safe_temp_dir(workdir)
+    except OSError as exc:
+        return None, 0, warnings + [f"内嵌图片文字 OCR 临时目录不可用：{exc}"]
     src = tmp / f"embedded{suffix}"
     out = tmp / f"embedded_redacted{suffix}"
     try:
@@ -85,6 +124,4 @@ def redact_image_text(data: bytes, suffix: str = ".png",
     except Exception as exc:
         return None, 0, warnings + [f"内嵌图片文字 OCR 失败：{exc}"]
     finally:
-        if own_tmp:
-            import shutil
-            shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)

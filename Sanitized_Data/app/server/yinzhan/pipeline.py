@@ -285,7 +285,7 @@ def _span_taken(entities: list[Entity], block_id: str, start: int, end: int,
 # ══════════════════════════════ 表单填空里的人名 ══════════════════════════════
 
 # 扫描合同里常见这种排版：
-#     委托方（以下简称甲方）：        包罗
+#     委托方（以下简称甲方）：        示例姓名
 # 标签和名字被 OCR 切成两个 block，NER 靠"附近有提示词"就瞎了。
 # 这里按「同一行 + 在标签右边」的几何关系把它捞回来。
 _FORM_LABELS = ("委托方", "委托人", "甲方", "乙方", "当事人", "代理人",
@@ -335,7 +335,7 @@ _SURNAMES = frozenset(
 
 _LAWYER_PAIR_RE = re.compile(
     r"([\u4e00-\u9fa5]{2,3})、([\u4e00-\u9fa5]{2,3})律师")
-# 包罗与杨尚坤、绵阳力嘉……  —— 与/和/及 后面跟一个名字再接顿号
+# 示例姓名与另一姓名、某机构……  —— 与/和/及 后面跟一个名字再接顿号
 _PARTY_JOIN_RE = re.compile(r"[与和及]([\u4e00-\u9fa5]{2,3})、")
 
 
@@ -378,7 +378,7 @@ def find_party_names(doc: Document, entities: list[Entity] | None = None) -> lis
             for m in _LAWYER_PAIR_RE.finditer(text):
                 push(b.id, text, m.start(1), m.end(1))
                 push(b.id, text, m.start(2), m.end(2))
-            # 「包罗与杨尚坤、绵阳力嘉……」：与/和/及 后面跟一个名字再接顿号
+            # 「示例姓名与另一姓名、某机构……」：与/和/及 后面跟一个名字再接顿号
             # 有姓氏表把关，不会把「与甲方、」「及法规、」当成名字
             for m in _PARTY_JOIN_RE.finditer(text):
                 push(b.id, text, m.start(1), m.end(1))
@@ -621,28 +621,55 @@ def has_cleanup_targets(doc: Document) -> bool:
     return False
 
 
-def _replacement_intervals(text: str, entities: list[Entity]) -> list[tuple[int, int]]:
-    """成品文本里所有保形假值占据的区间（用于排除假值内部子串误报）。"""
-    intervals: list[tuple[int, int]] = []
-    seen: set[str] = set()
+def _replacement_intervals(text: str,
+                           entities: list[Entity]) -> dict[str, list[tuple[int, int]]]:
+    """成品文本里「安全假值」占据的区间，按原值分组（排除假值内部子串误报）。
+
+    只登记**不包含完整原值**的假值。若保形假值把整段原文原样包含进去，
+    那属于真实泄漏，不能靠「在假值内部」豁免掉，必须交给残留检查报出来。
+    """
+    covered: dict[str, list[tuple[int, int]]] = {}
+    seen: set[tuple[str, str]] = set()
     for e in entities:
         if e.status == "rejected" or e.decision is None:
             continue
         dec = e.decision
         if dec.black or dec.strategy in ("black", "drop", "keep"):
             continue
+        needle = (e.value or "").strip()
         repl = (dec.replacement or "").strip()
-        if len(repl) < 2 or repl in seen:
+        if len(needle) < 2 or len(repl) < 2:
             continue
-        seen.add(repl)
+        if needle in repl:                     # 假值完整包含原文 → 不允许豁免
+            continue
+        key = (needle, repl)
+        if key in seen:
+            continue
+        seen.add(key)
         start = 0
         while True:
             pos = text.find(repl, start)
             if pos < 0:
                 break
-            intervals.append((pos, pos + len(repl)))
+            covered.setdefault(needle, []).append((pos, pos + len(repl)))
             start = pos + 1
-    return intervals
+    return covered
+
+
+def _is_numeric_fragment(text: str, pos: int, end: int, needle: str) -> bool:
+    """命中是否是更长数字/金额 token 的一部分（避免「5万元」命中「25万元」这类假阳性）。
+
+    典型场景：金额一致性假值生成器把另一笔金额换成「25万元」，其中包含
+    原金额「5万元」的子串；成品里它属于**另一个假值**，不是原文残留。
+    只有数字类值做该边界判断，地址/人名等仍按全串严格比对。
+    """
+    if not needle:
+        return False
+    if needle[0].isdigit() and pos > 0 and text[pos - 1].isdigit():
+        return True
+    if needle[-1].isdigit() and end < len(text) and text[end].isdigit():
+        return True
+    return False
 
 
 def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
@@ -687,7 +714,10 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
             if pos < 0:
                 break
             end = pos + len(needle)
-            if not any(s <= pos and end <= e2 for s, e2 in covered):
+            if not any(s <= pos and end <= e2 for s, e2 in covered.get(needle, [])):
+                if _is_numeric_fragment(text, pos, end, needle):
+                    start = pos + 1
+                    continue
                 leaked = True
                 break
             start = pos + 1

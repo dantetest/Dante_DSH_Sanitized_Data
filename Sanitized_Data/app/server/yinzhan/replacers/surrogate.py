@@ -535,9 +535,16 @@ _LOCALITY_HEAD_RE = re.compile(
 
 
 def _fake_address(value: str, rng: random.Random, attempt: int = 0) -> str:
-    """地址：保留省市区层级（同城），后面换成随机路名 + 门牌。"""
+    """地址：保留省市区层级（同城），后面换成随机路名 + 门牌。
+
+    注意：若整段地址本身就只有“省/市/区”层级、切不出 street 部分
+    （``rest`` 为空），保留前缀就等于把完整原值写进假值 → 必须替换地区名，
+    否则会构成真实泄漏（R04 回归用例）。
+    """
     label, body = _split_label(value)
     locality, rest = _split_locality(body)
+    if locality and not rest.strip():
+        locality = _replace_district(locality, rng)
     has = {token: token in rest for token in ("村", "弄", "号", "栋", "楼", "单元", "室")}
     road = rng.choice(_ROAD_NAMES)
     if has["村"]:
@@ -951,9 +958,14 @@ def _generate(ctx: ReplaceContext, etype: str, value: str,
     if existing and existing != value:
         return existing
     rng = _rng_for(ctx, etype, value)
+    needle = (value or "").strip()
     for _attempt in range(256):
         candidate = factory(value, rng, _attempt)
         if not candidate or candidate == value:
+            continue
+        # 隐私不变量：假值绝不能完整包含原文值（如地址只剩省市区层级时
+        # 若原样保留前缀，会构成真实泄漏）。命中则换一个候选。
+        if len(needle) >= 2 and needle in candidate:
             continue
         if _is_used(ctx, etype, candidate):
             continue
@@ -964,6 +976,8 @@ def _generate(ctx: ReplaceContext, etype: str, value: str,
     if fallback == value and value:                    # 极端兜底：保证一定变
         last = value[-1]
         fallback = value[:-1] + ("某" if _is_chinese(last) else rng.choice("0123456789"))
+    if len(needle) >= 2 and needle in fallback:         # 兜底同样不允许包含原文
+        fallback = fallback[::-1]
     _remember(ctx, etype, value, fallback)
     return fallback
 

@@ -469,7 +469,10 @@ class QuietServer(ThreadingHTTPServer):
     那不是故障，这里静音；其它异常写日志。"""
 
     daemon_threads = True
-    allow_reuse_address = True
+    # POSIX 上用 SO_REUSEADDR 便于 TIME_WAIT 后快速重启；Windows 的
+    # SO_REUSEADDR 会允许与已监听端口重复绑定（端口冲突时误以为绑定成功），
+    # 必须关闭，端口选择由 app.pick_port 先做 connect 探测。
+    allow_reuse_address = (os.name != "nt")
 
     def handle_error(self, request, client_address):
         exc = sys.exc_info()[1]

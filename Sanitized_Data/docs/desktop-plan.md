@@ -1,5 +1,9 @@
 # 桌面版规划 · Windows / macOS
 
+> **历史规划文档（2026-10-19，产物名已按 v1.1.0 更新）。** 本文保留立项时的目标、路线与工作量估算；
+> 实际落地状态、构建产物与体积/SHA 以 [desktop-build.md](desktop-build.md) 和
+> [release-notes-v1.1.0.md](release-notes-v1.1.0.md) 为准。
+
 > 目标：双击即用、托盘常驻、数据存放在用户目录、全程离线。
 > 现状是「本地 HTTP 服务 + 浏览器」，已经满足"数据不出本机"，缺的只是一个像样的分发形态。
 
@@ -11,9 +15,9 @@
 |---|---|
 | 技术路线 | 保留 Python 引擎，PyInstaller 打自包含包，外套 pywebview 原生窗口 |
 | 窗口外壳 | pywebview（复用系统 WebView，不额外带 Chromium） |
-| Windows 产物 | `Sanitized_Data_Setup_1.0.0_x64.exe`（Inno Setup） |
-| macOS 产物 | `Sanitized_Data-1.0.0-arm64.dmg` + `-x64.dmg`（需分别构建） |
-| 体积 | 安装包约 90–110 MB，安装后约 330–380 MB |
+| Windows 产物 | `Sanitized_Data_Setup_1.1.0_x64.exe`（Inno Setup） |
+| macOS 产物 | `Sanitized_Data-1.1.0-arm64.dmg` + `Sanitized_Data-1.1.0-x64.dmg`（需分别构建） |
+| 体积 | 立项估算：安装包约 90–110 MB，安装后约 330–380 MB（实测见 [desktop-build.md](desktop-build.md)） |
 | 总工作量 | 10–12 人日（不含苹果账号申请周期） |
 | **阻断项** | **macOS 正式分发必须做代码签名 + 公证**，需要 Apple Developer Program（$99/年）；没有账号只能出未签名包，用户要右键打开 |
 
@@ -61,7 +65,7 @@ Win10/11 自带 Edge WebView2 运行时（2022 年后基本全覆盖），macOS 
 PyInstaller --onedir
     ↓  dist/Sanitized_Data/
 Inno Setup
-    ↓  Sanitized_Data_Setup_1.0.0_x64.exe
+    ↓  Sanitized_Data_Setup_1.1.0_x64.exe
 ```
 
 - **用 onedir 不用 onefile**：onefile 每次启动都要把 350 MB 解压到临时目录，冷启动 3–8 秒；onedir 直接加载，1 秒内出界面。

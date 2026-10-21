@@ -8,7 +8,7 @@
      ``test_pipl_rules.py`` / ``test_table_column.py`` /
      ``test_pdf_hidden.py`` / ``test_sign_targets.py`` / ``test_office_media.py`` /
      ``test_csv_table.py`` / ``test_pdf_embedded.py`` / ``test_mesh.py`` /
-     ``test_tiff.py``（存在才跑）。
+     ``test_tiff.py`` / ``test_surrogate.py``（存在才跑）。
 
 用法（Windows 控制台必须 -X utf8）：
 
@@ -77,6 +77,8 @@ def _specs() -> list[dict]:
          "label": "P0 PLY 三维完整性（三子格式/结构自检/失败阻断）自测"},
         {"key": "tiff", "file": TESTS / "test_tiff.py", "timeout": 900,
          "label": "正射 TIF 域自测（可选）"},
+        {"key": "surrogate", "file": TESTS / "test_surrogate.py", "timeout": 120,
+         "label": "R04 假值不保留完整原值 + verify 豁免收紧自测"},
     ]
     return specs
 

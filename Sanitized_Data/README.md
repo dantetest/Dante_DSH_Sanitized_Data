@@ -2,6 +2,9 @@
 
 > 把敏感抹掉，让文件放行。
 
+> 当前版本 **v1.1.0**（2026-10-21）· Windows 桌面安装包 / 绿色版 / 源码运行 ·
+> 优先看：[安装与卸载指南](docs/install-guide.md) · [v1.1.0 发布说明](docs/release-notes-v1.1.0.md)
+
 律师、医生、财务要把文件喂给豆包 / Kimi / WorkBuddy，但文件里有当事人姓名、身份证号、病历号、客户账号。
 **数据隐站**在本机把这些内容换掉或涂黑，只把处理过的版本交出去。
 
@@ -42,6 +45,9 @@ chmod +x start.sh && ./start.sh
 
 浏览器会自动打开 `http://127.0.0.1:8760`（端口被占会顺延到 8840）。
 
+> **Windows 用户不想装 Python？** 直接用桌面安装包 `Sanitized_Data_Setup_1.1.0_x64.exe`
+> 或绿色版，双击即用；安装/卸载/升级见 [docs/install-guide.md](docs/install-guide.md)。
+
 **用法**：首页 →「打开控制台」→ 把文件拖进纸堆 → 等识别 → 左右对照 → 漏了的用「框选补漏」→ 交付。
 
 启动后控制台会打印解析器、OCR 状态、数据目录和实际端口；`Ctrl+C` 退出，退出时自动清掉上传副本和预览中间件。
@@ -52,7 +58,7 @@ chmod +x start.sh && ./start.sh
 |---|---|---|
 | `/` | 首页 | 介绍、入口、能力概览 |
 | `/console` | 控制台 | 主工作区（投放 / 识别 / 对照 / 交付） |
-| `/download` | 下载 | Windows / Linux 安装包、校验值、部署说明 |
+| `/download` | 下载 | Windows 桌面安装包 / 绿色版、Linux 源码包、校验值、部署说明 |
 | `/mcp` | MCP 接入 | 让 Claude Desktop / Cursor 等 Agent 自动脱敏 |
 
 左上角的印章和「数据隐站」是回到首页的链接，控制台顶栏也有「首页 / 下载 / MCP 接入」导航。
@@ -133,6 +139,14 @@ YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
 
 桌面版把「本机服务 + 界面」打包成一个双击即用的应用，用户不需要装 Python。
 
+| 产物 | 说明 |
+|---|---|
+| `Sanitized_Data_Setup_1.1.0_x64.exe` | Windows x64 安装包（Inno Setup）：装到 `%LOCALAPPDATA%\Programs\Sanitized_Data`，**不需要管理员权限**；自动检查/静默补齐 WebView2 与 VC++ 运行库 |
+| `Sanitized_Data-1.1.0-win64-portable.zip` | Windows x64 绿色版：解压后直接运行 `Sanitized_Data.exe`，免安装 |
+| `dist/Sanitized_Data/` | PyInstaller onedir 构建目录（绿色版解压前的目录形态） |
+
+安装包体积 / SHA-256 随 [v1.1.0 发布说明](docs/release-notes-v1.1.0.md) 的发布记录给出。
+
 | 文件 | 作用 |
 |---|---|
 | `desktop/main.py` | 启动器：单实例检查 → 起服务 → 原生窗口 → 退出清理 |
@@ -145,11 +159,15 @@ YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
 
 详细说明：
 
+- 安装 / 卸载 / 升级 / 数据位置 / 断网 / 排障：[docs/install-guide.md](docs/install-guide.md)
+- v1.1.0 发布说明（相对 v1.0.0 的新能力与已知限制）：[docs/release-notes-v1.1.0.md](docs/release-notes-v1.1.0.md)
+- 格式与能力口径表（自动 / 待确认 / 不支持）：[docs/support-matrix.md](docs/support-matrix.md)
 - 规划与分期：[docs/desktop-plan.md](docs/desktop-plan.md)
 - 构建与分发包（含 macOS 免账号测试包）：[docs/desktop-build.md](docs/desktop-build.md)
 
 > 桌面版默认把数据放在 `%LOCALAPPDATA%\Sanitized_Data`（Windows）或
-> `~/Library/Application Support/Sanitized_Data`（macOS），可用 `YINZHAN_DATA_DIR` 覆盖。
+> `~/Library/Application Support/Sanitized_Data`（macOS），可用 `YINZHAN_DATA_DIR` 覆盖；
+> 导出成品在该目录下的 `out/`。安装版**程序目录与数据目录分离**，卸载程序不会删除数据目录。
 > 源码运行和服务器部署行为不变，仍用产品目录下的 `data/`。
 
 ---
@@ -163,9 +181,11 @@ YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
 | Word `.docx` | ✓ | ✓ | ✓ | 清修订/批注/作者；表格可做表头列级脱敏；**内嵌图片自动检测敏感目标并涂黑回写；图表/文本框/OLE 等隐藏对象导出前确认，strict 可剥离** |
 | Excel `.xlsx` | ✓ | ✓ | ✓ | 清隐藏表/定义名/批注；表头列级 + 纯数值单元格（金额写回数字）；**内嵌图片自动脱敏；图表/OLE 隐藏对象导出前确认** |
 | 图片 `.png/.jpg` | ✓ OCR | ✓ | ✓ | 重编码，剥离 EXIF/GPS；**自动按 EXIF Orientation 转正**（手机竖拍不再躺倒） |
-| TIF 正射影像 | ✓ | ✓ | ✓ | 剥离地理标签，坐标可中性化 |
+| TIF 正射影像 | ✓ | ✓ | ✓ | 剥离地理标签（Geo / EXIF / XMP / ICC 与 `.tfw`/`.prj`/`.aux.xml`/`.ovr`/`.kml` 等 sidecar）；坐标可中性化为 LOCAL_CS（GIS 可打开、无真实坐标）；图面文字/视觉目标可打码；Pillow 路径按 Orientation 转正 |
 | 纯文本 `.txt/.md/.csv/.tsv/.log` | ✓ | ✓ | ✓ | CSV/TSV 支持列语义（表头列级/多级/合并表头继承）；导出保持原分隔符/引号/列数 |
-| 三维 `.obj/.ply/.glb/.stl` | ✓ | 部分 | — | 去工程原点、清注释 |
+| 三维 `.obj/.ply/.glb/.stl` | ✓ 文本 | 部分 | — | 仅注释/名称等文本清理 + OBJ/PLY 顶点平移；GLB 只做 JSON 等长覆盖、STL 只置零头部；**OSGB / 3D Tiles / LAS-LAZ / 贴图与 MTL 不支持** |
+
+> 三维只覆盖桌面中间格式的有限清理（综合完成度约 20%），**不承诺真实倾斜摄影（OSGB / 3D Tiles / LAS-LAZ）交付**；完整口径见 [docs/support-matrix.md](docs/support-matrix.md)。
 
 ### 图片 / 扫描页里的敏感目标（OCR 读不到，靠图像扫描）
 
@@ -344,19 +364,19 @@ python ..\tests\e2e.py
 | 人脸大图漏检 | 常规检测按长边 640；长边 >1600 自动分块，但侧脸/遮挡/极小脸仍可能漏。缩放检测时会提示「请人工复核/整图涂黑」，不承诺 100% 召回；YuNet 因 WIDER FACE 数据许可（CC BY-NC-ND）未随包 |
 | 聊天截图 | 仅微信式布局 + 图片 OCR；自定义皮肤/纯图标输入条可能漏；建议收集真实聊天截图补充测试集 |
 | 门牌路牌店招 | 仅 OCR 可读且非白底时识别；无文字场景走整图/人工框选 |
-| 未成年人/时间/组合风险 | 未成年人仅身份证生日推断；时间模糊默认关且只处理完整日期+时刻；组合风险只提示不自动改 |
-| 准标识符与场景照片 | 车牌默认待确认；路牌/门牌/店招/工牌/聊天截图/精确时间/组合风险提示尚未自动处理（P1 计划），用框选或整图涂黑兜底 |
-| 未成年人 | 按身份证生日推断年龄 + 严格模式尚在 P1；人脸年龄估计不做（误判与法律风险） |
+| 未成年人/时间/组合风险 | 未成年人只做身份证生日推断（<14 提示，人工开启严格模式）；不做人脸年龄估计；时间模糊默认关且只处理完整日期+时刻；组合风险只提示不自动改 |
+| 准标识符与场景照片 | 车牌默认待确认；门牌/路牌/店招/单位铭牌仅在 OCR 可读时触发；聊天截图仅微信式布局；精确时间默认关；组合风险只提示不自动改；窗外景观/镜面反光/指纹等无法自动识别的走框选或整图涂黑 |
 | 文件名可能含个人信息 | 当前导出名沿用源文件名（默认命名策略待用户确认后再改）；文件名含姓名/证件号时请先改名 |
 | Office 内嵌图片 | 已自动脱敏图片里的视觉/码类目标及**印刷体文字规则**（手机号/身份证号/邮箱/金额等）；中文手写/艺术字/低分辨率文字不承诺；文字 OCR 有预算（30 张/60s/篇）；无命中图片保留（可能仍带 EXIF/GPS）；图表/文本框/OLE 等隐藏对象仍需导出前确认（strict 可剥离，会改变外观） |
 | PDF 内嵌图片 | 只处理**文本层页**里面积 ≥5% 的图片；视觉+印刷体文字 OCR 命中即整块黑；图片内手写/艺术字 P1.6；旋转页/同页>8 图/异常格式建议人工复核 |
 | CSV/TSV | 无表头时退化为普通规则；**导出保留原编码/BOM/换行**（UTF-8/UTF-8 BOM/GB18030/UTF-16；未知编码回退 UTF-8+warning）；`.txt/.md` 仍 UTF-8 |
 | PDF 隐藏数据 | 附件/批注/表单/JS 默认剥离；如确需保留附件，API 可用 `keep_pdf_hidden=true`（需知情，敏感原文仍会被出口自检拦截） |
-| 三维只做有限处理 | OBJ/PLY 会重定位顶点、清注释；STL/GLB 目前只透传 + 告警 |
-| TIF 坐标中性化 | 已实现 LOCAL_CS 中性化（GIS 可打开、无真实坐标）；更细的随机平移/加噪可后续增强 |
+| 三维只做有限处理 | 只支持 `.obj/.ply/.glb/.stl` 的文本/注释清理与 OBJ/PLY 顶点平移（GLB 仅 JSON 等长覆盖、STL 头置零）；贴图/MTL/GLB 内嵌图、OSGB、3D Tiles、LAS-LAZ 均不支持；三维结构化 verify 与预览为 0，综合完成度约 20%，**不承诺真实倾斜摄影交付** |
+| TIF 坐标中性化 | 已实现 LOCAL_CS 中性化（GIS 可打开、无真实坐标），中性化参数可逆；`strip` 模式彻底去参考；多帧 TIFF 只剥离不中性化（明确 warning） |
+| TIF Orientation | P0 已修：Pillow 路径 parse/render/export 按 tag 274 转正，成品不再带 274；rasterio 单页大图路径保持原始像素朝向并明确 warning（P1 限制） |
 | 扫描件 OCR 精度 | 清晰扫描件够用，手写体和低分辨率照片会漏 |
 | XLSX 宏 | `.xlsm` 导出后不保留宏（会告警） |
-| 安装包 | 仓库有 `desktop/` 构建脚本；本机未重建最新安装包，以源码运行为准 |
+| 安装包 | v1.1.0 Windows 安装包 / 绿色版已重建（`Sanitized_Data_Setup_1.1.0_x64.exe` / `Sanitized_Data-1.1.0-win64-portable.zip`），装到用户目录、无需管理员；**未做代码签名**，SmartScreen / 杀软可能提示「未知发布者」，体积与 SHA-256 见发布说明 |
 
 ---
 
@@ -411,7 +431,7 @@ python app\server\rehydrate.py --job j_ab12cd34 回答.txt    # 还原成 回答
 ```
 
 **能不能不装 Python？**
-可以打包成单文件 exe（PyInstaller），但体积会到 300MB+（OCR 模型占大头）。当前版本先保证源码可跑与可维护。
+可以：Windows 用户用桌面安装包（`Sanitized_Data_Setup_1.1.0_x64.exe`）或绿色版即可，Python 运行时与 OCR 模型已打进程序，不需要本机装 Python（安装包约 160 MB，精确体积/SHA-256 见 [v1.1.0 发布说明](docs/release-notes-v1.1.0.md)）。安装步骤见 [docs/install-guide.md](docs/install-guide.md)。源码运行仍需 Python 3.10+。
 
 **端口被占了？**
 自动从 8760 往后找，实际端口写在 `data/runtime.json`。

@@ -28,18 +28,29 @@ BANNER = r"""
 """
 
 
+def _port_bindable(host: str, port: int) -> bool:
+    """用「不带 SO_REUSEADDR 的 bind」探测端口是否空闲。
+
+    不能用 SO_REUSEADDR：Windows 语义允许绑定**已被监听**的端口，两个进程会
+    「都绑定成功」，新实例的页面/健康检查实际命中旧实例（v1.1.0 构建自检时
+    踩到过，表现为 runtime.json 是 1.1.0 而 /api/health 返回 1.0.0）。
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
 def pick_port(host: str, preferred: int | None = None) -> int:
-    if preferred:
+    """挑一个真正空闲的端口（只做本地 bind 探测，不发起任何外呼）。"""
+    if preferred and _port_bindable(host, preferred):
         return preferred
     lo, hi = PORT_RANGE
     for p in range(lo, hi):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                s.bind((host, p))
-                return p
-            except OSError:
-                continue
+        if _port_bindable(host, p):
+            return p
     return lo
 
 

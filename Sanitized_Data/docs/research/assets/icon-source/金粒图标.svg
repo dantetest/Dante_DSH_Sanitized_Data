@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!--
+    金粒 CornKernel 站点图标 · C《纸质文书》配色
+    批次 kernel-ui-revise-20261007（件 1：沿用现有图标形状，只换配色）
+    批次 kernel-desktop-assets-brand-20261010（件 B：把令牌取值**内联成字面值**，治桌面图标黑块）
+
+    纪律：几何一字未改。与改前 app/icon.svg 的五个图元（底板圆角方、内框、
+    三条数据格、右下圆点）的位置 / 尺寸 / 圆角 / 线宽逐值相同，本次只动**颜色写法**。
+
+    ⚠ 本注释里**不得出现连续两个短横**（XML 注释的硬语法：连续两个短横会提前终止注释，
+    整份 SVG 直接解析失败）。2026-10-10 本批在这里踩过一次：栅格器拿到的是一份坏 SVG，
+    画布退化成 0x0，派生出的六个图标**全透明**。写令牌名时一律不带前缀。
+
+    配色令牌（名字取自 docs/design/界面重设计_2026-10-07/C_纸质文书.html 的 :root）：
+      底板          令牌 card          = #fbf6ea（改前 #0a0b0e 暗版底）
+      内框描边      令牌 frame         = #cdbb99（改前 #ffffff @ .14）
+      首格与圆点    令牌 seal 到 seal-hi = #b3261e 到 #961d17（改前 #f6d285 到 #a97f2b 香槟金渐变）
+      次格          令牌 ink-3         = #6d6457（改前 #ffffff @ .62）
+      末格          令牌 ink-2         = #6b6152（改前 #ffffff @ .52）
+
+    ⚠ 为什么这里**不再**引 CSS 变量（2026-10-10 实测定因，不是口味问题）：
+    本文件同时是**桌面壳图标**的唯一图源（desktop/tools/gen-icons.mjs 把它光栅化成
+    PNG/ICO/ICNS，焙进 setup.exe 与 exe 资源段）。而仓内的两个光栅器**都不解析**
+    SVG 内部 style 块里 :root 定义的 CSS 变量。属性写成变量引用时解析失败，
+    fill 退化成「未指定」⇒ 按规范口径取初始值**黑**。实测（@napi-rs/canvas 0.1.100）：
+
+      V1 原样变量引用 + :root       dark=96.0% light= 0.0%  ← 一团黑
+      V2 变量引用、删掉 style 块     dark=96.0% light= 0.0%
+      V3 同一份几何、只换字面值       dark= 0.0% light=76.7%  ← 纸面正常
+      V4 变量引用带 fallback 取值     dark= 0.0% light=96.0%  ← 回退值一给就正常
+
+    读数原件：_desktop_assets_brand_20261010/b-icons/raster-hypothesis.json
+
+    结论：**颜色必须在属性里就是字面值**。本文件取字面值 —— 它就是「设计要发出去的那几个
+    字节」，不依赖任何渲染器对 CSS 变量的支持程度，resvg / canvas / 浏览器三条路都渲染成
+    同一个样子。不采用「生成前替换变量」的做法：那会让「图源」与「真正被光栅化的字节」
+    变成两份东西，而 gen-icons.mjs 的漂移判据钉的正是本文件的 sha256 ⇒ 替换发生在读之后，
+    判据就描述不了产物。改前实测（2026-10-10）：一份变量版 SVG 派生出全套黑块图标，
+    而当时的校验一路绿。
+
+    改 C 稿令牌时同步这里的两处取值即可（产品侧另有 .po/.pw 的 ico 契约，
+    见 app/globals.css 第 29 节）。本文件的颜色字面值由 desktop/tools/gen-icons.mjs
+    的两条硬闸守住：闸门 A 扫「标记里不得出现 CSS 变量引用」，闸门 B 直接回读产物像素。
+  -->
+  <defs>
+    <linearGradient id="seal-g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#b3261e" />
+      <stop offset="100%" stop-color="#961d17" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="32" height="32" rx="7" fill="#fbf6ea" />
+  <rect x="2.5" y="2.5" width="27" height="27" rx="6" fill="none" stroke="#cdbb99" />
+  <rect x="7" y="7" width="7.5" height="3" rx="1.5" fill="url(#seal-g)" />
+  <rect x="7" y="12.5" width="12" height="3" rx="1.5" fill="#6d6457" />
+  <rect x="7" y="18" width="9" height="3" rx="1.5" fill="#6b6152" />
+  <circle cx="24" cy="23.5" r="2.6" fill="url(#seal-g)" />
+</svg>

@@ -8,7 +8,7 @@
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 ROOT = Path(SPECPATH).resolve().parent        # Sanitized_Data/
 APP = ROOT / "app"
@@ -42,6 +42,16 @@ for pkg in ("rapidocr", "onnxruntime", "zxingcpp", "rasterio", "pyproj"):
     datas += d
     binaries += b
     hiddenimports += h
+
+# OpenCV 的 Haar 级联 XML 是**数据文件**（人脸检测用），PyInstaller 的 hook-cv2
+# 不会自动收集；缺了以后打包版人脸检测会报 "Can't open ... haarcascade...xml"
+# 并静默退化为 0 命中。显式收集 cv2 包数据（约 1MB）。
+try:
+    cv2_datas = collect_data_files("cv2")
+    datas += cv2_datas
+    print(f"[spec] cv2 数据文件 {len(cv2_datas)} 个")
+except Exception as exc:          # 开发机未装 opencv 时不让 spec 崩
+    print(f"[spec] cv2 数据收集失败: {exc}")
 
 # 窗口外壳
 hiddenimports += [
@@ -102,8 +112,8 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "数据隐站",
             "CFBundleDisplayName": "数据隐站",
-            "CFBundleShortVersionString": "1.0.0",
-            "CFBundleVersion": "1.0.0",
+            "CFBundleShortVersionString": "1.1.0",
+            "CFBundleVersion": "1.1.0",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
             "NSRequiresAquaSystemAppearance": False,

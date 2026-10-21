@@ -277,7 +277,7 @@ function renderNet() {
   ui.netText.textContent = blocked ? '本机处理 · 不联网' : (h ? '本机处理 · 未确认断网' : '本机服务未连接');
   ui.footDot.className = 'netdot ' + (blocked ? 'ok' : (h ? 'warn' : 'off'));
   ui.footNet.textContent = blocked ? '本机处理 · 不联网' : (h ? '本机处理 · 未确认断网' : '本机服务未连接');
-  ui.footMeta.textContent = h ? '数据隐站 · v' + (h.version || '1.0.0') : '数据隐站 · 本机服务';
+  ui.footMeta.textContent = h ? '数据隐站 · v' + (h.version || '1.1.0') : '数据隐站 · 本机服务';
 }
 async function loadHealth() {
   try { state.health = await api('/api/health'); } catch (err) { state.health = null; }

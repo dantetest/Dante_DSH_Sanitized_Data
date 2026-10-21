@@ -1,4 +1,4 @@
-# 数据隐站 · Windows 打包脚本
+﻿# 数据隐站 · Windows 打包脚本
 #   powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 #
 # 产物：
@@ -46,13 +46,51 @@ foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
 Write-Host "`n[5/6] 自检：直接跑一次引擎" -ForegroundColor Cyan
 $exe = Join-Path $dist 'Sanitized_Data.exe'
 if (Test-Path $exe) {
-    $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
-    Start-Sleep -Seconds 8
+    # 去掉可能从构建环境继承的「来自 Internet」标记；并用 .NET ProcessStartInfo
+    # 的 UseShellExecute=$false 走 CreateProcess（Windows PowerShell 5.1 的
+    # Start-Process 没有 -UseShellExecute 参数），避免 ShellExecute 触发
+    # 「打开文件 - 安全警告」对话框把无人值守构建卡死（v1.1.0 构建时踩到过）。
+    try { Unblock-File -Path $exe -ErrorAction SilentlyContinue } catch { }
+    # 自检用独立端口 + 临时数据目录：既不碰用户真实数据，也不受本机已有旧实例影响
+    $smokeData = Join-Path $Root 'build\_smoke_data'
+    Remove-Item $smokeData -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $smokeData | Out-Null
+    $smokePort = 18760
+    # Windows PowerShell 5.1 的 ProcessStartInfo.EnvironmentVariables 在部分环境为
+    # null（Cannot index into a null array），这里改用进程级环境变量（子进程继承）。
+    $oldPort = $env:YINZHAN_PORT
+    $oldData = $env:YINZHAN_DATA_DIR
+    $env:YINZHAN_PORT = "$smokePort"
+    $env:YINZHAN_DATA_DIR = $smokeData
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.UseShellExecute = $false
+    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $p = [System.Diagnostics.Process]::Start($psi)
+    if ($null -eq $oldPort) { Remove-Item Env:YINZHAN_PORT -ErrorAction SilentlyContinue } else { $env:YINZHAN_PORT = $oldPort }
+    if ($null -eq $oldData) { Remove-Item Env:YINZHAN_DATA_DIR -ErrorAction SilentlyContinue } else { $env:YINZHAN_DATA_DIR = $oldData }
+    Start-Sleep -Seconds 10
+    # 端口/版本都按本次实例校验，避免「自检命中了别的旧版本实例」造成假通过。
+    $expectVersion = '1.1.0'
     try {
-        $h = (Invoke-WebRequest 'http://127.0.0.1:8760/api/health' -UseBasicParsing -TimeoutSec 5).Content | ConvertFrom-Json
-        "  ✓ 服务已启动  OCR=$($h.engine.ocr)  解析器=$($h.engine.parsers -join ',')"
+        $iv = Select-String -Path (Join-Path $PSScriptRoot 'installer.iss') -Pattern '#define MyAppVersion "([^"]+)"'
+        if ($iv) { $expectVersion = $iv.Matches[0].Groups[1].Value }
+    } catch { }
+    $healthPort = $smokePort
+    try {
+        $runtime = Join-Path $smokeData 'runtime.json'
+        $rt = Get-Content $runtime -Raw -ErrorAction Stop | ConvertFrom-Json
+        if ($rt.pid -eq $p.Id -and $rt.port) { $healthPort = [int]$rt.port }
+        else { Write-Host "  ! 警告：runtime.json pid=$($rt.pid) 与自检进程 $($p.Id) 不一致" -ForegroundColor Yellow }
+    } catch { }
+    try {
+        $h = (Invoke-WebRequest "http://127.0.0.1:$healthPort/api/health" -UseBasicParsing -TimeoutSec 8).Content | ConvertFrom-Json
+        "  ✓ 服务已启动  version=$($h.version)  OCR=$($h.engine.ocr)  解析器=$($h.engine.parsers -join ',')"
         # 打包关键自检：识别引擎与图像扫描器必须真的被收进包里
         "  扫描器=$($h.engine.scanners -join ',')  启用=$($h.engine.scan_enabled)"
+        if ($h.version -ne $expectVersion) {
+            Write-Host "  ! 警告：版本号不匹配（期望 $expectVersion，实际 $($h.version)）；可能命中了旧实例或包内版本未更新" -ForegroundColor Yellow
+        }
         if (-not ($h.engine.scanners -contains 'barcode')) {
             Write-Host "  ! 警告：条形码扫描器未加载（检查 zxingcpp 是否被 collect_all 收进包）" -ForegroundColor Yellow
         }
@@ -85,7 +123,7 @@ if ($iscc) {
 }
 
 Write-Host "`n[7/7] 打绿色版压缩包" -ForegroundColor Cyan
-$zip = Join-Path $Root 'out\desktop\Sanitized_Data-1.0.0-win64-portable.zip'
+$zip = Join-Path $Root 'out\desktop\Sanitized_Data-1.1.0-win64-portable.zip'
 New-Item -ItemType Directory -Force -Path (Split-Path $zip) | Out-Null
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path (Join-Path $Root 'dist\Sanitized_Data') -DestinationPath $zip -CompressionLevel Optimal
