@@ -14,7 +14,7 @@
 <header class="sitebar">
   <div class="inner">
     <a class="logo" href="/">
-      <span class="seal"><span>隐</span><span>站</span></span>
+      <img class="brandmark" src="/logo.svg" width="38" height="38" alt="数据隐站">
       <span class="name">数据隐站<small>SANITIZED_DATA</small></span>
     </a>
     <nav>
@@ -33,14 +33,15 @@
     <div class="eyebrow">DOWNLOAD · 本地部署</div>
     <h1 style="font-size:clamp(26px,3.4vw,36px)">下载数据隐站</h1>
     <p class="lead" style="max-width:760px">
-      Windows 用户推荐使用<b>桌面安装包</b>：离线可用、不需要本机装 Python，双击安装即用。
-      源码包适合 Linux / 服务器部署或自行排查，需要 Python 3.10 及以上版本。
+      Windows 用户推荐使用<b>桌面安装包</b>：离线可用、不需要本机装 Python，双击安装即用；
+      也可使用免安装的绿色版。
+      <span class="muted" style="font-size:12px;display:block;margin-top:8px">源码包已下架；如需 Linux / 服务器部署的源码，请联系项目维护者。</span>
     </p>
     <div class="chips">
       <span class="chip">版本 v1.1.2</span>
       <span class="chip">预览=成品</span>
       <span class="chip">Windows x64</span>
-      <span class="chip">Linux x64</span>
+      <span class="chip">绿色版</span>
       <span class="chip">离线可用</span>
     </div>
   </section>
@@ -61,41 +62,29 @@
       </div>
 
       <div class="dl">
-        <div class="os">WINDOWS · x64 · 源码包</div>
-        <div class="file">Sanitized_Data-1.1.2-win64.zip</div>
-        <div class="size">2.4 MB · 解压后约 5.1 MB（不含依赖）</div>
+        <div class="os">WINDOWS · x64 · 绿色版</div>
+        <div class="file">Sanitized_Data-1.1.2-win64-portable.zip</div>
+        <div class="size">182.8 MiB · 解压即用，无需安装</div>
         <p class="muted" style="font-size:12px">
-          解压后双击 <code>启动.bat</code>，浏览器自动打开控制台。
+          解压后运行 <code>Sanitized_Data.exe</code>；与安装包同源同版本，
+          适合免安装 / 便携场景。
         </p>
         <div class="act">
-          <a class="btn primary" href="downloads/Sanitized_Data-1.1.2-win64.zip" download>下载源码包 ↓</a>
-        </div>
-      </div>
-
-      <div class="dl">
-        <div class="os">LINUX · x64 · 源码包</div>
-        <div class="file">Sanitized_Data-1.1.2-linux64.tar.gz</div>
-        <div class="size">2.3 MB · 解压后约 5.1 MB（不含依赖）</div>
-        <p class="muted" style="font-size:12px">
-          解压后执行 <code>./start.sh</code>；服务器部署见下方 systemd / nginx 说明。
-        </p>
-        <div class="act">
-          <a class="btn primary" href="downloads/Sanitized_Data-1.1.2-linux64.tar.gz" download>下载源码包 ↓</a>
+          <a class="btn primary" href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.1.2" target="_blank" rel="noopener">从 Release 页下载 ↓</a>
         </div>
       </div>
     </div>
 
     <table class="spec">
-      <tr><th>SHA-256</th><td>安装包 / 绿色版 / 源码包校验值见 <a href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.1.2" target="_blank" rel="noopener">Release 页 v1.1.2</a> 附件 <code>SHA256SUMS.txt</code> 与仓库内 <code>docs/release-notes-v1.1.2.md</code> §5</td></tr>
-      <tr><th>桌面安装包</th><td>160.9 MiB（绿色版 182.8 MiB）· 源码包 2.4 MB / 2.3 MB · 校验值见上表</td></tr>
-      <tr><th>运行环境</th><td>桌面安装包：Windows 10/11 x64，无需 Python；源码包：Python 3.10+ · 约 300 MB 内存 · OCR 首次加载约 2 秒</td></tr>
-      <tr><th>依赖</th><td>源码包需执行 <code>pip install -r app/server/requirements.txt</code>（含离线 OCR 模型）</td></tr>
-      <tr><th>网络</th><td>除安装依赖外不需要联网；引擎本身不发任何外呼</td></tr>
+      <tr><th>SHA-256</th><td>安装包 / 绿色版校验值见 <a href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.1.2" target="_blank" rel="noopener">Release 页 v1.1.2</a> 附件 <code>SHA256SUMS.txt</code> 与仓库内 <code>docs/release-notes-v1.1.2.md</code> §5</td></tr>
+      <tr><th>桌面安装包</th><td>160.9 MiB · 绿色版 182.8 MiB · Windows 10/11 x64，无需 Python</td></tr>
+      <tr><th>运行环境</th><td>Windows 10/11 x64 · 约 300 MB 内存 · OCR 首次加载约 2 秒</td></tr>
+      <tr><th>网络</th><td>不需要联网；引擎本身不发任何外呼</td></tr>
     </table>
   </section>
 
   <section>
-    <h2>三步跑起来</h2>
+    <h2>两步跑起来</h2>
     <div class="steps">
       <div class="step">
         <div>
@@ -109,21 +98,9 @@ Sanitized_Data-1.1.2-win64-portable.zip</pre>
       </div>
       <div class="step">
         <div>
-          <h3>源码包：解压并安装依赖</h3>
-          <pre><span class="c"># Windows / Linux 通用</span>
-unzip Sanitized_Data-1.1.2-win64.zip
-cd Sanitized_Data-1.1.2
-pip install -r app/server/requirements.txt</pre>
-        </div>
-      </div>
-      <div class="step">
-        <div>
           <h3>启动并打开控制台</h3>
-          <pre><span class="c"># Windows（源码包）</span>
-双击 启动.bat
-
-<span class="c"># Linux / macOS</span>
-chmod +x start.sh && ./start.sh</pre>
+          <pre><span class="c"># 安装包 / 绿色版：启动后自动打开浏览器</span>
+Sanitized_Data.exe</pre>
           <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
             默认地址 <code>http://127.0.0.1:8760/console</code>，启动后会自动打开浏览器。
             拖入文件即可开始。
@@ -135,7 +112,7 @@ chmod +x start.sh && ./start.sh</pre>
 
   <section>
     <h2>服务器部署</h2>
-    <p class="muted" style="margin-bottom:18px">包里自带 <code>deploy/sanitized-data.service</code> 与 <code>deploy/nginx.conf</code></p>
+    <p class="muted" style="margin-bottom:18px">源码仓库自带 <code>deploy/sanitized-data.service</code> 与 <code>deploy/nginx.conf</code>（源码包已下架，内部部署请从仓库获取）</p>
     <div class="grid g2">
       <div class="card">
         <div class="ico">SYSTEMD</div>

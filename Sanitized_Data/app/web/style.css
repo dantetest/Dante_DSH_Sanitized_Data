@@ -48,6 +48,7 @@ body::after{
   box-shadow:0 0 0 2px rgba(178,58,46,.18), inset 0 0 0 1.5px rgba(255,255,255,.3);
   flex:0 0 auto;
 }
+.brandmark{width:38px; height:38px; display:block; flex:0 0 auto; border-radius:9px; filter:drop-shadow(0 1px 1px rgba(60,40,20,.16)); transition:transform .16s;}
 .brand{font-size:17px; font-weight:700; letter-spacing:.22em;}
 .brand small{display:block; font:400 10px/1.4 var(--font-mono); letter-spacing:.14em; color:var(--ink-3); margin-top:3px;}
 .docno{
@@ -601,7 +602,7 @@ main{flex:1; min-height:0; position:relative;}
 }
 .homelink:hover{background:rgba(178,58,46,.07)}
 .homelink:hover .brand{color:var(--seal)}
-.homelink:hover .seal{transform:rotate(-5deg) scale(1.05)}
+.homelink:hover .brandmark{transform:scale(1.05)}
 .topnav{display:flex; gap:2px; margin-right:6px}
 .topnav a{
   font:400 11px/1 var(--font-mono); letter-spacing:.1em; color:var(--ink-3);

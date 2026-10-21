@@ -30,6 +30,8 @@ a{color:inherit;text-decoration:none}
 }
 .sitebar .inner{display:flex;align-items:center;gap:14px;padding:12px 28px;max-width:1120px;margin:0 auto}
 .logo{display:flex;align-items:center;gap:11px}
+.brandmark{width:38px;height:38px;display:block;flex:0 0 auto;border-radius:9px;filter:drop-shadow(0 1px 1px rgba(60,40,20,.16));transition:transform .16s}
+.logo:hover .brandmark{transform:scale(1.04)}
 .seal{
   width:38px;height:38px;border-radius:3px;background:var(--seal);color:#FBF7EC;
   display:grid;grid-template-columns:1fr 1fr;place-items:center;

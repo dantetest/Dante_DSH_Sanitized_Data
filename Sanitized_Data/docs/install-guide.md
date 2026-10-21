@@ -218,7 +218,7 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Sanitized_Data"
 |---|---|
 | 安装包 `Sanitized_Data_Setup_1.1.2_x64.exe` | 发布页（Gitea Release）/ 构建机 `dist_installer/` |
 | 绿色版 `Sanitized_Data-1.1.2-win64-portable.zip` | 发布页 / 构建机 `out/desktop/` |
-| 源码包 `Sanitized_Data-1.1.2-win64.zip` / `-linux64.tar.gz` | 发布页 / 站点 `/download` |
+| 源码包 `Sanitized_Data-1.1.2-win64.zip` / `-linux64.tar.gz` | 已从站点 `/download` 下架；内部仓库 / Release 历史附件可获取 |
 
 校验（PowerShell）：
 

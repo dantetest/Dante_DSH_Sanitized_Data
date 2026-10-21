@@ -58,7 +58,7 @@ chmod +x start.sh && ./start.sh
 |---|---|---|
 | `/` | 首页 | 介绍、入口、能力概览 |
 | `/console` | 控制台 | 主工作区（投放 / 识别 / 对照 / 交付） |
-| `/download` | 下载 | Windows 桌面安装包 / 绿色版、Linux 源码包、校验值、部署说明 |
+| `/download` | 下载 | Windows 桌面安装包 / 绿色版、校验值、部署说明（源码包已下架） |
 | `/mcp` | MCP 接入 | 让 Claude Desktop / Cursor 等 Agent 自动脱敏 |
 
 左上角的印章和「数据隐站」是回到首页的链接，控制台顶栏也有「首页 / 下载 / MCP 接入」导航。
