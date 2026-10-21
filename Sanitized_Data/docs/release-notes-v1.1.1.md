@@ -55,8 +55,8 @@ v1.1.0 真实测试集 QA 的 P2/P3 五项问题全部处理，**不降低任何
 
 | 产物 | 大小 | SHA-256 |
 |---|---|---|
-| `Sanitized_Data_Setup_1.1.1_x64.exe`（Windows 安装包） | 168,612,264 B（160.8 MiB） | `E6CC8AAA8D0985BC82062FB515E5A543B32DFB01E3C0E9268070766881CCB2CA` |
-| `Sanitized_Data-1.1.1-win64-portable.zip`（Windows 绿色版） | 191,623,232 B（182.7 MiB） | `0BDCEC7FE20DCC77E4BE2F0561627F430855F542A8F734628F814E5805DCAA35` |
+| `Sanitized_Data_Setup_1.1.1_x64.exe`（Windows 安装包） | 168,691,705 B（160.9 MiB） | `937FEAE026F7570C02BEF31C9E7A4832A105621ECF12C5EC9224F8E7ED02711F` |
+| `Sanitized_Data-1.1.1-win64-portable.zip`（Windows 绿色版） | 191,689,909 B（182.8 MiB） | `7058FFCD46DD221A1F1D7DF271D380F6ED342CA2FB28C7EADDE2B8B53D05DC72` |
 | `Sanitized_Data-1.1.1-win64.zip`（源码包） | 见 Release 附件 | 见 Release 附件 `SHA256SUMS.txt` |
 | `Sanitized_Data-1.1.1-linux64.tar.gz`（源码包） | 见 Release 附件 | 见 Release 附件 `SHA256SUMS.txt` |
 
