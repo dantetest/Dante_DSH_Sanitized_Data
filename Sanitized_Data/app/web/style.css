@@ -329,6 +329,12 @@ main{flex:1; min-height:0; position:relative;}
   box-shadow:0 0 0 1px rgba(217,84,63,.35);
 }
 .box.black.peek{background:transparent; box-shadow:inset 0 0 0 1px rgba(217,84,63,.85); animation:none !important;}
+/* 待确认实体：导出不会涂黑，预览用琥珀虚框表示「尚未处理」，避免预览≠成品 */
+.box.pending{
+  border:1px dashed rgba(178,120,30,.95); pointer-events:auto;
+  background:repeating-linear-gradient(45deg, rgba(230,170,40,.16) 0 6px, rgba(251,247,236,.10) 6px 12px);
+  box-shadow:inset 0 0 0 1px rgba(251,247,236,.35);
+}
 @keyframes inkIn{from{transform:scaleX(0);}72%{transform:scaleX(1.035);}to{transform:scaleX(1);}}
 
 /* 文字标记 / 脱敏 */
@@ -356,6 +362,11 @@ main{flex:1; min-height:0; position:relative;}
 .redacted.black.peek{
   color:var(--ink) !important; background-image:none !important; animation:none !important;
   box-shadow:inset 0 0 0 1px rgba(178,58,46,.45); background-color:rgba(178,58,46,.10);
+}
+/* 流式文档里的待确认实体：保留原文、琥珀虚框（导出未处理，预览也不该显示已涂黑） */
+.redacted.pending{
+  color:var(--ink); background:rgba(230,170,40,.14);
+  box-shadow:inset 0 0 0 1px rgba(178,120,30,.55); border-radius:1px;
 }
 .redacted.flash, .mark.flash, .box.flash, .row.flash{animation:flash 1.1s 2 !important;}
 @keyframes flash{0%,100%{background:rgba(217,84,63,.26)}50%{background:transparent}}

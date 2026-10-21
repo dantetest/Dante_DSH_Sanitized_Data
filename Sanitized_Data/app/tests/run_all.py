@@ -9,7 +9,8 @@
      ``test_pdf_hidden.py`` / ``test_sign_targets.py`` / ``test_office_media.py`` /
      ``test_csv_table.py`` / ``test_pdf_embedded.py`` / ``test_mesh.py`` /
      ``test_tiff.py`` / ``test_surrogate.py`` / ``test_pdf_verify_fast.py`` /
-     ``test_id_wholepage.py`` / ``test_warnings_pending.py``（存在才跑）。
+     ``test_id_wholepage.py`` / ``test_warnings_pending.py`` /
+     ``test_preview_boxes.py``（存在才跑）。
 
 用法（Windows 控制台必须 -X utf8）：
 
@@ -60,6 +61,8 @@ def _specs() -> list[dict]:
          "label": "图像域自测"},
         {"key": "legal", "file": TESTS / "test_legal_detect.py", "timeout": 300,
          "label": "判决书类文本检测回归（跨行案号/地址/标签姓名/带空格金额）"},
+        {"key": "previewboxes", "file": TESTS / "test_preview_boxes.py", "timeout": 120,
+         "label": "预览矩形一致性（OCR 行块按字符比例插值，不整行涂黑）"},
         {"key": "pipl", "file": TESTS / "test_pipl_rules.py", "timeout": 600,
          "label": "PIPL 补充规则 + XLSX 纯数值单元格自测"},
         {"key": "table", "file": TESTS / "test_table_column.py", "timeout": 600,

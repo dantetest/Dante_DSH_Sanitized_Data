@@ -856,14 +856,38 @@ def boxes_for_span(doc: Document, span: Span) -> list[tuple[float, float, float,
     block = _find_block(doc, span.block_id)
     if block is None:
         return []
-    chars = (block.ref or {}).get("chars")
+    ref = block.ref or {}
+    chars = ref.get("chars")
     if chars and span.start >= 0:
         sub = chars[span.start:span.end]
         if sub:
             return _cluster_lines(sub)
+    if block.bbox and ref.get("ocr"):
+        # OCR 块没有字符级坐标（扫描件/图片/TIF）：按字符比例在行框内横向插值，
+        # 与 pdf_parser/image_parser 的导出涂改矩形口径保持一致。
+        # 不能回退成整块 bbox——那会让预览把整整一行甚至整段都画成黑条
+        # （v1.1.2 修：民 24593-包罗.pdf 第 2 页只有人名/公司名该涂黑）。
+        return [_interpolate_ocr_box(block, span)]
     if block.bbox:
         return [block.bbox]
     return []
+
+
+def _interpolate_ocr_box(block: Block,
+                         span: Span) -> tuple[float, float, float, float]:
+    """OCR 行块内按字符比例估算 span 矩形（与导出器算法一致）。"""
+    bbox = block.bbox or (0.0, 0.0, 0.0, 0.0)
+    text_len = len(block.text or "")
+    if (text_len <= 0 or span.start is None or span.start < 0
+            or span.end is None or span.end < 0):
+        return bbox
+    start = max(0, min(int(span.start), text_len))
+    end = max(start, min(int(span.end), text_len))
+    width = bbox[2] - bbox[0]
+    if width <= 0 or text_len <= 1:
+        return bbox
+    return (bbox[0] + width * start / text_len, bbox[1],
+            bbox[0] + width * end / text_len, bbox[3])
 
 
 def _find_block(doc: Document, block_id: str) -> Block | None:

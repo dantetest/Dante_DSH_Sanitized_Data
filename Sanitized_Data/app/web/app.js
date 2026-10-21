@@ -1077,6 +1077,10 @@ function renderRaster(frame, preview, side) {
       if (side === 'orig') {
         node.className = 'box orig';
         node.title = labelOf(ent) + ' · 原件只在本机显示';
+      } else if (ent.status === 'pending' && !ent.black) {
+        // 待确认且当前不会涂黑的实体：任何形态下都别画成已处理（导出不会动它）
+        node.className = 'box pending';
+        node.title = labelOf(ent) + ' · 待确认，暂未处理';
       } else if (state.mode === 'black') {
         node.className = 'box black';
         node.style.setProperty('--i', String(blackIdx++));
@@ -1213,6 +1217,11 @@ function markedSpan(raw, ent, side) {
   if (side === 'orig') {
     span.className = 'mark';
     span.textContent = raw;
+  } else if (ent.status === 'pending' && !ent.black) {
+    // 待确认且当前不会处理：两种形态都保留原文 + 琥珀虚框，避免预览≠成品
+    span.className = 'redacted pending';
+    span.textContent = raw || String(ent.value || '');
+    span.title = labelOf(ent) + ' · 待确认，暂未处理';
   } else if (state.mode === 'black') {
     span.className = 'redacted black';
     const visible = raw || String(ent.value || '');

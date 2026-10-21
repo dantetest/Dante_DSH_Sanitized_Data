@@ -1243,29 +1243,48 @@ def _collect_ops(doc: Document, entities: Iterable[Entity] | None,
     return ops_by_page
 
 
-def _merge_ops(ops: list[dict[str, Any]], warnings: list[str]) -> list[dict[str, Any]]:
-    """合并交叠矩形：黑框彼此合并并优先；同文本的替换框合并，避免 redaction 互相切割。"""
-    black_rects: list[Box] = []
-    for op in ops:
-        if not op["black"]:
-            continue
-        merged = op["rect"]
-        rest: list[Box] = []
-        for existing in black_rects:
-            if box_intersects(merged, existing):
-                merged = _union(merged, existing)
-            else:
-                rest.append(existing)
+# 黑框合并策略：只合并「完全相同 / 一个包含另一个」的框（近重合重复），
+# 其余交叠框各自绘制。取外接矩形 union 会在两框之间凭空多涂一块（实测：
+# 签署区 539×187 上沿与印章框交叠，union 后顶边上移 38pt，把上一行条款涂掉）。
+BLACK_MERGE_ONE_SIDE_EPS = 0.5   # 包含判定容差（pt），吸收 OCR 抖动
+
+
+def _rect_covers(outer: Box, inner: Box,
+                 eps: float = BLACK_MERGE_ONE_SIDE_EPS) -> bool:
+    return (outer[0] - eps <= inner[0] and outer[1] - eps <= inner[1]
+            and outer[2] + eps >= inner[2] and outer[3] + eps >= inner[3])
+
+
+def _merge_black_rects(rects: list[Box]) -> list[Box]:
+    """合并黑框，但绝不让外接矩形膨胀。
+
+    v1.1.2 修复：以前对交叠黑框无条件取外接矩形（union），签名区/印章/误检块
+    相互交叠时会被并成一个大黑块，把中间的条款正文、空白甚至上一行也涂掉
+    （测试集实测：劳务派遣协议第 5 页黑条压掉「题，一切后果由乙方承担。」）。
+    现在只合并「一框包含另一框」的重复/近重合框；其余交叠框各自绘制，
+    黑区 = 各框并集，不额外扩大。
+    """
+    out: list[Box] = []
+    for rect in rects:
+        merged = rect
         changed = True
         while changed:
             changed = False
-            for existing in list(rest):
-                if box_intersects(merged, existing):
+            rest: list[Box] = []
+            for existing in out:
+                if _rect_covers(merged, existing) or _rect_covers(existing, merged):
                     merged = _union(merged, existing)
-                    rest.remove(existing)
                     changed = True
-        rest.append(merged)
-        black_rects = rest
+                else:
+                    rest.append(existing)
+            out = rest
+        out.append(merged)
+    return out
+
+
+def _merge_ops(ops: list[dict[str, Any]], warnings: list[str]) -> list[dict[str, Any]]:
+    """合并交叠矩形：黑框合并并优先；同文本的替换框合并，避免 redaction 互相切割。"""
+    black_rects = _merge_black_rects([op["rect"] for op in ops if op["black"]])
 
     replacements: list[dict[str, Any]] = []
     for op in ops:
