@@ -161,6 +161,8 @@ v1.0.0 构建（2026-10-19）之后合入、v1.1.0 一并交付的能力（按�
 | `Sanitized_Data-1.1.0-linux64.tar.gz`（源码包） | 2,340,724 B（2.23 MiB） | `54BAE9250C7C55DD4790C98D4CBA2EBFFB193FA650712FAA90C7120F50C18BF0` |
 
 - 发布提交：**tag `v1.1.0`**
+- Gitea Release：https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.1.0 （5 个附件：安装包/绿色版/两个源码包/SHA256SUMS.txt）
+  > 仓库当前为**私有**，匿名访问 Release 会跳登录页；对外分发前需把仓库公开，或把安装包转官网/网盘。
 - 构建时间：**2026-10-21 12:46（Asia/Shanghai，最终构建）**；PyInstaller 6.22.3 · Inno Setup 7.1.0
 - 绿色版目录 `dist\Sanitized_Data\` 约 422.7 MiB（解压后）
 - 校验命令（Windows PowerShell）：`Get-FileHash .\Sanitized_Data_Setup_1.1.0_x64.exe -Algorithm SHA256`
