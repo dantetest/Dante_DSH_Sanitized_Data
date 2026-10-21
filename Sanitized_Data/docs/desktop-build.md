@@ -153,7 +153,7 @@ git push github main
 
 | 步骤 | 作用 |
 |---|---|
-| `macos-15-arm64` / `macos-15` 双任务 | 分别出 arm64（Apple Silicon）和 x64（Intel）；macOS 13/14 runner 已退役 |
+| `macos-15`（arm64）/ `macos-15-intel`（Intel）双任务 | 标准 runner 标签口径：`macos-15`=Apple Silicon，`macos-15-intel`=Intel；macOS 13/14 已退役 |
 | `pip install -r requirements.txt` | 装引擎依赖 |
 | `pyinstaller desktop/app.spec` | 打包成 `.app` |
 | `codesign --force --deep --sign -` | **ad-hoc 签名**，arm64 必需 |

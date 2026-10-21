@@ -1,0 +1,17 @@
+{
+  "namecard.png": {
+    "seconds": 4.14,
+    "isError": false,
+    "raw": "{\n  \"ok\": true,\n  \"output\": \"D:\\\\DSH_DESKTOP_WORKSPACE\\\\_mcp_probe\\\\cwd2\\\\sanitized_output\\\\名片_换名.png\",\n  \"mode\": \"ai\",\n  \"pack\": \"common,finance-cn,geo-cn,legal-cn,medical-cn,pipl-cn,trade-cn\",\n  \"entities\": 6,\n  \"by_type\": {\n    \"手机号\": 1,\n    \"固定电话\": 1,\n    \"电子邮箱\": 1,\n    \"律师事务所\": 1,\n    \"人名\": 1,\n    \"地址\": 1\n  },\n  \"verify\": {\n    \"verified\": true,\n    \"residual\": 0\n  },\n  \"mapping_id\": \"mcp_20261021194622244396\",\n  \"warnings\": []\n}"
+  },
+  "medical.docx": {
+    "seconds": 0.14,
+    "isError": false,
+    "raw": "{\n  \"ok\": true,\n  \"output\": \"D:\\\\DSH_DESKTOP_WORKSPACE\\\\_mcp_probe\\\\cwd2\\\\sanitized_output\\\\住院病历_换名.docx\",\n  \"mode\": \"ai\",\n  \"pack\": \"common,finance-cn,geo-cn,legal-cn,medical-cn,pipl-cn,table-cn,trade-cn\",\n  \"entities\": 9,\n  \"by_type\": {\n    \"手机号\": 1,\n    \"地址\": 1,\n    \"科室\": 1,\n    \"人名\": 3,\n    \"身份证号\": 1,\n    \"病历号/住院号\": 2\n  },\n  \"verify\": {\n    \"verified\": true,\n    \"residual\": 0\n  },\n  \"mapping_id\": \"mcp_20261021194622383412\",\n  \"warnings\": [\n    \"已删除 1 个设置项（文档保护口令/附加模板/邮件合并数据源等）\",\n    \"已清空 4 项文档核心属性（作者/标题/关键词等）\",\n    \"已删除 4 个隐藏部件（批注/自定义属性/缩略图/CustomXML）\",\n    \"已同步清理 2 条失效关系、1 条内容类型声明\"\n  ]\n}"
+  },
+  "contract.pdf": {
+    "seconds": 0.38,
+    "isError": false,
+    "raw": "{\n  \"ok\": true,\n  \"output\": \"D:\\\\DSH_DESKTOP_WORKSPACE\\\\_mcp_probe\\\\cwd2\\\\sanitized_output\\\\委托代理合同_换名.pdf\",\n  \"mode\": \"ai\",\n  \"pack\": \"common,finance-cn,geo-cn,legal-cn,medical-cn,pipl-cn,trade-cn\",\n  \"entities\": 15,\n  \"by_type\": {\n    \"手机号\": 1,\n    \"固定电话\": 1,\n    \"案号\": 1,\n    \"统一社会信用代码\": 1,\n    \"地址\": 1,\n    \"律师事务所\": 1,\n    \"金额\": 2,\n    \"当事人/代理人\": 2,\n    \"人名\": 2,\n    \"机构名称\": 1,\n    \"身份证号\": 1,\n    \"银行卡号\": 1\n  },\n  \"verify\": {\n    \"verified\": true,\n    \"residual\": 0\n  },\n  \"mapping_id\": \"mcp_20261021194622762394\",\n  \"warnings\": []\n}"
+  }
+}
