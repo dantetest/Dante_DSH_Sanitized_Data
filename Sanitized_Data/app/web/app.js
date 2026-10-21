@@ -277,7 +277,7 @@ function renderNet() {
   ui.netText.textContent = blocked ? '本机处理 · 不联网' : (h ? '本机处理 · 未确认断网' : '本机服务未连接');
   ui.footDot.className = 'netdot ' + (blocked ? 'ok' : (h ? 'warn' : 'off'));
   ui.footNet.textContent = blocked ? '本机处理 · 不联网' : (h ? '本机处理 · 未确认断网' : '本机服务未连接');
-  ui.footMeta.textContent = h ? '数据隐站 · v' + (h.version || '1.1.1') : '数据隐站 · 本机服务';
+  ui.footMeta.textContent = h ? '数据隐站 · v' + (h.version || '1.1.2') : '数据隐站 · 本机服务';
 }
 async function loadHealth() {
   try { state.health = await api('/api/health'); } catch (err) { state.health = null; }
@@ -1057,43 +1057,57 @@ function renderRaster(frame, preview, side) {
   frame.appendChild(sheet);
 
   const entities = (Array.isArray(preview.entities) ? preview.entities : []).filter((e) => e && e.status !== 'rejected');
+  // 后端若给出 black_rects（与 human 导出同一套矩形），「涂黑」形态直接按它绘制，
+  // 不再按实体框估算 —— 这样在线预览与下载的涂黑版成品完全一致。
+  const parityRects = (side === 'out' && state.mode === 'black'
+    && Array.isArray(preview.black_rects)) ? preview.black_rects : null;
   let blackIdx = 0;
-  entities.forEach((ent) => {
-    entityBoxes(ent).forEach((rawBox) => {
-      if (!Array.isArray(rawBox) || rawBox.length < 4) return;
-      const box = rawBox.map(Number);
-      if (!box.slice(0, 4).every(Number.isFinite)) return;
-      const left = clamp(Math.min(box[0], box[2]), 0, W);
-      const top = clamp(Math.min(box[1], box[3]), 0, H);
-      const right = clamp(Math.max(box[0], box[2]), 0, W);
-      const bottom = clamp(Math.max(box[1], box[3]), 0, H);
-      if (right - left <= 0 || bottom - top <= 0) return;
-      const node = mk('div');
-      node.dataset.eid = ent.id || '';
-      node.style.left = pct(left / W);
-      node.style.top = pct(top / H);
-      node.style.width = pct((right - left) / W);
-      node.style.height = pct((bottom - top) / H);
-      if (side === 'orig') {
-        node.className = 'box orig';
-        node.title = labelOf(ent) + ' · 原件只在本机显示';
-      } else if (ent.status === 'pending' && !ent.black) {
-        // 待确认且当前不会涂黑的实体：任何形态下都别画成已处理（导出不会动它）
-        node.className = 'box pending';
-        node.title = labelOf(ent) + ' · 待确认，暂未处理';
-      } else if (state.mode === 'black') {
-        node.className = 'box black';
-        node.style.setProperty('--i', String(blackIdx++));
-        node.dataset.raw = String(ent.value || '');
-        node.title = '按住 300 毫秒可透视原值';
-      } else {
-        node.className = 'box sur';
-        node.appendChild(mk('span', 'sur-label', surrogateOf(ent)));
-        node.title = labelOf(ent) + ' · 换名后';
-      }
-      overlay.appendChild(node);
+  const addBoxNode = (rawBox, className, title, eid) => {
+    if (!Array.isArray(rawBox) || rawBox.length < 4) return null;
+    const box = rawBox.map(Number);
+    if (!box.slice(0, 4).every(Number.isFinite)) return null;
+    const left = clamp(Math.min(box[0], box[2]), 0, W);
+    const top = clamp(Math.min(box[1], box[3]), 0, H);
+    const right = clamp(Math.max(box[0], box[2]), 0, W);
+    const bottom = clamp(Math.max(box[1], box[3]), 0, H);
+    if (right - left <= 0 || bottom - top <= 0) return null;
+    const node = mk('div');
+    node.dataset.eid = eid || '';
+    node.style.left = pct(left / W);
+    node.style.top = pct(top / H);
+    node.style.width = pct((right - left) / W);
+    node.style.height = pct((bottom - top) / H);
+    if (className) node.className = className;
+    if (title) node.title = title;
+    overlay.appendChild(node);
+    return node;
+  };
+  if (parityRects) {
+    parityRects.forEach((rawBox) => {
+      const node = addBoxNode(rawBox, 'box black', '已涂黑 · 与下载成品同一套矩形');
+      if (node) node.style.setProperty('--i', String(blackIdx++));
     });
-  });
+  } else {
+    entities.forEach((ent) => {
+      entityBoxes(ent).forEach((rawBox) => {
+        if (side === 'orig') {
+          addBoxNode(rawBox, 'box orig', labelOf(ent) + ' · 原件只在本机显示', ent.id);
+        } else if (ent.status === 'pending' && !ent.black) {
+          // 待确认且当前不会涂黑的实体：任何形态下都别画成已处理（导出不会动它）
+          addBoxNode(rawBox, 'box pending', labelOf(ent) + ' · 待确认，暂未处理', ent.id);
+        } else if (state.mode === 'black') {
+          const node = addBoxNode(rawBox, 'box black', '按住 300 毫秒可透视原值', ent.id);
+          if (node) {
+            node.style.setProperty('--i', String(blackIdx++));
+            node.dataset.raw = String(ent.value || '');
+          }
+        } else {
+          const node = addBoxNode(rawBox, 'box sur', labelOf(ent) + ' · 换名后', ent.id);
+          if (node) node.appendChild(mk('span', 'sur-label', surrogateOf(ent)));
+        }
+      });
+    });
+  }
   const size = () => sizeSurLabels(overlay);
   img.addEventListener('load', size);
   if (img.complete) requestAnimationFrame(size);

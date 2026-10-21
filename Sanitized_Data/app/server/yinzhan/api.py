@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import audit, registry, vault
-from .config import DATA_DIR, MAX_UPLOAD, UPLOAD_DIR, VERSION, WEB_DIR
+from .config import BUILD_ID, DATA_DIR, MAX_UPLOAD, UPLOAD_DIR, VERSION, WEB_DIR
 from .jobs import MANAGER
 from .ocr import get_ocr
 from .udm import YinzhanError
@@ -102,7 +102,7 @@ def health(ctx):
     except Exception:
         scanners, scan_enabled = [], False
     return {
-        "ok": True, "version": VERSION, "net": "blocked",
+        "ok": True, "version": VERSION, "build": BUILD_ID, "net": "blocked",
         "engine": {
             "ocr": bool(ocr.available),
             "ocr_error": ocr.error,
@@ -113,6 +113,8 @@ def health(ctx):
             "scan_enabled": scan_enabled,
             "packs": packs,
             "vault_key": vault.key_fingerprint(),
+            # 预览与 human 导出使用同一套涂黑矩形（v1.1.2 起）；部署自检用
+            "preview_parity": "export-parity/v1",
         },
         "audit": audit.stats(),
     }

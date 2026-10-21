@@ -71,7 +71,7 @@ if (Test-Path $exe) {
     if ($null -eq $oldData) { Remove-Item Env:YINZHAN_DATA_DIR -ErrorAction SilentlyContinue } else { $env:YINZHAN_DATA_DIR = $oldData }
     Start-Sleep -Seconds 10
     # 端口/版本都按本次实例校验，避免「自检命中了别的旧版本实例」造成假通过。
-    $expectVersion = '1.1.1'
+    $expectVersion = '1.1.2'
     try {
         $iv = Select-String -Path (Join-Path $PSScriptRoot 'installer.iss') -Pattern '#define MyAppVersion "([^"]+)"'
         if ($iv) { $expectVersion = $iv.Matches[0].Groups[1].Value }

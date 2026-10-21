@@ -924,7 +924,8 @@ def _cluster_lines(boxes: Iterable) -> list[tuple[float, float, float, float]]:
 
 
 def build_preview(doc: Document, parser: registry.Parser, entities: list[Entity],
-                  page_index: int, mode: str) -> dict:
+                  page_index: int, mode: str,
+                  black_rects: list[tuple[float, float, float, float]] | None = None) -> dict:
     if page_index < 0 or page_index >= len(doc.pages):
         raise YinzhanError(f"页码越界：{page_index}")
     page = doc.pages[page_index]
@@ -967,7 +968,7 @@ def build_preview(doc: Document, parser: registry.Parser, entities: list[Entity]
         d["boxes"] = boxes
         d["black"] = bool(e.decision and e.decision.black)
         ents.append(d)
-    return {
+    result = {
         "page": page_index,
         "total_pages": len(doc.pages),
         "kind": kind,
@@ -976,3 +977,9 @@ def build_preview(doc: Document, parser: registry.Parser, entities: list[Entity]
         "blocks": blocks,
         "entities": ents,
     }
+    if black_rects is not None:
+        # 与 human 导出同一套矩形：UI 在「涂黑」形态直接按这些矩形绘制，
+        # 不再按实体框估算 → 在线预览与下载成品保持一致。
+        result["black_rects"] = [[round(float(v), 2) for v in rect] for rect in black_rects]
+        result["black_source"] = "export-parity"
+    return result

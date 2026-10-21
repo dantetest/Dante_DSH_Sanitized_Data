@@ -150,6 +150,15 @@ class Parser:
 
     def render(self, doc: Document, page: int, mode: str) -> bytes | None:
         """mode: 'orig' | 'out'。返回 PNG 字节；flow 类格式返回 None。"""
+
+    def export_black_rects(self, doc: Document, entities: list[Entity],
+                           decisions: dict[str, Decision] | None = None
+                           ) -> dict[int, list[Box]] | None:
+        """可选：返回与 human 导出**完全相同**的涂黑矩形（按页、页面显示坐标）。
+
+        预览端在「涂黑」形态直接按这些矩形绘制，保证「在线预览 = 下载成品」。
+        返回 None 表示该格式不支持（预览回退到实体框渲染）。
+        """
 ```
 
 `ParseContext` 字段：`ocr`（OcrService）、`workdir`（Path）、`options`（dict）。
@@ -165,6 +174,7 @@ class Parser:
 5. 图片解析器必须按 EXIF Orientation 转正像素（parse 与 export/render 一致），否则 OCR/人脸坐标错位且成品方向错误。
 6. PDF 导出默认剥离附件/批注/表单控件/JS（`keep_pdf_hidden=True` 才保留），保存后重新打开成品复检计数必须为 0（或显式保留），否则 `ExportError`。
 7. 数值单元格导出时：`numeric_cell` 实体写回**数字类型**并保留 `number_format`，账号类保持字符串；公式单元格不破坏。
+8. **预览=成品**：实现 `export_black_rects` 的格式，其返回矩形必须与 `export(mode="human")` 实际绘制的黑框一致（同一套 `_collect_ops`/`_merge_ops` 结果），由 `app/tests/test_preview_export_parity.py` 门禁。预览不得自行用实体 bbox 估算涂黑区域。
 
 注册：模块底部 `registry.register_parser(PdfParser)`。
 
@@ -209,7 +219,7 @@ def build(rule: Rule, value: str, ctx: ReplaceContext) -> Decision
 | GET | `/api/jobs` | 最近任务列表 |
 | GET | `/api/jobs/{id}` | 状态：`{id, name, fmt, stage, progress, counts:{total,done,pending}, pages, error, warnings}` |
 | GET | `/api/jobs/{id}/entities` | `{entities:[Entity...]}` |
-| GET | `/api/jobs/{id}/preview/{page}?mode=orig\|out` | `PreviewDoc` |
+| GET | `/api/jobs/{id}/preview/{page}?mode=orig\|out` | `PreviewDoc`；`out` 且格式支持时附 `black_rects`（与 human 导出同一套矩形，`black_source:"export-parity"`） |
 | GET | `/api/jobs/{id}/render/{page}?mode=orig\|out` | `image/png`（仅 raster） |
 | POST | `/api/jobs/{id}/mark` | `{page, rect:[x0,y0,x1,y1] 归一化 0..1, etype, propagate}` → `{added, propagated}` |
 | POST | `/api/jobs/{id}/entities/{eid}` | `{action:"accept"\|"reject", replacement?}` |

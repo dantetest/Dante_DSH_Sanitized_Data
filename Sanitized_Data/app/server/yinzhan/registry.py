@@ -44,6 +44,16 @@ class Parser:
     def render(self, doc: Document, page: int, mode: str) -> bytes | None:
         return None
 
+    def export_black_rects(self, doc: Document, entities: list[Entity],
+                           decisions: dict[str, Decision] | None = None
+                           ) -> dict[int, list[tuple[float, float, float, float]]] | None:
+        """可选钩子：返回与 human 导出**完全相同**的涂黑矩形（按页、页面显示坐标）。
+
+        预览端用它代替「按实体框估算」，保证「在线预览 = 下载成品」。
+        返回 None 表示该格式不支持（预览回退到实体框渲染）。
+        """
+        return None
+
 
 class Detector:
     """检测器基类。"""

@@ -1,6 +1,6 @@
-# 支持矩阵与能力口径（v1.1.1）
+# 支持矩阵与能力口径（v1.1.2）
 
-> 口径基准：**v1.1.1**（代码基线 `2c640a8` + 版本号升级；2026-10-21）
+> 口径基准：**v1.1.2**（代码基线 `2c640a8` + 版本号升级；2026-10-21）
 > 用途：对内施工/QA、对外文档/销售的统一口径。**与代码不一致时以代码和门禁测试为准**，并回头修本表。
 > 判定三档：
 
@@ -105,9 +105,9 @@
 
 | 形态 | 状态 | 说明 |
 |---|---|---|
-| Windows 安装包 / 绿色版 | **支持** | v1.1.1 已重建；无需 Python；断网可用；见 [install-guide.md](install-guide.md) |
+| Windows 安装包 / 绿色版 | **支持** | v1.1.2 已重建；无需 Python；断网可用；见 [install-guide.md](install-guide.md) |
 | 源码运行（Windows / Linux / macOS） | **支持** | 需 Python 3.10+；服务器部署见 README |
-| macOS 桌面版（.app/.dmg） | **未发布** | workflow 就绪，未随 v1.1.1 构建（需 GitHub Actions 与 ad-hoc 签名） |
+| macOS 桌面版（.app/.dmg） | **未发布** | workflow 就绪，未随 v1.1.2 构建（需 GitHub Actions 与 ad-hoc 签名） |
 | Web 服务 / 内网部署 | **支持** | 只监听 `127.0.0.1` 或反代部署；无账号体系，不要直接绑公网 |
 | MCP 接入（Claude Desktop / Cursor 等） | **支持** | stdio 服务；`sanitize_document` / `redact_text` / `check_support` / `list_rules` |
 
@@ -137,6 +137,6 @@
 
 ## 7. 维护约定
 
-- 能力/口径变更必须同步：本表 + [../README.md](../README.md)（支持表/已知限制）+ [release-notes-v1.1.1.md](release-notes-v1.1.1.md)。
+- 能力/口径变更必须同步：本表 + [../README.md](../README.md)（支持表/已知限制）+ [release-notes-v1.1.2.md](release-notes-v1.1.2.md)。
 - 测试为准：`app/tests/regression.py`（当前 251 项，以最新输出为准）、`run_all`（16 套件）、`test_mesh`、`test_tiff` 全绿是发布门槛。
 - 新格式/新目标上线前，先在本表增加行并标注档位，再补测试与文档。

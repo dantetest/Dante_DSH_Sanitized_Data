@@ -8,7 +8,9 @@ from . import paths
 
 APP_NAME = "数据隐站"
 APP_NAME_EN = paths.APP_NAME_EN
-VERSION = "1.1.1"
+VERSION = "1.1.2"
+# 仅用于「部署后确认是不是新包」：/api/health 原样返回；不参与业务逻辑。
+BUILD_ID = "20261021-preview-parity"
 
 # 资源（只读）：源码运行时是 app/，打包后是 sys._MEIPASS
 APP_DIR = paths.resource_root()

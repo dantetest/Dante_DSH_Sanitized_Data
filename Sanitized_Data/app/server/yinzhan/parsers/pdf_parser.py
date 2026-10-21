@@ -1634,6 +1634,32 @@ class PdfParser(registry.Parser):
         except OSError:
             return 0.0
 
+    def export_black_rects(self, doc: Document, entities: list[Entity],
+                           decisions: dict[str, Decision] | None = None
+                           ) -> dict[int, list[Box]] | None:
+        """返回与 human 导出完全一致的涂黑矩形（按页、页面显示坐标）。
+
+        与 `export()` 共用 `_collect_ops` + `_merge_ops`：在线预览按这里返回的
+        矩形绘制，因此「预览所见」=「下载成品所涂」，不会再出现预览整行黑、
+        成品只涂实体的情况。
+        """
+        try:
+            warnings: list[str] = []
+            ops_by_page = _collect_ops(doc, entities, decisions or {}, warnings)
+        except Exception:
+            return None
+        result: dict[int, list[Box]] = {}
+        for page_no, ops in (ops_by_page or {}).items():
+            try:
+                merged = _merge_ops(ops, [])
+            except Exception:
+                return None
+            rects = [op["rect"] for op in merged if op["black"]]
+            rects = [r for r in rects if r[2] > r[0] and r[3] > r[1]]
+            if rects:
+                result[int(page_no)] = rects
+        return result
+
     def parse(self, path: Path, ctx: ParseContext) -> Document:
         path = Path(path)
         pdf = _open_pdf(path)

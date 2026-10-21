@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import copy
 import os
 import random
 import re
@@ -157,6 +158,9 @@ class Job:
     preview_doc: Document | None = None
     preview_out: str | None = None
     _preview_dirty: bool = True
+    # 「预览=成品」：缓存按 human 导出同一套几何算出的每页涂黑矩形
+    _black_rects_cache: dict[int, list] | None = None
+    _black_rects_sig: tuple | None = None
 
     lock: threading.RLock = field(default_factory=threading.RLock)
     preview_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -548,6 +552,43 @@ class JobManager:
             return {"accepted": n, "total": len(job.entities)}
 
     # ── 预览 ──
+    def _human_black_rects(self, job: Job) -> dict[int, list] | None:
+        """按 human 导出的同一套实体/决策/几何，计算每页涂黑矩形。
+
+        预览端直接使用这些矩形（而不是按实体框估算），因此「在线预览的涂黑
+        形态」与「下载的涂黑版成品」使用完全相同的几何，不会再出现预览整行黑、
+        成品只涂实体（或反之）的不一致。返回 None 表示该格式不支持，预览回退。
+        """
+        if job.doc is None or job.parser is None:
+            return None
+        sig = tuple(
+            (e.id, e.status,
+             (e.decision.strategy, bool(e.decision.black)) if e.decision else None)
+            for e in job.entities
+        )
+        if job._black_rects_sig == sig and job._black_rects_cache is not None:
+            return job._black_rects_cache
+        fn = getattr(job.parser, "export_black_rects", None)
+        if not callable(fn):
+            return None
+        ents: list[Entity] = []
+        try:
+            for e in job.entities:
+                # 与 _export_to(mode="human") 完全相同的筛选/决策：
+                # rejected 与「尚未确认（decision=None）」不参与导出。
+                if e.status == "rejected" or e.decision is None:
+                    continue
+                clone = copy.copy(e)
+                clone.decision = Decision(strategy="black", black=True, replacement=None)
+                ents.append(clone)
+            rects = fn(job.doc, ents, {})
+            rects = {int(k): list(v) for k, v in (rects or {}).items()}
+        except Exception:
+            return None
+        job._black_rects_sig = sig
+        job._black_rects_cache = rects
+        return rects
+
     def preview(self, job_id: str, page: int, mode: str) -> dict:
         job = self.get(job_id)
         with job.lock:
@@ -556,7 +597,13 @@ class JobManager:
             doc = job.doc
             if mode == "out" and job.preview_doc is not None:
                 doc = job.preview_doc
-            return pipeline.build_preview(doc, job.parser, job.entities, page, mode)
+            black_rects = None
+            if mode == "out" and getattr(job.parser, "can_render", False):
+                all_rects = self._human_black_rects(job)
+                if all_rects is not None:
+                    black_rects = all_rects.get(int(page), [])
+            return pipeline.build_preview(doc, job.parser, job.entities, page, mode,
+                                          black_rects=black_rects)
 
     def render(self, job_id: str, page: int, mode: str) -> bytes:
         job = self.get(job_id)

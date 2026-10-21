@@ -92,10 +92,10 @@ powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 | 文件 | 说明 |
 |---|---|
 | `dist\Sanitized_Data\` | 绿色版目录，可直接压缩分发 |
-| `out\desktop\Sanitized_Data-1.1.1-win64-portable.zip` | 绿色版压缩包（构建脚本自动生成） |
-| `dist_installer\Sanitized_Data_Setup_1.1.1_x64.exe` | 安装包（需要装 Inno Setup 6/7） |
+| `out\desktop\Sanitized_Data-1.1.2-win64-portable.zip` | 绿色版压缩包（构建脚本自动生成） |
+| `dist_installer\Sanitized_Data_Setup_1.1.2_x64.exe` | 安装包（需要装 Inno Setup 6/7） |
 
-v1.1.1 产物的体积与 SHA-256 见 [§六 构建记录](#六v111-重建记录2026-10-21)。
+v1.1.2 产物的体积与 SHA-256 见 [§六 构建记录](#六v111-重建记录2026-10-21)。
 
 > **构建脚本编码要求**：`desktop/build_win.ps1` 与 `desktop/installer.iss` 必须保存为
 > **UTF-8 with BOM**——Windows PowerShell 5.1 与 Inno Setup 才会按 UTF-8 解析中文；
@@ -292,30 +292,30 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 
 ---
 
-## 六、v1.1.1 重建记录（2026-10-21）
+## 六、v1.1.2 重建记录（2026-10-21）
 
 > 构建内容：真实测试集 QA §7 的 P2/P3 五项优化（扫描件 verify 零 OCR 快检、warning 去重、
-> 整页证件收紧、异常大码框待确认、TIF rasterio Orientation 修复）；版本号统一升到 `1.1.1`
+> 整页证件收紧、异常大码框待确认、TIF rasterio Orientation 修复）；版本号统一升到 `1.1.2`
 > （`config.py` / `app.spec` / `installer.iss` / `build_win.ps1` / Web 页面）。
-> 代码基线：`main` 上 tag `v1.1.1`。
+> 代码基线：`main` 上 tag `v1.1.2`。
 
 | 项 | 结果 |
 |---|---|
-| 版本 | `1.1.1` |
+| 版本 | `1.1.2` |
 | 构建时间 | 2026-10-21 13:48–13:51（Asia/Shanghai，最终构建含下载页更新） |
 | 构建机 | Windows 10 Pro 19045 x64，Python 3.12.9 |
 | 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
 | PyInstaller | 6.22.3（onedir；含 `yinzhan` 子模块、cv2 数据文件 110 个） |
 | Inno Setup | 7.1.0 |
 | 绿色版目录 `dist\Sanitized_Data\` | 约 422.8 MiB（解压后） |
-| 绿色版压缩包 `out\desktop\Sanitized_Data-1.1.1-win64-portable.zip` | **191,689,909 B（182.8 MiB）** / SHA-256 `7058FFCD46DD221A1F1D7DF271D380F6ED342CA2FB28C7EADDE2B8B53D05DC72` |
-| 安装包 `dist_installer\Sanitized_Data_Setup_1.1.1_x64.exe` | **168,691,705 B（160.9 MiB）** / SHA-256 `937FEAE026F7570C02BEF31C9E7A4832A105621ECF12C5EC9224F8E7ED02711F` |
+| 绿色版压缩包 `out\desktop\Sanitized_Data-1.1.2-win64-portable.zip` | **191,689,909 B（182.8 MiB）** / SHA-256 `7058FFCD46DD221A1F1D7DF271D380F6ED342CA2FB28C7EADDE2B8B53D05DC72` |
+| 安装包 `dist_installer\Sanitized_Data_Setup_1.1.2_x64.exe` | **168,691,705 B（160.9 MiB）** / SHA-256 `937FEAE026F7570C02BEF31C9E7A4832A105621ECF12C5EC9224F8E7ED02711F` |
 
 ### 6.1 打包后自检
 
-| 检查项 | 期望 | v1.1.1 实测 |
+| 检查项 | 期望 | v1.1.2 实测 |
 |---|---|---|
-| `/api/health` → `version` | `1.1.1` | ✅ `1.1.1`（独立端口 18760 + 临时数据目录） |
+| `/api/health` → `version` | `1.1.2` | ✅ `1.1.2`（独立端口 18760 + 临时数据目录） |
 | `/api/health` → `engine.ocr` | `true` | ✅ `true` |
 | `/api/health` → `engine.parsers` | ≥ 7（docx/image/mesh/pdf/text/tiff/xlsx） | ✅ 7 个全部加载 |
 | `/api/health` → `engine.scanners` | 含 `barcode` 等 | ✅ `barcode,visual_targets,sign_targets` |

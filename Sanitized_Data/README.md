@@ -2,8 +2,8 @@
 
 > 把敏感抹掉，让文件放行。
 
-> 当前版本 **v1.1.1**（2026-10-21）· Windows 桌面安装包 / 绿色版 / 源码运行 ·
-> 优先看：[安装与卸载指南](docs/install-guide.md) · [v1.1.1 发布说明](docs/release-notes-v1.1.1.md)
+> 当前版本 **v1.1.2**（2026-10-21）· Windows 桌面安装包 / 绿色版 / 源码运行 ·
+> 优先看：[安装与卸载指南](docs/install-guide.md) · [v1.1.2 发布说明](docs/release-notes-v1.1.2.md)
 
 律师、医生、财务要把文件喂给豆包 / Kimi / WorkBuddy，但文件里有当事人姓名、身份证号、病历号、客户账号。
 **数据隐站**在本机把这些内容换掉或涂黑，只把处理过的版本交出去。
@@ -45,7 +45,7 @@ chmod +x start.sh && ./start.sh
 
 浏览器会自动打开 `http://127.0.0.1:8760`（端口被占会顺延到 8840）。
 
-> **Windows 用户不想装 Python？** 直接用桌面安装包 `Sanitized_Data_Setup_1.1.1_x64.exe`
+> **Windows 用户不想装 Python？** 直接用桌面安装包 `Sanitized_Data_Setup_1.1.2_x64.exe`
 > 或绿色版，双击即用；安装/卸载/升级见 [docs/install-guide.md](docs/install-guide.md)。
 
 **用法**：首页 →「打开控制台」→ 把文件拖进纸堆 → 等识别 → 左右对照 → 漏了的用「框选补漏」→ 交付。
@@ -141,11 +141,11 @@ YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
 
 | 产物 | 说明 |
 |---|---|
-| `Sanitized_Data_Setup_1.1.1_x64.exe` | Windows x64 安装包（Inno Setup）：装到 `%LOCALAPPDATA%\Programs\Sanitized_Data`，**不需要管理员权限**；自动检查/静默补齐 WebView2 与 VC++ 运行库 |
-| `Sanitized_Data-1.1.1-win64-portable.zip` | Windows x64 绿色版：解压后直接运行 `Sanitized_Data.exe`，免安装 |
+| `Sanitized_Data_Setup_1.1.2_x64.exe` | Windows x64 安装包（Inno Setup）：装到 `%LOCALAPPDATA%\Programs\Sanitized_Data`，**不需要管理员权限**；自动检查/静默补齐 WebView2 与 VC++ 运行库 |
+| `Sanitized_Data-1.1.2-win64-portable.zip` | Windows x64 绿色版：解压后直接运行 `Sanitized_Data.exe`，免安装 |
 | `dist/Sanitized_Data/` | PyInstaller onedir 构建目录（绿色版解压前的目录形态） |
 
-安装包体积 / SHA-256 随 [v1.1.1 发布说明](docs/release-notes-v1.1.1.md) 的发布记录给出。
+安装包体积 / SHA-256 随 [v1.1.2 发布说明](docs/release-notes-v1.1.2.md) 的发布记录给出。
 
 | 文件 | 作用 |
 |---|---|
@@ -160,7 +160,7 @@ YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
 详细说明：
 
 - 安装 / 卸载 / 升级 / 数据位置 / 断网 / 排障：[docs/install-guide.md](docs/install-guide.md)
-- v1.1.1 发布说明（P2/P3：扫描件 verify 零 OCR 快检、warning 去重、整页证件收紧、异常大码框待确认、TIF rasterio Orientation 修复）：[docs/release-notes-v1.1.1.md](docs/release-notes-v1.1.1.md)
+- v1.1.2 发布说明（P2/P3：扫描件 verify 零 OCR 快检、warning 去重、整页证件收紧、异常大码框待确认、TIF rasterio Orientation 修复）：[docs/release-notes-v1.1.2.md](docs/release-notes-v1.1.2.md)
 - v1.1.0 发布说明（相对 v1.0.0 的新能力与已知限制）：[docs/release-notes-v1.1.0.md](docs/release-notes-v1.1.0.md)
 - 格式与能力口径表（自动 / 待确认 / 不支持）：[docs/support-matrix.md](docs/support-matrix.md)
 - 规划与分期：[docs/desktop-plan.md](docs/desktop-plan.md)
@@ -374,10 +374,10 @@ python ..\tests\e2e.py
 | PDF 隐藏数据 | 附件/批注/表单/JS 默认剥离；如确需保留附件，API 可用 `keep_pdf_hidden=true`（需知情，敏感原文仍会被出口自检拦截） |
 | 三维只做有限处理 | 只支持 `.obj/.ply/.glb/.stl` 的文本/注释清理与 OBJ/PLY 顶点平移（GLB 仅 JSON 等长覆盖、STL 头置零）；贴图/MTL/GLB 内嵌图、OSGB、3D Tiles、LAS-LAZ 均不支持；三维结构化 verify 与预览为 0，综合完成度约 20%，**不承诺真实倾斜摄影交付** |
 | TIF 坐标中性化 | 已实现 LOCAL_CS 中性化（GIS 可打开、无真实坐标），中性化参数可逆；`strip` 模式彻底去参考；多帧 TIFF 只剥离不中性化（明确 warning） |
-| TIF Orientation | v1.1.1 起 Pillow 与 rasterio 两条路径 parse/render/export 都按 tag 274 转正（Orientation 1–8），成品不再带 274；rasterio 大图路径的中性化地理变换已同步旋转/交换宽高 |
+| TIF Orientation | v1.1.2 起 Pillow 与 rasterio 两条路径 parse/render/export 都按 tag 274 转正（Orientation 1–8），成品不再带 274；rasterio 大图路径的中性化地理变换已同步旋转/交换宽高 |
 | 扫描件 OCR 精度 | 清晰扫描件够用，手写体和低分辨率照片会漏 |
 | XLSX 宏 | `.xlsm` 导出后不保留宏（会告警） |
-| 安装包 | v1.1.1 Windows 安装包 / 绿色版（`Sanitized_Data_Setup_1.1.1_x64.exe` / `Sanitized_Data-1.1.1-win64-portable.zip`），装到用户目录、无需管理员；**未做代码签名**，SmartScreen / 杀软可能提示「未知发布者」，体积与 SHA-256 见发布说明 |
+| 安装包 | v1.1.2 Windows 安装包 / 绿色版（`Sanitized_Data_Setup_1.1.2_x64.exe` / `Sanitized_Data-1.1.2-win64-portable.zip`），装到用户目录、无需管理员；**未做代码签名**，SmartScreen / 杀软可能提示「未知发布者」，体积与 SHA-256 见发布说明 |
 
 ---
 
@@ -432,7 +432,7 @@ python app\server\rehydrate.py --job j_ab12cd34 回答.txt    # 还原成 回答
 ```
 
 **能不能不装 Python？**
-可以：Windows 用户用桌面安装包（`Sanitized_Data_Setup_1.1.1_x64.exe`）或绿色版即可，Python 运行时与 OCR 模型已打进程序，不需要本机装 Python（安装包约 160 MB，精确体积/SHA-256 见 [v1.1.1 发布说明](docs/release-notes-v1.1.1.md)）。安装步骤见 [docs/install-guide.md](docs/install-guide.md)。源码运行仍需 Python 3.10+。
+可以：Windows 用户用桌面安装包（`Sanitized_Data_Setup_1.1.2_x64.exe`）或绿色版即可，Python 运行时与 OCR 模型已打进程序，不需要本机装 Python（安装包约 160 MB，精确体积/SHA-256 见 [v1.1.2 发布说明](docs/release-notes-v1.1.2.md)）。安装步骤见 [docs/install-guide.md](docs/install-guide.md)。源码运行仍需 Python 3.10+。
 
 **端口被占了？**
 自动从 8760 往后找，实际端口写在 `data/runtime.json`。
@@ -472,7 +472,7 @@ client_max_body_size 512m;
 **扫描件为什么慢？能中途停吗？**
 扫描件没有文本层，只能一页一页跑离线 OCR。当前默认用 **PP-OCRv6 small**，
 现场实测（6 核 CPU、A4 扫描页、42 页测试集）**约 2.1 秒/页**，整套 87 秒。
-v1.1.1 起扫描件导出后的**自检不再整册重跑 OCR**：改用低 DPI 渲染 + 逐矩形像素复检
+v1.1.2 起扫描件导出后的**自检不再整册重跑 OCR**：改用低 DPI 渲染 + 逐矩形像素复检
 （零 OCR），多页扫描件全链路耗时约降 45%–58%（10–17 页扫描件 85–112s → 35–61s）。
 界面上会显示「正在识别第 3/17 页（扫描件）· 约剩 1 分钟」，**随时可以点「换一个文件」中断**，
 后端会立刻停止当前页之后的处理。

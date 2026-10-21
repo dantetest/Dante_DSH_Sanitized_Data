@@ -63,6 +63,8 @@ def _specs() -> list[dict]:
          "label": "判决书类文本检测回归（跨行案号/地址/标签姓名/带空格金额）"},
         {"key": "previewboxes", "file": TESTS / "test_preview_boxes.py", "timeout": 120,
          "label": "预览矩形一致性（OCR 行块按字符比例插值，不整行涂黑）"},
+        {"key": "previewparity", "file": TESTS / "test_preview_export_parity.py",
+         "timeout": 300, "label": "预览=成品一致性（预览黑框与 human 导出同一套矩形）"},
         {"key": "pipl", "file": TESTS / "test_pipl_rules.py", "timeout": 600,
          "label": "PIPL 补充规则 + XLSX 纯数值单元格自测"},
         {"key": "table", "file": TESTS / "test_table_column.py", "timeout": 600,
