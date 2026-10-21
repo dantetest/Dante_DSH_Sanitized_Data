@@ -20,3 +20,7 @@ _telegram_setup/
 *.log
 *.tmp
 ~$*
+
+# 本机 MCP 联调临时产物（含密钥/映射库，绝不入库）
+_mcp_probe/
+
