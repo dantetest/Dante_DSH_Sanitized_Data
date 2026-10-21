@@ -28,16 +28,27 @@ def fetch(retries=20, delay=2):
 def main() -> int:
     h = fetch()
     eng = h.get("engine") or {}
+    version = h.get("version") or ""
+    build = h.get("build") or ""
+    parity = eng.get("preview_parity")
     parsers = eng.get("parsers") or []
     detectors = eng.get("detectors") or []
     packs = eng.get("packs") or []
-    print("version  =", h.get("version"))
+    print("version  =", version)
+    print("build    =", build)
+    print("parity   =", parity)
     print("parsers  =", parsers)
     print("detectors=", detectors)
     print("packs    =", [p.get("id") for p in packs])
     print("ocr      =", eng.get("ocr"))
 
     ok = True
+    if not version:
+        print("✗ 健康检查没有 version")
+        ok = False
+    if parity != "export-parity/v1":
+        print("✗ 预览=成品字段缺失或不匹配（旧包？）")
+        ok = False
     if len(parsers) < 5:
         print("✗ 解析器没打进包（应 >= 5）")
         ok = False
@@ -48,7 +59,7 @@ def main() -> int:
         print("✗ OCR 不可用")
         ok = False
     if ok:
-        print("✓ 冒烟测试通过")
+        print("✓ 冒烟测试通过（插件齐全 + 预览=成品字段在位）")
         return 0
     return 1
 

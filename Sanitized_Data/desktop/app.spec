@@ -5,6 +5,7 @@
 
 产物：dist/Sanitized_Data/（onedir，启动快，不会每次解压）
 """
+import re
 import sys
 from pathlib import Path
 
@@ -13,6 +14,20 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 ROOT = Path(SPECPATH).resolve().parent        # Sanitized_Data/
 APP = ROOT / "app"
 ENTRY = ROOT / "desktop" / "main.py"
+
+
+def _app_version() -> str:
+    """单一版本源：app/server/yinzhan/config.py 的 VERSION（Windows/macOS 共用）。"""
+    text = (APP / "server" / "yinzhan" / "config.py").read_text(encoding="utf-8")
+    match = re.search(r'^VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if not match:
+        raise SystemExit("无法从 config.py 解析 VERSION")
+    return match.group(1)
+
+
+APP_VERSION = _app_version()
+print(f"[spec] APP_VERSION = {APP_VERSION}")
+
 # 图标资产：唯一图源 desktop/assets/app.svg，派生 app.ico / app.icns（重建方法见
 # docs/research/06-图标适配检查与替换记录.md）。Windows 用 ico，macOS 用 icns。
 ASSETS = ROOT / "desktop" / "assets"
@@ -112,8 +127,8 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "数据隐站",
             "CFBundleDisplayName": "数据隐站",
-            "CFBundleShortVersionString": "1.1.1",
-            "CFBundleVersion": "1.1.1",
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
             "NSRequiresAquaSystemAppearance": False,

@@ -1,15 +1,19 @@
-name: build-desktop
+name: build-desktop-macos
 
-# 用途：在 GitHub 的 macOS 机器上打出「免签名测试包」，不需要苹果开发者账号。
+# 用途：在 GitHub 的 macOS runner 上打出「免签名测试包」，不需要苹果开发者账号。
 #
-# 产物：Sanitized_Data-arm64.dmg（Apple Silicon）/ Sanitized_Data-x64.dmg（Intel）
+# 产物（版本号取自 Sanitized_Data/app/server/yinzhan/config.py 的 VERSION）：
+#   Sanitized_Data-<version>-arm64.dmg   （Apple Silicon）
+#   Sanitized_Data-<version>-x64.dmg     （Intel）
 # 测试者打开方式：右键 → 打开；或终端执行
 #   xattr -dr com.apple.quarantine /Applications/Sanitized_Data.app
 #
-# 触发：
-#   - push 到 main：只出 arm64（快，日常够用）
-#   - 手动 Run workflow：可选是否同时出 Intel 包
-#   - 打 v* 标签：两个架构都出，并挂到 Release
+# 触发（每次 push main 同时出双架构；公开仓库 macOS runner 免费）：
+#   - push 到 main / 手动 Run workflow：arm64 + x64 都构建，产物在 Actions 页面下载
+#   - 打 v* 标签：双架构都构建，并自动挂到 GitHub Release
+#
+# 说明：macOS 13/14 runner 已陆续退役，这里用当前受支持的 macos-15（x64）与
+#       macos-15-arm64（Apple Silicon）；若未来标签变化，按 Actions 报错提示替换。
 
 on:
   workflow_dispatch:
@@ -17,11 +21,13 @@ on:
     branches: [main]
     tags: ['v*']
 
+permissions:
+  contents: write
+
 jobs:
-  # ── Apple Silicon：每次必建 ──
   macos-arm64:
     name: macOS (arm64)
-    runs-on: macos-14
+    runs-on: macos-15-arm64
     defaults:
       run:
         working-directory: Sanitized_Data
@@ -37,6 +43,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r app/server/requirements.txt
           python -m pip install pyinstaller pywebview
+
+      - name: 读取版本号
+        run: |
+          VERSION=$(grep -m1 '^VERSION = ' app/server/yinzhan/config.py | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "版本号：$VERSION"
 
       - name: PyInstaller 打包
         run: python -m PyInstaller --clean --noconfirm desktop/app.spec
@@ -50,38 +62,33 @@ jobs:
         run: |
           hdiutil create -volname "Sanitized_Data" \
             -srcfolder "dist/Sanitized_Data.app" \
-            -ov -format UDZO "Sanitized_Data-arm64.dmg"
+            -ov -format UDZO "Sanitized_Data-${APP_VERSION}-arm64.dmg"
           ls -lh *.dmg
+          shasum -a 256 *.dmg | tee "SHA256SUMS-macos-arm64.txt"
 
-      - name: 冒烟测试（能起 + 插件齐全）
+      - name: 冒烟测试（挂载 DMG → 启动 app → 健康检查）
         run: |
           mkdir -p /tmp/smoke
-          hdiutil attach "Sanitized_Data-arm64.dmg" -mountpoint /tmp/smoke -nobrowse
-          cp -R "/tmp/smoke/Sanitized_Data.app" /tmp/app.app || cp -R /tmp/smoke/*.app /tmp/app.app
+          hdiutil attach "Sanitized_Data-${APP_VERSION}-arm64.dmg" -mountpoint /tmp/smoke -nobrowse
+          cp -R "/tmp/smoke/Sanitized_Data.app" /tmp/app.app
           hdiutil detach /tmp/smoke -quiet || true
           /tmp/app.app/Contents/MacOS/Sanitized_Data &
           APP_PID=$!
-          sleep 20
+          sleep 15
           python3 ../.github/scripts/smoke_check.py
-          kill $APP_PID || true
+          kill "$APP_PID" || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: Sanitized_Data/Sanitized_Data-arm64.dmg
+          path: |
+            Sanitized_Data/Sanitized_Data-*.dmg
+            Sanitized_Data/SHA256SUMS-macos-arm64.txt
           if-no-files-found: error
 
-      - name: 挂到 Release（打 tag 时）
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: Sanitized_Data/Sanitized_Data-arm64.dmg
-
-  # ── Intel：只在打标签时自动建；手动触发时也会建 ──
   macos-x64:
     name: macOS (x64)
-    runs-on: macos-13
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-15
     defaults:
       run:
         working-directory: Sanitized_Data
@@ -98,6 +105,12 @@ jobs:
           python -m pip install -r app/server/requirements.txt
           python -m pip install pyinstaller pywebview
 
+      - name: 读取版本号
+        run: |
+          VERSION=$(grep -m1 '^VERSION = ' app/server/yinzhan/config.py | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "版本号：$VERSION"
+
       - name: PyInstaller 打包
         run: python -m PyInstaller --clean --noconfirm desktop/app.spec
 
@@ -109,28 +122,50 @@ jobs:
         run: |
           hdiutil create -volname "Sanitized_Data" \
             -srcfolder "dist/Sanitized_Data.app" \
-            -ov -format UDZO "Sanitized_Data-x64.dmg"
+            -ov -format UDZO "Sanitized_Data-${APP_VERSION}-x64.dmg"
+          ls -lh *.dmg
+          shasum -a 256 *.dmg | tee "SHA256SUMS-macos-x64.txt"
 
-      - name: 冒烟测试（能起 + 插件齐全）
+      - name: 冒烟测试（挂载 DMG → 启动 app → 健康检查）
         run: |
           mkdir -p /tmp/smoke
-          hdiutil attach "Sanitized_Data-x64.dmg" -mountpoint /tmp/smoke -nobrowse
-          cp -R "/tmp/smoke/Sanitized_Data.app" /tmp/app.app || cp -R /tmp/smoke/*.app /tmp/app.app
+          hdiutil attach "Sanitized_Data-${APP_VERSION}-x64.dmg" -mountpoint /tmp/smoke -nobrowse
+          cp -R "/tmp/smoke/Sanitized_Data.app" /tmp/app.app
           hdiutil detach /tmp/smoke -quiet || true
           /tmp/app.app/Contents/MacOS/Sanitized_Data &
           APP_PID=$!
-          sleep 20
+          sleep 15
           python3 ../.github/scripts/smoke_check.py
-          kill $APP_PID || true
+          kill "$APP_PID" || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos-x64
-          path: Sanitized_Data/Sanitized_Data-x64.dmg
+          path: |
+            Sanitized_Data/Sanitized_Data-*.dmg
+            Sanitized_Data/SHA256SUMS-macos-x64.txt
           if-no-files-found: error
 
-      - name: 挂到 Release（打 tag 时）
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  release:
+    name: 挂到 GitHub Release（打 tag 时）
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos-arm64, macos-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          files: Sanitized_Data/Sanitized_Data-x64.dmg
+          path: artifacts
+
+      - name: 汇总校验值
+        run: |
+          cd artifacts
+          find . -name '*.dmg' -exec shasum -a 256 {} \; > SHA256SUMS-macos.txt
+          cat SHA256SUMS-macos.txt
+          ls -lh macos-*/*.dmg
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/macos-arm64/*.dmg
+            artifacts/macos-x64/*.dmg
+            artifacts/SHA256SUMS-macos.txt

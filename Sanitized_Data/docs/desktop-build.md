@@ -153,21 +153,23 @@ git push github main
 
 | 步骤 | 作用 |
 |---|---|
-| `macos-14` / `macos-13` 双矩阵 | 分别出 arm64（Apple Silicon）和 x64（Intel） |
+| `macos-15-arm64` / `macos-15` 双任务 | 分别出 arm64（Apple Silicon）和 x64（Intel）；macOS 13/14 runner 已退役 |
 | `pip install -r requirements.txt` | 装引擎依赖 |
 | `pyinstaller desktop/app.spec` | 打包成 `.app` |
 | `codesign --force --deep --sign -` | **ad-hoc 签名**，arm64 必需 |
-| `hdiutil create ... UDZO` | 打成 dmg |
+| `hdiutil create ... UDZO` | 打成 dmg，文件名带版本号：`Sanitized_Data-<version>-{arm64,x64}.dmg` |
 | 冒烟测试 | 挂载 dmg、起 app、`curl /api/health` |
 | `upload-artifact` | 产物在 Actions 页面下载 |
 | tag 时自动挂 Release | 打 `v*` 标签（如 `v1.1.0`）就出一条 Release |
 
-**触发方式**：GitHub 页面 → Actions → build-desktop → Run workflow；或者 push 一个 `v*` 标签。
+**触发方式**：push 到 `main` 即同时构建双架构（公开仓库 macOS runner 免费）；也可在 GitHub 页面 → Actions → build-desktop-macos → Run workflow；打 `v*` 标签会额外把两个 DMG 挂到 GitHub Release。
+
+> **前提**：本机需要该 GitHub 仓库的写权限凭据（PAT 或已登录的 gh）；否则无法 push/触发 Actions。没有 GitHub 凭据时，可改用 §2.5 的 Mac 手工构建。
 
 ### 2.3 测试者怎么装
 
 ```
-1. 下载 Sanitized_Data-arm64.dmg（M 系列芯片）或 -x64.dmg（Intel）
+1. 下载 Sanitized_Data-<version>-arm64.dmg（M 系列芯片）或 -<version>-x64.dmg（Intel）
 2. 双击打开，把「数据隐站」拖到 Applications
 3. 首次打开被拦时的两种解法：
 
@@ -176,6 +178,18 @@ git push github main
 ```
 
 装好之后就和正式版没区别，全功能可用、离线可用。
+
+### 2.5 手工构建（有 Mac 时）
+
+没有 GitHub Actions 凭据时，可在一台 macOS 机器上直接构建（需 Xcode Command Line Tools）：
+
+```bash
+bash desktop/build_mac.sh
+```
+
+脚本会：读取 `config.py` 的 VERSION → PyInstaller 打 `.app` → ad-hoc 签名 →
+`hdiutil` 出 DMG（`Sanitized_Data-<version>-<arch>.dmg`）→ 启动 app 用
+`.github/scripts/smoke_check.py` 断言「插件齐全 + 预览=成品字段在位」。
 
 ### 2.4 什么时候必须买账号
 
@@ -198,7 +212,7 @@ git push github main
 | P0 路径适配（`yinzhan/paths.py`） | ✅ 完成，三种形态（源码 / 桌面 / 环境变量覆盖）都验证过 |
 | P1 PyInstaller 打包 | ✅ 完成（v1.1.0，2026-10-21）：`dist\Sanitized_Data\` 已重建，记录见 §五 |
 | P2 Inno Setup 安装包 | ✅ 完成（v1.1.0，2026-10-21）：`dist_installer\Sanitized_Data_Setup_1.1.0_x64.exe`，记录见 §五 |
-| P3 macOS 免签名测试包 | 🟡 workflow 就绪；v1.1.0 macOS 包未构建（待镜像到 GitHub 后触发） |
+| P3 macOS 免签名测试包 | 🟡 v1.1.2 构建配置就绪（双架构 macos-15 runner、DMG 带版本号、冒烟断言预览=成品字段）；本机无 GitHub 凭据，待提供 PAT / 手动 push 后触发 |
 | P4 正式签名公证 | ⏸ 需要 Apple 开发者账号 |
 | P5 托盘 / 开机自启 | ⏸ 未开始（窗口 + 自动浏览器兜底、单实例已实现） |
 
