@@ -265,14 +265,14 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 | 项 | 结果 |
 |---|---|
 | 版本 | `1.1.0` |
-| 构建时间 | 2026-10-21 12:31–12:34（Asia/Shanghai） |
+| 构建时间 | 2026-10-21 12:39–12:43（Asia/Shanghai，含源码包/下载页的最终构建） |
 | 构建机 | Windows 10 Pro 19045 x64，Python 3.12.9 |
 | 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
 | PyInstaller | 6.22.3（onedir；含 `yinzhan` 子模块 44 个、cv2 数据文件 110 个） |
 | Inno Setup | 7.1.0（编译耗时 118s） |
-| 绿色版目录 `dist\Sanitized_Data\` | **418.8 MiB**（解压后） |
-| 绿色版压缩包 `out\desktop\Sanitized_Data-1.1.0-win64-portable.zip` | **187,452,485 B（178.8 MiB）** / SHA-256 `0C7722498A51325B2B42355EFF6D25086B94EEC604260F256B2EFEBABBB2ADC4` |
-| 安装包 `dist_installer\Sanitized_Data_Setup_1.1.0_x64.exe` | **164,420,430 B（156.8 MiB）** / SHA-256 `88692234BC3A9105BB8F0D017462C5FFE67A34A7B3B54AA00CABC5C9270EC10D` |
+| 绿色版目录 `dist\Sanitized_Data\` | **422.7 MiB**（解压后） |
+| 绿色版压缩包 `out\desktop\Sanitized_Data-1.1.0-win64-portable.zip` | **191,606,312 B（182.7 MiB）** / SHA-256 `F709237BF1DC5F6FB249389A0C5CCC6D97368D16CDBBA28D0C466AC0850F31D8` |
+| 安装包 `dist_installer\Sanitized_Data_Setup_1.1.0_x64.exe` | **168,594,784 B（160.8 MiB）** / SHA-256 `86BCC6B66A50308A39F698A5BF7CE1BD761FD721E3668A99ADBD819F63329E0B` |
 
 ### 5.1 打包后自检
 
