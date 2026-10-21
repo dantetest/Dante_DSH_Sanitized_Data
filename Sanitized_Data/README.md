@@ -143,6 +143,8 @@ YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
 |---|---|
 | `Sanitized_Data_Setup_1.1.2_x64.exe` | Windows x64 安装包（Inno Setup）：装到 `%LOCALAPPDATA%\Programs\Sanitized_Data`，**不需要管理员权限**；自动检查/静默补齐 WebView2 与 VC++ 运行库 |
 | `Sanitized_Data-1.1.2-win64-portable.zip` | Windows x64 绿色版：解压后直接运行 `Sanitized_Data.exe`，免安装 |
+| `Sanitized_Data-1.1.2-arm64.dmg` | macOS Apple Silicon（M 系列）DMG：ad-hoc 签名测试包，拖入 Applications 即用；首次打开需右键 → 打开（未公证） |
+| `Sanitized_Data-1.1.2-x64.dmg` | macOS Intel DMG：ad-hoc 签名测试包，同上 |
 | `dist/Sanitized_Data/` | PyInstaller onedir 构建目录（绿色版解压前的目录形态） |
 
 安装包体积 / SHA-256 随 [v1.1.2 发布说明](docs/release-notes-v1.1.2.md) 的发布记录给出。
@@ -154,7 +156,7 @@ YINZHAN_ALLOWED_ORIGINS="https://cka.blctek.com:8443" ./start.sh
 | `desktop/build_win.ps1` | Windows 一键打包：装依赖 → 打包 → 补 VC++ DLL → 自检 → 出安装包 |
 | `desktop/installer.iss` | Inno Setup 安装包，自动检查并静默补齐 WebView2 / VC++ |
 | `desktop/fetch_redist.ps1` | 拉取 WebView2 与 VC++ 运行库安装文件 |
-| `.github/workflows/build-macos.yml` | macOS 免签名测试包（GitHub Actions 双架构） |
+| `.github/workflows/build-macos.yml` | macOS 免签名测试包（GitHub Actions：macos-15 arm64 / macos-15-intel） |
 | `app/server/yinzhan/paths.py` | 资源/数据目录解析，区分源码运行、桌面版、环境变量覆盖 |
 
 详细说明：

@@ -1,6 +1,6 @@
 # 安装与卸载指南（v1.1.2）
 
-> 适用版本：**v1.1.2**（Windows 10/11 x64 桌面版；Linux / macOS 走源码运行）
+> 适用版本：**v1.1.2**（Windows 10/11 x64 桌面版；macOS arm64 / Intel DMG；Linux 走源码运行）
 > 更新日期：2026-10-21
 > 相关：[v1.1.2 发布说明](release-notes-v1.1.2.md) · [格式与能力口径表](support-matrix.md) · [构建文档](desktop-build.md) · [项目 README](../README.md)
 
@@ -107,7 +107,7 @@ pip install -r app/server/requirements.txt
 | 服务日志 | `<数据目录>\server.log` |
 | 诊断文件 | `<数据目录>\diagnose.txt`（运行 `--diagnose` 后生成） |
 
-- macOS 桌面版（未随 v1.1.2 发布）对应 `~/Library/Application Support/Sanitized_Data`。
+- macOS 桌面版（v1.1.2 起提供 arm64 / Intel DMG）对应 `~/Library/Application Support/Sanitized_Data`。
 - 数据目录可覆盖：设置环境变量 `YINZHAN_DATA_DIR`；导出目录可单独用 `YINZHAN_OUTPUT_DIR` 覆盖。
 - 安装版/绿色版**程序目录与数据目录分离**，替换程序不影响数据。
 
@@ -219,6 +219,7 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Sanitized_Data"
 | 安装包 `Sanitized_Data_Setup_1.1.2_x64.exe` | 发布页（Gitea Release）/ 构建机 `dist_installer/` |
 | 绿色版 `Sanitized_Data-1.1.2-win64-portable.zip` | 发布页 / 构建机 `out/desktop/` |
 | 源码包 `Sanitized_Data-1.1.2-win64.zip` / `-linux64.tar.gz` | 已从站点 `/download` 下架；内部仓库 / Release 历史附件可获取 |
+| macOS `Sanitized_Data-1.1.2-arm64.dmg` / `-x64.dmg` | 发布页（Gitea Release）/ 构建产物 out/desktop/macos/ |
 
 校验（PowerShell）：
 

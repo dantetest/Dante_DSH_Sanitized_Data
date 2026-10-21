@@ -34,13 +34,14 @@
     <h1 style="font-size:clamp(26px,3.4vw,36px)">下载数据隐站</h1>
     <p class="lead" style="max-width:760px">
       Windows 用户推荐使用<b>桌面安装包</b>：离线可用、不需要本机装 Python，双击安装即用；
-      也可使用免安装的绿色版。
+      也可使用免安装的绿色版。macOS 用户用下方 DMG（Apple Silicon / Intel）。
       <span class="muted" style="font-size:12px;display:block;margin-top:8px">源码包已下架；如需 Linux / 服务器部署的源码，请联系项目维护者。</span>
     </p>
     <div class="chips">
       <span class="chip">版本 v1.1.2</span>
       <span class="chip">预览=成品</span>
       <span class="chip">Windows x64</span>
+      <span class="chip">macOS 双架构</span>
       <span class="chip">绿色版</span>
       <span class="chip">离线可用</span>
     </div>
@@ -79,8 +80,42 @@
       <tr><th>SHA-256</th><td>安装包 / 绿色版校验值见 <a href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.1.2" target="_blank" rel="noopener">Release 页 v1.1.2</a> 附件 <code>SHA256SUMS.txt</code> 与仓库内 <code>docs/release-notes-v1.1.2.md</code> §5</td></tr>
       <tr><th>桌面安装包</th><td>160.9 MiB · 绿色版 182.8 MiB · Windows 10/11 x64，无需 Python</td></tr>
       <tr><th>运行环境</th><td>Windows 10/11 x64 · 约 300 MB 内存 · OCR 首次加载约 2 秒</td></tr>
+      <tr><th>macOS 版</th><td>arm64 195.1 MiB / Intel 188.8 MiB · DMG（ad-hoc 签名，未公证）；校验值见 Release 附件 <code>SHA256SUMS-macos.txt</code></td></tr>
       <tr><th>网络</th><td>不需要联网；引擎本身不发任何外呼</td></tr>
     </table>
+  </section>
+
+  <section>
+    <h2>macOS 桌面版</h2>
+    <p class="muted" style="margin-bottom:14px">
+      免签名测试包（ad-hoc 签名、未做 Apple 公证）。首次打开若被系统拦下：
+      在「应用程序」里右键应用 → 打开；或终端执行
+      <code>xattr -dr com.apple.quarantine /Applications/Sanitized_Data.app</code>。
+    </p>
+    <div class="dl-grid">
+      <div class="dl">
+        <div class="os">MACOS · ARM64 · APPLE SILICON</div>
+        <div class="file">Sanitized_Data-1.1.2-arm64.dmg</div>
+        <div class="size">195.1 MiB · M 系列芯片</div>
+        <p class="muted" style="font-size:12px">
+          拖入「应用程序」即可；数据目录 <code>~/Library/Application Support/Sanitized_Data</code>。
+        </p>
+        <div class="act">
+          <a class="btn primary" href="https://git.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/download/v1.1.2/Sanitized_Data-1.1.2-arm64.dmg" download>下载 DMG ↓</a>
+        </div>
+      </div>
+      <div class="dl">
+        <div class="os">MACOS · x64 · INTEL</div>
+        <div class="file">Sanitized_Data-1.1.2-x64.dmg</div>
+        <div class="size">188.8 MiB · Intel Mac</div>
+        <p class="muted" style="font-size:12px">
+          拖入「应用程序」即可；与 Apple Silicon 版同源、同版本。
+        </p>
+        <div class="act">
+          <a class="btn primary" href="https://git.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/download/v1.1.2/Sanitized_Data-1.1.2-x64.dmg" download>下载 DMG ↓</a>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section>

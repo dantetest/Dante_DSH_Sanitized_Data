@@ -212,7 +212,7 @@ bash desktop/build_mac.sh
 | P0 路径适配（`yinzhan/paths.py`） | ✅ 完成，三种形态（源码 / 桌面 / 环境变量覆盖）都验证过 |
 | P1 PyInstaller 打包 | ✅ 完成（v1.1.0，2026-10-21）：`dist\Sanitized_Data\` 已重建，记录见 §五 |
 | P2 Inno Setup 安装包 | ✅ 完成（v1.1.0，2026-10-21）：`dist_installer\Sanitized_Data_Setup_1.1.0_x64.exe`，记录见 §五 |
-| P3 macOS 免签名测试包 | 🟡 v1.1.2 构建配置就绪（双架构 macos-15 runner、DMG 带版本号、冒烟断言预览=成品字段）；本机无 GitHub 凭据，待提供 PAT / 手动 push 后触发 |
+| P3 macOS 免签名测试包 | ✅ 完成（v1.1.2，2026-10-21）：GitHub Actions `macos-15`（arm64）+ `macos-15-intel`（Intel）双架构构建成功，ad-hoc 签名 + DMG + 冒烟检查全过；`Sanitized_Data-1.1.2-{arm64,x64}.dmg` 已挂 Gitea Release |
 | P4 正式签名公证 | ⏸ 需要 Apple 开发者账号 |
 | P5 托盘 / 开机自启 | ⏸ 未开始（窗口 + 自动浏览器兜底、单实例已实现） |
 
@@ -260,7 +260,17 @@ bash desktop/build_mac.sh
 安装包在无交互桌面会话里无法完成 GUI 安装流程，**需在真实桌面上双击验证**；
 安装包本体编译通过（Inno 7，67 秒，134.1 MB）。
 
-### macOS
+### macOS（v1.1.2，2026-10-21）
+
+| 项 | 结果 |
+|---|---|
+| 构建机 | GitHub Actions：`macos-15`（arm64）+ `macos-15-intel`（x64） |
+| 产物 | `Sanitized_Data-1.1.2-arm64.dmg`（204,563,156 B）/ `-x64.dmg` |
+| 签名 | ad-hoc（`codesign --force --deep --sign -`），未公证，首次打开需右键→打开 |
+| 冒烟 | 挂载 DMG → 启动 .app → `/api/health`：7 解析器 / 6 检测器 / OCR 就绪 / `version=1.1.2` / `preview_parity=export-parity/v1`，两架构均通过 |
+| 包内校验 | 7-Zip 解包核对：`Info.plist` CFBundleVersion=1.1.2、Mach-O 架构正确、`web/logo.svg`（金粒图标）在包、8 个规则包齐全 |
+
+### 历史（v1.0.0）macOS 构建记录
 
 arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解析器」的问题，
 冒烟测试只检查了 `/api/health` 返回 200，没有检查解析器数量。
