@@ -1,8 +1,8 @@
 # 正射 TIF P0 实现说明（大图 / 位深 / 坐标中性化 / sidecar / ICC / Orientation）
 
-> 状态：已实现（P0 + P0 缺陷修复 Orientation） · 2026-10-20 · 负责人：researcher-geo（task-11 / task-40）
+> 状态：已实现（P0 + Orientation 全路径修复 P2） · 2026-10-21 · 负责人：researcher-geo（task-11 / task-40）/ Lead（rasterio Orientation P2）
 > 代码：`app/server/yinzhan/georef.py`（纯逻辑）、`app/server/yinzhan/parsers/tiff_parser.py`（解析/导出路径 + Orientation 转正）
-> 测试：`app/tests/test_tiff.py`（36 项）+ `app/tests/e2e.py`（5/5）+ `app/tests/regression.py`（**240 项硬检查全绿**）
+> 测试：`app/tests/test_tiff.py`（**39 项**）+ `app/tests/e2e.py`（5/5）+ `app/tests/regression.py`（硬检查全绿，以最新输出为准）
 > 上游决策：方案 A 已批准 D1 中性化必须、D2 可还原、D3 本地任意 CRS、D4 允许 rasterio/pyproj、D7 位深默认保留（见 `docs/research/03-…md` §8.2 与 `docs/research/00-…md`）。
 
 ---
@@ -83,7 +83,7 @@ Orientation 标签。TIFF 的落点：
 | 路径 | parse | render | export | 说明 |
 |---|---|---|---|---|
 | **Pillow 路径**（多帧/无 rasterio/大图拒绝后的回退） | ✅ 转正 | ✅ 转正 | ✅ 转正 + **不写 274** | 单帧 TIFF 才转正（保持多帧帧结构）；`KEEP_TAGS` 已移除 274 |
-| **rasterio 路径**（单页大图/正射主场景） | ⚠️ 不转正（已知限制 P1） | 保持原始像素朝向（与 parse 坐标一致） | ⚠️ 不转正 + 不写 274 | parse/export 都发明确 warning，建议先转正源图或强制 Pillow 路径 |
+| **rasterio 路径**（单页大图/正射主场景） | ✅ 转正（P2 修复） | ✅ 转正 | ✅ 转正 + **不写 274** | 支持 Orientation 1–8；按“查看器像素”重新分窗写回；中性化 transform 已同步旋转/交换宽高（`verify_exported_geo` 复检通过） |
 
 **实现要点**：
 - 新增轻量 IFD 读取 `_read_tiff_orientation()`（不依赖 rasterio/PIL 全解码；BigTIFF/损坏按 1 处理）。
@@ -95,6 +95,17 @@ Orientation 标签。TIFF 的落点：
 - 导出 Pillow 路径在涂黑前转正，因此 `entity.spans` 的像素坐标与页面尺寸一致；
   `_safe_tiffinfo()` 只保留 282/283/296，并显式 `pop(274)`。
 - 成品重解析 `doc.meta["orientation"]=1`（无标签），页面尺寸保持转正后的像素尺寸。
+- **rasterio 路径 Orientation（P2，2026-10-21）**：
+  - 解析：`_orientation_size()` 交换 5–8 的宽高；`_orient_rgb_array()` 按 PIL
+    `exif_transpose` 等价规则转正预览/OCR/扫描用图；页面尺寸与坐标统一为“查看器方向”。
+  - 地理变换：`transform' = src_transform ∘ M`，其中 `M` 是“查看器像素 → 存储像素”
+    的仿射矩阵（`_orientation_matrix`，覆盖 1–8）。`doc.extra["geo_transform"]` 与
+    中性化参数 `src_transform/dst_transform` 都基于 `transform'`，保证成品地理坐标正确。
+  - 导出：以查看器尺寸建目标 GTiff；逐个目标窗口反查源窗口（`_display_to_source_rect`），
+    读源像素 → `_orient_bands()` 转正 → 在查看器坐标涂黑/换名 → 写目标窗口；
+    保留原 dtype/波段/压缩/内部金字塔，成品不再带 274。
+  - 测试：`TestOrientation` 覆盖 2–8 全部方向（parse/render/export 像素与 PIL 一致）、
+    “查看器坐标涂黑”（非存储坐标）、地理参考+Orientation 的中性化 transform 复检。
 
 ---
 
@@ -111,8 +122,8 @@ Orientation 标签。TIFF 的落点：
 | 源 TIFF 带 `.tfw/.prj/.aux.xml/.ovr/.kml/.rpc/.rpb/.imd/.xml` | 删除成品派生 sidecar（不碰源文件） | 删除失败时 warning |
 | 4+ 波段 | 前 3 波段按 RGB 处理、其余原样；RGBN/alpha 语义另行提示 | √ |
 | 非 8bit / 单波段影像上的“换名文本” | 退化为涂黑（否则会破坏 dtype/波段），只 warning 一次 | √ |
-| 源 TIFF 带 Orientation=3/6/8（Pillow 路径） | parse/render/export 按 274 转正像素；成品不写 274 | “已按 TIFF Orientation=… 转正像素” |
-| 源 TIFF 带 Orientation（rasterio 路径） | 保持原始像素朝向（已知限制 P1），parse/export 明确 warning；成品无 274 | “rasterio 路径暂不转正像素” |
+| 源 TIFF 带 Orientation=2–8（Pillow 或 rasterio 路径） | parse/render/export 按 274 转正像素（rasterio 路径同样支持，含坐标变换同步）；成品不写 274 | “已按 TIFF Orientation=… 转正像素” |
+| 源 TIFF 带地理参考 + Orientation（rasterio 路径） | 中性化写 LOCAL_CS；dst_transform 按查看器像素旋转/交换宽高，复检一致 | “已按 TIFF Orientation=… 转正像素（rasterio 路线…）” |
 | 多帧 TIFF 带 Orientation | 为保持帧结构不逐帧转正（warning）；单帧才转 | “多帧 TIFF 含 Orientation…未逐帧转正” |
 
 ---

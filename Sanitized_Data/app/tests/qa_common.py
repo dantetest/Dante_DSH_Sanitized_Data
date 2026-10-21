@@ -27,6 +27,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+import numpy as np
+
 REPO = Path(__file__).resolve().parents[2]
 SERVER = REPO / "app" / "server"
 TESTS = REPO / "app" / "tests"
@@ -3393,14 +3395,19 @@ def tiff_orientation_chain_test() -> dict:
             res["pillow"] = pillow
         finally:
             georef.HAS_RASTERIO = old
-        # rasterio 路径（真实环境有 rasterio）：不转正像素但成品无 274（已知限制）
+        # rasterio 路径（真实环境有 rasterio）：P2 修复后与 Pillow 路径一致地转正像素，
+        # 成品无 274；页面尺寸/像素必须以“查看器方向”为准。
         raster = {"has_rasterio": bool(georef.has_rasterio())}
         if raster["has_rasterio"]:
             try:
                 job2 = _p1b_job(src)
                 meta2 = dict(getattr(job2.doc, "meta", None) or {})
+                page2 = job2.doc.pages[0]
                 raster.update({"engine": meta2.get("engine"),
                                "orientation": meta2.get("orientation"),
+                               "orientation_applied": bool(
+                                   meta2.get("orientation_applied")),
+                               "page_size": [float(page2.width), float(page2.height)],
                                "warnings": [w for w in (job2.doc.warnings or [])
                                             if "Orientation" in str(w)][:3]})
                 from yinzhan import pipeline as _pipeline3
@@ -3408,17 +3415,32 @@ def tiff_orientation_chain_test() -> dict:
                 _pipeline3.export(job2.doc, job2.parser, list(job2.entities),
                                   out2, {"mode": "human"})
                 with Image.open(out2) as im3:
+                    raster["out_size"] = list(im3.size)
                     raster["out_tag"] = im3.getexif().get(274)
+                    out_rgb = np.asarray(im3.convert("RGB"))
+                with Image.open(src) as ims:
+                    stored2 = (ims.tag_v2.get(256), ims.tag_v2.get(257))
+                    current2 = ims.convert("RGB").copy()
+                if stored2 and (current2.size[0], current2.size[1]) != (stored2[0], stored2[1]):
+                    expected_rgb = np.asarray(current2)   # 新版 Pillow 打开已转正
+                else:
+                    expected_rgb = np.asarray(ImageOps.exif_transpose(current2))
+                raster["pixels_ok"] = bool(
+                    out_rgb.shape == expected_rgb.shape
+                    and np.array_equal(out_rgb, expected_rgb))
                 raster["ok"] = bool(
                     raster.get("engine") == "rasterio"
-                    and any("rasterio 路径暂不转正" in str(w)
-                            or "不转正像素" in str(w)
+                    and raster.get("orientation_applied") is True
+                    and raster.get("page_size") == [60.0, 120.0]
+                    and any("已按 TIFF Orientation=6 转正像素" in str(w)
                             for w in raster.get("warnings") or [])
-                    and not raster.get("out_tag"))
+                    and raster.get("out_size") == [60, 120]
+                    and not raster.get("out_tag")
+                    and raster.get("pixels_ok") is True)
             except Exception as exc:  # noqa: BLE001
                 raster.update({"ok": False, "err": repr(exc)})
         else:
-            raster["ok"] = True   # 无 rasterio 时该已知限制不适用
+            raster["ok"] = True   # 无 rasterio 时该路径不适用
         res["rasterio"] = raster
         return {"ok": bool((res.get("pillow") or {}).get("ok")
                            and (res.get("plain") or {}).get("ok")
@@ -3576,11 +3598,11 @@ def capture_known_limits() -> dict:
             },
             "tiff_orientation": {
                 "pillow_path": "parse/render/export 转正，KEEP_TAGS 不含 274",
-                "rasterio_path": "不转正像素 + warning（已知限制），成品无 274",
+                "rasterio_path": "parse/render/export 转正（P2 修复），成品无 274",
             },
             "known_limits": [
                 "PLY ASCII 行式数据段长度可变化（顶点/面仍完整重读）",
-                "rasterio 大图路径不转正 Orientation 像素（预览/OCR 按原始朝向）",
+                "多帧 TIFF 不逐帧转正 Orientation（保持帧结构，warning）",
             ],
         },
         "pdf_text_layer_pages_skipped_ocr": {

@@ -222,6 +222,107 @@ def _apply_tiff_orientation(image: Image.Image, frames: int = 1) -> Image.Image:
     return _apply_orientation(image, frames)
 
 
+# ── rasterio 路径的 Orientation 支持（解析/渲染/导出共用） ──
+#: Orientation=5/6/7/8 会交换宽高
+_ORIENTATION_SWAPS_AXES = frozenset({5, 6, 7, 8})
+
+
+def _orientation_size(width: int, height: int, orientation: int) -> tuple[int, int]:
+    """存储像素尺寸 -> 转正后（查看器方向）像素尺寸。"""
+    if int(orientation or 1) in _ORIENTATION_SWAPS_AXES:
+        return int(height), int(width)
+    return int(width), int(height)
+
+
+def _orientation_matrix(orientation: int, src_width: int,
+                        src_height: int) -> tuple[float, float, float,
+                                                   float, float, float]:
+    """“查看器方向像素 -> 存储像素”的仿射 6 元组（与 PIL exif_transpose 对齐）。"""
+    w, h = int(src_width), int(src_height)
+    return {
+        1: (1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        2: (-1.0, 0.0, w - 1.0, 0.0, 1.0, 0.0),
+        3: (-1.0, 0.0, w - 1.0, 0.0, -1.0, h - 1.0),
+        4: (1.0, 0.0, 0.0, 0.0, -1.0, h - 1.0),
+        5: (0.0, 1.0, 0.0, 1.0, 0.0, 0.0),
+        6: (0.0, 1.0, 0.0, -1.0, 0.0, h - 1.0),
+        7: (0.0, -1.0, w - 1.0, -1.0, 0.0, h - 1.0),
+        8: (0.0, -1.0, w - 1.0, 1.0, 0.0, 0.0),
+    }.get(int(orientation or 1), (1.0, 0.0, 0.0, 0.0, 1.0, 0.0))
+
+
+def _display_to_source_rect(rect: tuple[float, float, float, float],
+                            orientation: int, src_width: int,
+                            src_height: int) -> tuple[int, int, int, int]:
+    """转正图上的半开矩形 -> 存储图上的半开矩形（整数窗口）。"""
+    x0, y0, x1, y1 = (float(v) for v in rect)
+    x1 = max(x1, x0 + 1.0)
+    y1 = max(y1, y0 + 1.0)
+    m = _orientation_matrix(orientation, src_width, src_height)
+    xs: list[int] = []
+    ys: list[int] = []
+    for xd in (int(round(x0)), int(round(x1)) - 1):
+        for yd in (int(round(y0)), int(round(y1)) - 1):
+            xs.append(int(round(m[0] * xd + m[1] * yd + m[2])))
+            ys.append(int(round(m[3] * xd + m[4] * yd + m[5])))
+    sx0, sy0 = min(xs), min(ys)
+    sx1, sy1 = max(xs) + 1, max(ys) + 1
+    sx0 = max(0, min(int(src_width), sx0))
+    sy0 = max(0, min(int(src_height), sy0))
+    sx1 = max(sx0, min(int(src_width), sx1))
+    sy1 = max(sy0, min(int(src_height), sy1))
+    return sx0, sy0, sx1 - sx0, sy1 - sy0
+
+
+def _orient_rgb_array(rgb, orientation: int):
+    """把存储方向 RGB（H,W,3）转成查看器方向（与 PIL exif_transpose 一致）。"""
+    import numpy as np
+
+    o = int(orientation or 1)
+    if o in (0, 1):
+        return rgb
+    if o == 2:
+        return rgb[:, ::-1, :]
+    if o == 3:
+        return np.rot90(rgb, 2, axes=(0, 1))
+    if o == 4:
+        return rgb[::-1, :, :]
+    if o == 5:
+        return np.swapaxes(rgb, 0, 1)
+    if o == 6:
+        return np.rot90(rgb, 3, axes=(0, 1))
+    if o == 7:
+        return np.flip(np.swapaxes(rgb, 0, 1), axis=(0, 1))
+    if o == 8:
+        return np.rot90(rgb, 1, axes=(0, 1))
+    return rgb
+
+
+def _orient_bands(data, orientation: int):
+    """把存储方向（bands,H,W）转成查看器方向（与 PIL exif_transpose 一致）。"""
+    import numpy as np
+
+    o = int(orientation or 1)
+    if o in (0, 1):
+        return data
+    if o == 2:
+        return data[..., :, ::-1]
+    if o == 3:
+        return np.rot90(data, 2, axes=(-2, -1))
+    if o == 4:
+        return data[..., ::-1, :]
+    if o == 5:
+        return np.swapaxes(data, -2, -1)
+    if o == 6:
+        return np.rot90(data, 3, axes=(-2, -1))
+    if o == 7:
+        return np.flip(np.swapaxes(data, -2, -1), axis=(-2, -1))
+    if o == 8:
+        return np.rot90(data, 1, axes=(-2, -1))
+    return data
+
+
+
 def _render_tiff_pillow(path: Path, page: int) -> bytes | None:
     """Pillow 路径预览：按 TIFF Orientation 转正后缩略为 PNG（不二次旋转）。"""
     try:
@@ -455,26 +556,36 @@ class TiffParser(registry.Parser):
             width, height = int(src.width), int(src.height)
             count = int(src.count)
             dtype = str(src.dtypes[0]) if src.dtypes else "uint8"
+            # CONTRACT §11.1：单帧 TIFF 在 parse/render/export 全链路按 tag 274
+            # 转正像素；rasterio 读的是存储朝向，这里显式转正并调整坐标变换。
+            orientation = _tiff_orientation(path)
+            applied = orientation not in (1, 0)
+            display_w, display_h = _orientation_size(width, height, orientation)
             document = Document(doc_id=_new_doc_id(), path=str(path), fmt="tiff")
             document.meta.update({
                 "format": "TIFF",
                 "frames": 1,
-                "size": [width, height],
+                "size": [display_w, display_h],
                 "bands": count,
                 "dtype": dtype,
                 "compression": (src.compression.value if src.compression else "none"),
                 "engine": "rasterio",
             })
-            # Orientation：rasterio 读取的是原始像素朝向（GDAL 不自动转正），
-            # CONTRACT §11.1 只要求 Pillow 路径转正；rasterio 路径记为已知限制。
-            orientation = _tiff_orientation(path)
             document.meta["orientation"] = orientation
-            if orientation not in (1, 0):
+            document.meta["orientation_applied"] = bool(applied)
+            if applied:
                 document.warnings.append(
-                    f"检测到 TIFF Orientation={orientation}：rasterio 路径暂不转正像素"
-                    "（已知限制，见 docs/impl/tiff.md）；预览/OCR/框选按原始像素朝向，"
-                    "成品方向仍为源像素方向，建议先转正源图或强制 Pillow 路径")
+                    f"已按 TIFF Orientation={orientation} 转正像素"
+                    "（rasterio 路径：解析/渲染/导出一致；成品不写 274）")
             ref = g.read_georef(path, structure)
+            # 转正后像素坐标系 = 存储像素坐标经 M 变换；地理变换需左乘 M，
+            # 否则中性化/坐标换算会错位。
+            adjusted_transform = None
+            if applied and ref.transform is not None:
+                adjusted_transform = g.affine_mult(
+                    ref.transform, _orientation_matrix(orientation, width, height))
+            geo_transform = adjusted_transform or ref.transform
+            geo_size = [display_w, display_h]
             kind = ref.kind if ref.kind != "none" else "none"
             names = [GEO_TAG_NAMES[t] for t in GEO_TAG_NAMES if t in structure.first_tags]
             if kind == "real":
@@ -483,23 +594,23 @@ class TiffParser(registry.Parser):
                 document.warnings.append(
                     "检测到真实地理参考（" + "、".join(names) + "），"
                     "导出时将剥离并做坐标中性化")
-                if ref.transform is not None:
+                if geo_transform is not None:
                     document.extra["geo_transform"] = {
                         "crs": ref.crs_desc,
                         "epsg": ref.epsg,
-                        "transform": [round(float(v), 9) for v in ref.transform],
-                        "size": [width, height],
+                        "transform": [round(float(v), 9) for v in geo_transform],
+                        "size": geo_size,
                     }
             elif kind == "local":
                 document.meta["geo_local_tags"] = names
                 document.warnings.append(
                     "源文件已是本地/任意 CRS（无真实定位），导出按中性化处理")
-                if ref.transform is not None:
+                if geo_transform is not None:
                     document.extra["geo_transform"] = {
                         "crs": ref.crs_desc or "local",
                         "epsg": None,
-                        "transform": [round(float(v), 9) for v in ref.transform],
-                        "size": [width, height],
+                        "transform": [round(float(v), 9) for v in geo_transform],
+                        "size": geo_size,
                     }
             _detect_meta_leaks(structure, document.warnings)
             try:
@@ -514,13 +625,19 @@ class TiffParser(registry.Parser):
             pixels = width * height
             full_read = pixels <= FULLREAD_MAX_PIXELS
             max_side = None if full_read else PREVIEW_MAX_SIDE
-            rgb, scale = _rasterio_read_preview(src, max_side)
+            rgb_img, scale = _rasterio_read_preview(src, max_side)
+            if applied:
+                rgb = Image.fromarray(np.ascontiguousarray(
+                    _orient_rgb_array(np.asarray(rgb_img), orientation)))
+            else:
+                rgb = rgb_img
             if not full_read:
                 document.warnings.append(
                     f"画面 {width}×{height}（{pixels / 1e6:.1f}M 像素）超过整帧读取上限，"
                     f"OCR/图像扫描使用 1/{1.0 / scale:.2f} 降采样预览；"
                     "条码/小字等细节检测可能漏检，请人工框选复核")
-        page = Page(index=0, width=float(width), height=float(height), ref={"frame": 0})
+        page = Page(index=0, width=float(display_w), height=float(display_h),
+                    ref={"frame": 0})
         page.blocks = _ocr_blocks(rgb, 0, ctx, document.warnings, with_quad=True)
         _scale_blocks(page.blocks, 1.0 / scale if scale else 1.0,
                       1.0 / scale if scale else 1.0)
@@ -652,8 +769,8 @@ class TiffParser(registry.Parser):
         g = _georef()
         orientation = _tiff_orientation(path) if path.is_file() else 1
         engine = str((doc.meta or {}).get("engine") or "")
-        # Pillow 解析路径已转正像素，渲染必须同样转正（走 _render_image_bytes）；
-        # rasterio 路径解析是原始像素朝向，渲染保持 rasterio 以避免坐标错位。
+        # 解析路径已转正像素（Pillow 或 rasterio 新实现），渲染按同一方向输出；
+        # 存储文件仍可能带 274（源文件），rasterio 读出来后需显式转正。
         if (g.has_rasterio() and path.is_file()
                 and not (orientation not in (1, 0) and engine != "rasterio")):
             try:
@@ -661,6 +778,11 @@ class TiffParser(registry.Parser):
                 if not structure.error and structure.frames <= 1:
                     with g.rasterio.open(path) as src:
                         rgb, _scale = _rasterio_read_preview(src, MAX_RENDER_EDGE)
+                    if orientation not in (1, 0):
+                        import numpy as np
+
+                        rgb = Image.fromarray(
+                            np.ascontiguousarray(_orient_rgb_array(np.asarray(rgb), orientation)))
                     from io import BytesIO
 
                     buffer = BytesIO()
@@ -701,17 +823,40 @@ class TiffParser(registry.Parser):
         except Exception as exc:
             structure = g.TiffStructure(error=f"{type(exc).__name__}: {exc}")
             ref = g.GeoRef()
+        orientation = _tiff_orientation(source)
+        applied = orientation not in (1, 0)
+        src_w = int(getattr(structure, "width", 0) or getattr(ref, "width", 0) or 0)
+        src_h = int(getattr(structure, "height", 0) or getattr(ref, "height", 0) or 0)
+        if (not src_w or not src_h) and g.has_rasterio():
+            try:
+                with g.rasterio.open(source) as _src:
+                    src_w, src_h = int(_src.width), int(_src.height)
+            except Exception:
+                pass
+        display_w, display_h = _orientation_size(src_w or 1, src_h or 1, orientation)
+        # 转正后的像素坐标系与存储坐标系不同：中性化参数必须基于“转正像素 -> 世界”
+        # 的新 transform，否则成品地理变换与像素会错位。
+        ref_for_geo = ref
+        if applied and ref.transform is not None and src_w and src_h:
+            adjusted = g.affine_mult(
+                ref.transform, _orientation_matrix(orientation, src_w, src_h))
+            ref_for_geo = g.GeoRef(
+                kind=ref.kind, crs_wkt=ref.crs_wkt, crs_desc=ref.crs_desc,
+                epsg=ref.epsg, transform=adjusted,
+                width=display_w, height=display_h, frames=ref.frames,
+                source_tags=list(ref.source_tags or []), note=ref.note,
+            )
         single_frame = (not structure.error and structure.frames <= 1) or structure.frames == 0
         can_raster = g.has_rasterio() and single_frame
 
         geo_params: dict | None = None
         if can_raster and mode == "neutralized":
-            geo_params = g.make_params(ref, seed=options.get("geo_seed"))
+            geo_params = g.make_params(ref_for_geo, seed=options.get("geo_seed"))
         elif can_raster and mode == "strip":
-            geo_params = g.strip_params(ref)
+            geo_params = g.strip_params(ref_for_geo)
         elif ref.has_georef:
             # Pillow 回退：只能剥离，无法中性化
-            geo_params = g.strip_params(ref)
+            geo_params = g.strip_params(ref_for_geo)
             warnings.append(
                 "未安装/无法使用 rasterio 或文件为多帧 TIFF：Pillow 回退模式，"
                 "已剥离地理参考与元数据，但**未做坐标中性化**；"
@@ -725,7 +870,9 @@ class TiffParser(registry.Parser):
         try:
             if can_raster:
                 self._export_with_rasterio(doc, entities, decisions, out_path,
-                                           options, warnings, structure, ref, geo_params, mode)
+                                           options, warnings, structure, ref, geo_params, mode,
+                                           orientation=orientation,
+                                           display_size=(display_w, display_h))
             else:
                 self._export_with_pillow(doc, entities, decisions, out_path, warnings)
         except ExportError:
@@ -770,19 +917,21 @@ class TiffParser(registry.Parser):
                               decisions: dict[str, Decision], out_path: Path,
                               options: dict, warnings: list[str],
                               structure, ref, geo_params: dict | None,
-                              mode: str) -> None:
+                              mode: str, *,
+                              orientation: int = 1,
+                              display_size: tuple[int, int] | None = None) -> None:
         g = _georef()
         from rasterio.windows import Window
 
-        orientation = _tiff_orientation(Path(doc.path))
-        if orientation not in (1, 0):
-            warnings.append(
-                f"源 TIFF Orientation={orientation}：rasterio 导出路径不转正像素"
-                "（已知限制，见 docs/impl/tiff.md）；成品按原始像素方向输出且不写 274 标签。"
-                "如需方向正确，请先转正源图或强制 Pillow 路径导出")
+        applied = int(orientation or 1) not in (1, 0)
 
         with g.rasterio.open(doc.path) as src:
-            width, height = int(src.width), int(src.height)
+            src_w, src_h = int(src.width), int(src.height)
+            if display_size:
+                out_w, out_h = int(display_size[0]), int(display_size[1])
+            else:
+                out_w, out_h = _orientation_size(src_w, src_h, orientation)
+            out_w, out_h = max(1, out_w), max(1, out_h)
             count = int(src.count)
             dtypes = list(src.dtypes or ("uint8",))
             dtype = dtypes[0] if dtypes else "uint8"
@@ -800,17 +949,17 @@ class TiffParser(registry.Parser):
                     predictor = 3
             profile: dict[str, Any] = {
                 "driver": "GTiff",
-                "width": width,
-                "height": height,
+                "width": out_w,
+                "height": out_h,
                 "count": count,
                 "dtype": dtype,
                 "compress": compression,
                 "BIGTIFF": "IF_SAFER",
             }
             # GTiff 分块必须是 16 的倍数；小图不强求 tiled
-            if width >= 256 and height >= 256:
-                block_x = max(16, (min(EXPORT_BLOCK, width) // 16) * 16)
-                block_y = max(16, (min(EXPORT_BLOCK, height) // 16) * 16)
+            if out_w >= 256 and out_h >= 256:
+                block_x = max(16, (min(EXPORT_BLOCK, out_w) // 16) * 16)
+                block_y = max(16, (min(EXPORT_BLOCK, out_h) // 16) * 16)
                 profile.update(tiled=True, blockxsize=block_x, blockysize=block_y)
             else:
                 profile["tiled"] = False
@@ -840,19 +989,43 @@ class TiffParser(registry.Parser):
             warn_once = {"nonrgb": False}
 
             with g.rasterio.open(out_path, "w", **profile) as dst:
-                for row in range(0, height, EXPORT_WINDOW):
-                    for col in range(0, width, EXPORT_WINDOW):
-                        w = min(EXPORT_WINDOW, width - col)
-                        h = min(EXPORT_WINDOW, height - row)
-                        win = Window(col, row, w, h)
-                        data = src.read(window=win)
-                        black_n, text_n = _paint_window(
-                            data, win, items, warnings, warn_once)
-                        black_count += black_n
-                        text_count += text_n
-                        dst.write(data, window=win)
+                if applied:
+                    # 转正导出：输出坐标系 = 查看器方向；逐个目标窗口反查源窗口，
+                    # 读源像素 -> 数组转正 -> 在转正坐标里涂黑/换名 -> 写目标窗口。
+                    for row in range(0, out_h, EXPORT_WINDOW):
+                        for col in range(0, out_w, EXPORT_WINDOW):
+                            w = min(EXPORT_WINDOW, out_w - col)
+                            h = min(EXPORT_WINDOW, out_h - row)
+                            sx, sy, sw, sh = _display_to_source_rect(
+                                (col, row, col + w, row + h),
+                                orientation, src_w, src_h)
+                            data = src.read(window=Window(sx, sy, sw, sh))
+                            data = np.ascontiguousarray(_orient_bands(data, orientation))
+                            if data.shape[-2:] != (h, w):  # pragma: no cover - 防御性兜底
+                                full = src.read()
+                                data = np.ascontiguousarray(
+                                    _orient_bands(full, orientation))[:, row:row + h, col:col + w]
+                            win = Window(col, row, w, h)
+                            black_n, text_n = _paint_window(
+                                data, win, items, warnings, warn_once)
+                            black_count += black_n
+                            text_count += text_n
+                            dst.write(data, window=win)
+                else:
+                    for row in range(0, out_h, EXPORT_WINDOW):
+                        for col in range(0, out_w, EXPORT_WINDOW):
+                            w = min(EXPORT_WINDOW, out_w - col)
+                            h = min(EXPORT_WINDOW, out_h - row)
+                            win = Window(col, row, w, h)
+                            data = src.read(window=win)
+                            black_n, text_n = _paint_window(
+                                data, win, items, warnings, warn_once)
+                            black_count += black_n
+                            text_count += text_n
+                            dst.write(data, window=win)
                 if EXPORT_OVERVIEWS:
-                    levels = [f for f in (2, 4, 8, 16, 32) if f <= max(width, height) // 512]
+                    levels = [f for f in (2, 4, 8, 16, 32)
+                              if f <= max(out_w, out_h) // 512]
                     if levels:
                         try:
                             from rasterio.enums import Resampling
@@ -860,6 +1033,11 @@ class TiffParser(registry.Parser):
                             dst.build_overviews(levels, Resampling.average)
                         except Exception as exc:
                             warnings.append(f"生成金字塔失败（不影响导出）：{exc}")
+            if applied:
+                warnings.append(
+                    f"已按 TIFF Orientation={orientation} 转正像素"
+                    "（rasterio 路线：成品为查看器方向、不写 274；"
+                    "中性化地理变换已同步旋转/交换宽高）")
         if geo_params and geo_params.get("method") in (
                 "translate+rotate", "translate+rotate+scale"):
             warnings.append(

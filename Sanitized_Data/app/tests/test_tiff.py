@@ -42,7 +42,9 @@ from yinzhan import georef, pipeline, registry        # noqa: E402
 from yinzhan.jobs import _load_rules                  # noqa: E402
 from yinzhan.ocr import get_ocr                       # noqa: E402
 from yinzhan.parsers import tiff_parser               # noqa: E402
-from yinzhan.udm import ParseContext, ParseError, VerifyError  # noqa: E402
+from yinzhan.udm import (  # noqa: E402
+    Decision, Entity, ParseContext, ParseError, Span, VerifyError,
+)
 
 SAMPLES = REPO / "samples"
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "tiff"
@@ -132,19 +134,27 @@ def _write_multiframe(path: Path) -> Path:
     return path
 
 
-def _write_orientation_tiff(path: Path) -> Path:
-    """120×60 横向存储 + Orientation=6 的 8bit RGB TIFF（显示应为 60×120 竖向）。
+def _write_orientation_tiff(path: Path, orientation: int = 6,
+                            with_geo: bool = False) -> Path:
+    """120×60 横向存储 + Orientation 的 8bit RGB TIFF（默认 6，显示应为 60×120 竖向）。
 
     左上红 / 右上蓝 / 底部绿条（非对称标记）用于验证转正后像素位置正确。
+    ``with_geo=True`` 时附带本地/真实地理标签，用于验证中性化变换同步转正。
     """
     image = Image.new("RGB", (120, 60), (245, 245, 240))
     draw = ImageDraw.Draw(image)
     draw.rectangle([0, 0, 20, 20], fill=(255, 0, 0))
     draw.rectangle([100, 0, 119, 20], fill=(0, 0, 255))
     draw.rectangle([10, 50, 110, 59], fill=(0, 160, 0))
+    tiffinfo = {274: orientation, 282: 300.0, 283: 300.0, 296: 2}
+    if with_geo:
+        tiffinfo.update({
+            33550: (0.5, 0.5, 0.0),
+            33922: (0.0, 0.0, 0.0, 500000.0, 3450000.0, 0.0),
+            34735: (1, 1, 0, 1, 1024, 0, 1, 2),
+        })
     path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(path, format="TIFF",
-               tiffinfo={274: 6, 282: 300.0, 283: 300.0, 296: 2})
+    image.save(path, format="TIFF", tiffinfo=tiffinfo)
     return path
 
 
@@ -696,19 +706,105 @@ class TestOrientation(unittest.TestCase):
             georef.HAS_RASTERIO = old
 
     @unittest.skipUnless(HAS_RASTERIO, "需要 rasterio")
-    def test_rasterio_path_warns_and_strips_274(self):
+    def test_rasterio_path_orients_and_strips_274(self):
+        """rasterio 路径必须与 Pillow 路径一致：parse/render/export 全部转正且无 274。"""
         doc = self.parser.parse(self.path, _ctx())
         self.assertEqual(doc.meta.get("engine"), "rasterio")
-        # rasterio 路径是原始像素朝向（已知限制 P1），页面尺寸保持存储尺寸
-        self.assertEqual((doc.pages[0].width, doc.pages[0].height), (120.0, 60.0))
-        self.assertTrue(any("rasterio 路径暂不转正" in warning
+        self.assertEqual(doc.meta.get("orientation"), 6)
+        self.assertTrue(doc.meta.get("orientation_applied"))
+        self.assertEqual((doc.pages[0].width, doc.pages[0].height), (60.0, 120.0))
+        self.assertTrue(any("已按 TIFF Orientation=6 转正像素" in warning
                             for warning in doc.warnings), doc.warnings)
+        png = self.parser.render(doc, 0, "orig")
+        with Image.open(io.BytesIO(png)) as rendered:
+            self.assertEqual(rendered.size, (60, 120), "rasterio render 未转正")
+            rendered_rgb = np.asarray(rendered.convert("RGB"))
+        expected = _display_oriented_rgb(self.path)
+        np.testing.assert_array_equal(rendered_rgb, expected)
         out = Fixtures.get() / "orientation6_rasterio_out.tif"
-        res = pipeline.export(doc, self.parser, [], out, {"mode": "human"})
-        self.assertTrue(any("rasterio 导出路径不转正" in warning
-                            for warning in res.warnings), res.warnings)
+        pipeline.export(doc, self.parser, [], out,
+                        {"mode": "human", "geo_mode": "strip"})
         with Image.open(out) as exported:
+            self.assertEqual(exported.size, (60, 120), "rasterio 导出未转正")
+            self.assertNotIn(274, exported.tag_v2, "导出不应再带 274")
+            exported_rgb = np.asarray(exported.convert("RGB"))
+        np.testing.assert_array_equal(exported_rgb, expected)
+        again = self.parser.parse(out, _ctx())
+        self.assertEqual(again.meta.get("orientation"), 1)
+        self.assertEqual((again.pages[0].width, again.pages[0].height), (60.0, 120.0))
+
+    @unittest.skipUnless(HAS_RASTERIO, "需要 rasterio")
+    def test_rasterio_orientation_all_exif_values(self):
+        """2..8 全部方向：页面尺寸/渲染/导出像素与 PIL exif_transpose 一致。"""
+        ctx = ParseContext(ocr=None, workdir=str(Fixtures.get()))
+        expects_shape = {2: (120, 60), 3: (120, 60), 4: (120, 60),
+                         5: (60, 120), 6: (60, 120), 7: (60, 120), 8: (60, 120)}
+        for orient, shape in expects_shape.items():
+            src = _write_orientation_tiff(Fixtures.get() / f"orient{orient}.tif", orient)
+            expected = _display_oriented_rgb(src)
+            doc = self.parser.parse(src, ctx)
+            self.assertEqual(doc.meta.get("engine"), "rasterio", f"orientation={orient}")
+            self.assertTrue(doc.meta.get("orientation_applied"), f"orientation={orient}")
+            self.assertEqual((int(doc.pages[0].width), int(doc.pages[0].height)),
+                             shape, f"orientation={orient}")
+            png = self.parser.render(doc, 0, "orig")
+            with Image.open(io.BytesIO(png)) as rendered:
+                np.testing.assert_array_equal(
+                    np.asarray(rendered.convert("RGB")), expected,
+                    err_msg=f"orientation={orient} render 像素不一致")
+            out = Fixtures.get() / f"orient{orient}_out.tif"
+            pipeline.export(doc, self.parser, [], out,
+                            {"mode": "human", "geo_mode": "strip"})
+            with Image.open(out) as exported:
+                self.assertNotIn(274, exported.tag_v2)
+                np.testing.assert_array_equal(
+                    np.asarray(exported.convert("RGB")), expected,
+                    err_msg=f"orientation={orient} 导出像素不一致")
+
+    @unittest.skipUnless(HAS_RASTERIO, "需要 rasterio")
+    def test_rasterio_oriented_decision_paint_display_coords(self):
+        """转正后涂黑必须落在“查看器方向”的坐标上（不是存储像素坐标）。"""
+        doc = self.parser.parse(self.path, _ctx())
+        ent = Entity(
+            id=Entity.new_id(), etype="PERSON", label="测试", value="",
+            spans=[Span(rect=(0.0, 0.0, 10.0, 10.0), page=0)],
+            level="L3", confidence=1.0, origin="manual", status="accepted",
+            decision=Decision(strategy="black", black=True, replacement=None),
+        )
+        out = Fixtures.get() / "orientation6_paint_out.tif"
+        pipeline.export(doc, self.parser, [ent], out,
+                        {"mode": "human", "geo_mode": "strip"})
+        with Image.open(out) as exported:
+            arr = np.asarray(exported.convert("RGB"))
+        self.assertTrue(np.all(arr[2:8, 2:8] == 0), "转正坐标左上区域应被涂黑")
+        self.assertFalse(np.all(arr[100:118, 30:50] == 0),
+                         "未命中区域不应被涂黑")
+
+    @unittest.skipUnless(HAS_RASTERIO, "需要 rasterio")
+    def test_rasterio_oriented_georef_neutralized_transform(self):
+        """Orientation + 地理参考：中性化 transform 需按查看器像素坐标旋转。"""
+        src = _write_orientation_tiff(Fixtures.get() / "geo_orient6.tif", 6,
+                                      with_geo=True)
+        doc = self.parser.parse(src, _ctx())
+        self.assertEqual((doc.pages[0].width, doc.pages[0].height), (60.0, 120.0))
+        gt = doc.extra.get("geo_transform") or {}
+        # orientation=6 时 display(0,0) 对应存储(0, H-1)：
+        # 源 transform=(0.5,0,500000, 0,-0.5,3450000) → (500000, 3449970.5)
+        self.assertEqual(len(gt.get("transform") or []), 6)
+        self.assertAlmostEqual(gt["transform"][2], 500000.0, places=3)
+        self.assertAlmostEqual(gt["transform"][5], 3449970.5, places=3)
+        self.assertEqual(gt.get("size"), [60, 120])
+        out = Fixtures.get() / "geo_orient6_out.tif"
+        res = pipeline.export(doc, self.parser, [], out, {"mode": "human"})
+        with Image.open(out) as exported:
+            self.assertEqual(exported.size, (60, 120))
             self.assertNotIn(274, exported.tag_v2)
+        params = doc.extra.get("geo_params") or {}
+        self.assertIn(params.get("method"), ("translate+rotate", "translate+rotate+scale"))
+        issues = georef.verify_exported_geo(out, expect_neutralized=True, params=params)
+        self.assertEqual(issues, [])
+        self.assertTrue(any("已按 TIFF Orientation=6 转正像素" in w
+                            for w in res.warnings), res.warnings)
 
 
 class TestMultiFrame(unittest.TestCase):

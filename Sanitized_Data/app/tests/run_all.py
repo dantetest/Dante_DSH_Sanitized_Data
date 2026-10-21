@@ -8,7 +8,8 @@
      ``test_pipl_rules.py`` / ``test_table_column.py`` /
      ``test_pdf_hidden.py`` / ``test_sign_targets.py`` / ``test_office_media.py`` /
      ``test_csv_table.py`` / ``test_pdf_embedded.py`` / ``test_mesh.py`` /
-     ``test_tiff.py`` / ``test_surrogate.py``（存在才跑）。
+     ``test_tiff.py`` / ``test_surrogate.py`` / ``test_pdf_verify_fast.py`` /
+     ``test_id_wholepage.py`` / ``test_warnings_pending.py``（存在才跑）。
 
 用法（Windows 控制台必须 -X utf8）：
 
@@ -79,6 +80,12 @@ def _specs() -> list[dict]:
          "label": "正射 TIF 域自测（可选）"},
         {"key": "surrogate", "file": TESTS / "test_surrogate.py", "timeout": 120,
          "label": "R04 假值不保留完整原值 + verify 豁免收紧自测"},
+        {"key": "pdfverifyfast", "file": TESTS / "test_pdf_verify_fast.py", "timeout": 600,
+         "label": "P2 扫描件 verify 快速复检（零 OCR + 故障注入拦截）自测"},
+        {"key": "idwholepage", "file": TESTS / "test_id_wholepage.py", "timeout": 300,
+         "label": "P2 整页证件过判收紧（字段级命中抑制整页）自测"},
+        {"key": "warnings", "file": TESTS / "test_warnings_pending.py", "timeout": 300,
+         "label": "P2/P3 warning 去重 + 异常大码框待确认自测"},
     ]
     return specs
 

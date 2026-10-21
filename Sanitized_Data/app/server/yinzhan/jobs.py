@@ -80,6 +80,47 @@ def _embedded_media_info(doc: Document) -> dict:
         return {}
 
 
+# 同一 warning 在多页扫描件里常按页重复一次（典型：人像检测的「照片较大…」），
+# 逐页堆叠会把真正需要看的错误淹掉。这里只合并**完全相同的字符串**（不同错误
+# 绝不合并），保留首次出现顺序并标注出现次数；已带计数的可重复调用（幂等）。
+_WARNING_COUNT_RE = re.compile(r"（共 (\d+) 次）$")
+
+
+def _dedupe_warnings(warnings: list[str]) -> list[str]:
+    """相同 warning 只保留一次并标注次数（如「……（共 12 次）」）。"""
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for item in warnings or []:
+        text = item if isinstance(item, str) else str(item)
+        if not text:
+            continue
+        match = _WARNING_COUNT_RE.search(text)
+        if match:
+            # 已带计数的条目：拆出基数并保留原次数，重复调用保持幂等
+            base = text[:match.start()]
+            try:
+                count = int(match.group(1))
+            except (TypeError, ValueError):
+                count = 1
+        else:
+            base, count = text, 1
+        if base not in counts:
+            counts[base] = 0
+            order.append(base)
+        counts[base] += count
+    return [f"{base}（共 {counts[base]} 次）" if counts[base] > 1 else base
+            for base in order]
+
+
+def _ensure_rect_black_decision(entity: Entity) -> None:
+    """用户确认后给「无决策的矩形实体」补 black；未确认时保持 decision=None，
+    导出阶段会被过滤掉（见 ``_export_to``），因此不会自动涂黑。"""
+    if entity.decision is not None:
+        return
+    if any(span.rect for span in (entity.spans or [])):
+        entity.decision = Decision(strategy="black", black=True, replacement=None)
+
+
 @dataclass
 class Job:
     id: str
@@ -132,6 +173,11 @@ class Job:
                 "rejected": sum(1 for e in self.entities if e.status == "rejected"),
                 "by_type": by_type}
 
+    def dedupe_warnings(self) -> list[str]:
+        """任务层统一去重：相同字符串只留一条并带出现次数。"""
+        self.warnings = _dedupe_warnings(self.warnings)
+        return self.warnings
+
     def snapshot(self) -> dict:
         with self.lock:
             return {
@@ -143,7 +189,8 @@ class Job:
                 "note": self.note,
                 "cancelled": self.cancel_flag,
                 "error": self.error,
-                "warnings": self.warnings[:20],
+                # 快照也做一次（只读副本），运行中/人工构造的 Job 也不会泄漏重复噪声
+                "warnings": _dedupe_warnings(self.warnings)[:20],
                 "pages": len(self.doc.pages) if self.doc else 0,
                 "counts": self.counts(),
                 "created_at": self.created_at,
@@ -333,6 +380,7 @@ class JobManager:
 
             job.progress = 1.0
             job.note = ""
+            job.dedupe_warnings()
             job.stage = "ready"
         except Exception as exc:
             job.error = "已取消" if job.cancel_flag else f"{exc}"
@@ -341,6 +389,7 @@ class JobManager:
             if not job.cancel_flag:
                 job.warnings.append(traceback.format_exc(limit=3))
         finally:
+            job.dedupe_warnings()
             stop.set()
 
     def cancel(self, job_id: str) -> dict:
@@ -383,6 +432,7 @@ class JobManager:
             job._preview_dirty = True
             job.warnings.append(
                 "已启用未成年人严格模式：证件整卡涂黑 + 全部实体强制涂黑（不可换名还原）")
+            job.dedupe_warnings()
             return job.snapshot()
 
     @staticmethod
@@ -474,6 +524,7 @@ class JobManager:
             action = payload.get("action")
             if action == "accept":
                 ent.status = "accepted"
+                _ensure_rect_black_decision(ent)
             elif action == "reject":
                 ent.status = "rejected"
                 ent.decision = Decision(strategy="keep", replacement=ent.value)
@@ -491,6 +542,7 @@ class JobManager:
             for e in job.entities:
                 if e.status == "pending":
                     e.status = "accepted"
+                    _ensure_rect_black_decision(e)
                     n += 1
             self.invalidate_preview(job)
             return {"accepted": n, "total": len(job.entities)}
@@ -611,7 +663,8 @@ class JobManager:
                 "out": str(out), "name": out.name, "seal_no": seal,
                 "sha256": out_hash, "mode": mode,
                 "verify": result.get("verify", {}),
-                "warnings": result.get("warnings", []),
+                # 导出结果层同样统一去重（保留首次顺序 + 次数）
+                "warnings": _dedupe_warnings(result.get("warnings", [])),
                 "bytes": out.stat().st_size,
             }
             with job.lock:
@@ -626,18 +679,17 @@ class JobManager:
     def _export_to(self, job: Job, mode: str, out: Path, do_verify: bool,
                    options: dict | None = None) -> dict:
         options = dict(options or {})
-        ents = [e for e in job.entities if e.status != "rejected"]
+        # 没有 decision 的实体 = 尚未确认（典型：异常大面积码类框）。它们不参与
+        # 导出，也绝不能在导出阶段被兜底成 black；用户 accept 后才会补上决策。
+        ents = [e for e in job.entities
+                if e.status != "rejected" and e.decision is not None]
         if mode == "human":
             for e in ents:
                 e.decision = Decision(strategy="black", black=True, replacement=None)
-        else:
-            for e in ents:
-                if e.decision is None:
-                    e.decision = Decision(strategy="black", black=True)
 
         res = pipeline.export(job.doc, job.parser, ents, out,
                               {"mode": mode, **options})
-        info = {"path": res.path, "warnings": list(res.warnings)}
+        info = {"path": res.path, "warnings": _dedupe_warnings(list(res.warnings))}
         if do_verify:
             ctx = ParseContext(ocr=get_ocr(), workdir=str(WORK_DIR))
             try:
@@ -1008,13 +1060,24 @@ def _visual_entities(doc: Document, sig_blocks: list | None = None,
             continue
         # 码类「仅检测未解码（/detect）」的高置信度不可信：实测发票/合同页面上
         # 木纹、图标等会被误检成二维码，最大一处覆盖 35% 页面；自动涂黑会误伤整块
-        # 正文。这里对面积 >5% 页面的 detect-only 候选不自动处理，只提示人工确认。
+        # 正文。这里对面积 >5% 页面的 detect-only 候选**不自动打码**，而是生成
+        # status=pending / decision=None 的待确认实体：用户在对照台能看到并 accept，
+        # 确认后由 update_entity/accept_all 补 black 决策，导出时才涂黑。
         if vm.kind in ("qrcode", "barcode") and "/detect" in (getattr(vm, "note", "") or ""):
             rect = vm.rect
             area = max(0.0, rect[2] - rect[0]) * max(0.0, rect[3] - rect[1])
             if area / page_area(vm.page) > 0.05:
+                spec = _VISUAL_SPEC.get(vm.kind) or ("QRCODE", "二维码", "pending", "L3")
+                out.append(Entity(
+                    id=Entity.new_id(), etype=spec[0],
+                    label=f"{spec[1]}（面积异常，待确认）", value="",
+                    spans=[Span(rect=rect, page=vm.page)],
+                    level=spec[3] if len(spec) > 3 else "L3",
+                    confidence=vm.confidence, origin="visual",
+                    status="pending", decision=None,
+                ))
                 doc.warnings.append(
-                    "检测到疑似二维码/条码但面积异常，未自动打码，请人工框选确认")
+                    "检测到疑似二维码/条码但面积异常，未自动打码，已列入待确认列表，请人工确认")
                 continue
         # 已经落在「签署区」黑框里的印章，不用再单独列一次
         if vm.kind == "seal" and any(_inside(vm.rect, r) for r in sig_by_page.get(vm.page, [])):

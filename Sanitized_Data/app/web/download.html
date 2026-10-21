@@ -37,7 +37,7 @@
       源码包适合 Linux / 服务器部署或自行排查，需要 Python 3.10 及以上版本。
     </p>
     <div class="chips">
-      <span class="chip">版本 v1.1.0</span>
+      <span class="chip">版本 v1.1.1</span>
       <span class="chip">Windows x64</span>
       <span class="chip">Linux x64</span>
       <span class="chip">离线可用</span>
@@ -48,46 +48,47 @@
     <div class="dl-grid">
       <div class="dl">
         <div class="os">WINDOWS · x64 · 桌面安装包</div>
-        <div class="file">Sanitized_Data_Setup_1.1.0_x64.exe</div>
+        <div class="file">Sanitized_Data_Setup_1.1.1_x64.exe</div>
         <div class="size">160.8 MiB · 离线安装，无需 Python</div>
         <p class="muted" style="font-size:12px">
           双击安装到当前用户目录（不需要管理员），开始菜单启动；
-          断网可用。另有绿色版 <code>Sanitized_Data-1.1.0-win64-portable.zip</code>。
+          断网可用。另有绿色版 <code>Sanitized_Data-1.1.1-win64-portable.zip</code>。
         </p>
         <div class="act">
-          <a class="btn primary" href="https://git.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases" target="_blank" rel="noopener">从 Release 页下载 ↓</a>
+          <a class="btn primary" href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.1.1" target="_blank" rel="noopener">从 Release 页下载 ↓</a>
         </div>
       </div>
 
       <div class="dl">
         <div class="os">WINDOWS · x64 · 源码包</div>
-        <div class="file">Sanitized_Data-1.1.0-win64.zip</div>
+        <div class="file">Sanitized_Data-1.1.1-win64.zip</div>
         <div class="size">约 2.4 MB · 解压后约 5.1 MB（不含依赖）</div>
         <p class="muted" style="font-size:12px">
           解压后双击 <code>启动.bat</code>，浏览器自动打开控制台。
         </p>
         <div class="act">
-          <a class="btn primary" href="downloads/Sanitized_Data-1.1.0-win64.zip" download>下载源码包 ↓</a>
+          <a class="btn primary" href="downloads/Sanitized_Data-1.1.1-win64.zip" download>下载源码包 ↓</a>
         </div>
       </div>
 
       <div class="dl">
         <div class="os">LINUX · x64 · 源码包</div>
-        <div class="file">Sanitized_Data-1.1.0-linux64.tar.gz</div>
+        <div class="file">Sanitized_Data-1.1.1-linux64.tar.gz</div>
         <div class="size">约 2.2 MB · 解压后约 5.1 MB（不含依赖）</div>
         <p class="muted" style="font-size:12px">
           解压后执行 <code>./start.sh</code>；服务器部署见下方 systemd / nginx 说明。
         </p>
         <div class="act">
-          <a class="btn primary" href="downloads/Sanitized_Data-1.1.0-linux64.tar.gz" download>下载源码包 ↓</a>
+          <a class="btn primary" href="downloads/Sanitized_Data-1.1.1-linux64.tar.gz" download>下载源码包 ↓</a>
         </div>
       </div>
     </div>
 
     <table class="spec">
-      <tr><th>SHA-256（Windows 源码包）</th><td><code style="word-break:break-all" id="sha-win">578AFCF764B414307EC26C220C85707BD55A1703A2B448E8CB66D96C0341BC34</code></td></tr>
-      <tr><th>SHA-256（Linux 源码包）</th><td><code style="word-break:break-all" id="sha-linux">54BAE9250C7C55DD4790C98D4CBA2EBFFB193FA650712FAA90C7120F50C18BF0</code></td></tr>
-      <tr><th>桌面安装包</th><td>160.8 MiB（绿色版 182.7 MiB）· SHA-256 见 <a href="https://git.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases" target="_blank" rel="noopener">Release 页</a>与 v1.1.0 发布说明（仓库内 `docs/release-notes-v1.1.0.md` §6）</td></tr>
+      <tr><th>SHA-256（Windows 安装包）</th><td><code style="word-break:break-all">E6CC8AAA8D0985BC82062FB515E5A543B32DFB01E3C0E9268070766881CCB2CA</code></td></tr>
+      <tr><th>SHA-256（Windows 绿色版）</th><td><code style="word-break:break-all">0BDCEC7FE20DCC77E4BE2F0561627F430855F542A8F734628F814E5805DCAA35</code></td></tr>
+      <tr><th>SHA-256（源码包）</th><td>见 <a href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.1.1" target="_blank" rel="noopener">Release 页 v1.1.1</a> 附件 <code>SHA256SUMS.txt</code> 与 v1.1.1 发布说明（仓库内 <code>docs/release-notes-v1.1.1.md</code> §5）</td></tr>
+      <tr><th>桌面安装包</th><td>160.8 MiB（绿色版 182.7 MiB）· 源码包约 2.2–2.4 MB · 校验值见上表</td></tr>
       <tr><th>运行环境</th><td>桌面安装包：Windows 10/11 x64，无需 Python；源码包：Python 3.10+ · 约 300 MB 内存 · OCR 首次加载约 2 秒</td></tr>
       <tr><th>依赖</th><td>源码包需执行 <code>pip install -r app/server/requirements.txt</code>（含离线 OCR 模型）</td></tr>
       <tr><th>网络</th><td>除安装依赖外不需要联网；引擎本身不发任何外呼</td></tr>
@@ -101,18 +102,18 @@
         <div>
           <h3>Windows 桌面版</h3>
           <pre><span class="c"># 双击安装包，按向导下一步</span>
-Sanitized_Data_Setup_1.1.0_x64.exe
+Sanitized_Data_Setup_1.1.1_x64.exe
 
 <span class="c"># 绿色版：解压后直接运行</span>
-Sanitized_Data-1.1.0-win64-portable.zip</pre>
+Sanitized_Data-1.1.1-win64-portable.zip</pre>
         </div>
       </div>
       <div class="step">
         <div>
           <h3>源码包：解压并安装依赖</h3>
           <pre><span class="c"># Windows / Linux 通用</span>
-unzip Sanitized_Data-1.1.0-win64.zip
-cd Sanitized_Data-1.1.0
+unzip Sanitized_Data-1.1.1-win64.zip
+cd Sanitized_Data-1.1.1
 pip install -r app/server/requirements.txt</pre>
         </div>
       </div>
@@ -164,7 +165,7 @@ systemctl status sanitized-data</pre>
 
 <footer>
   <div class="wrap inner">
-    <span>数据隐站 · Sanitized_Data v1.1.0</span>
+    <span>数据隐站 · Sanitized_Data v1.1.1</span>
     <span>·</span>
     <span>本机处理 · 不联网 · 不留存</span>
     <span style="margin-left:auto">

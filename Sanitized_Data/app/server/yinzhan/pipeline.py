@@ -677,7 +677,9 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
            options: dict | None = None) -> dict:
     """对成品再跑一遍：原文是否还在、元数据是否干净、视觉/码类是否清干净。
 
-    :param doc: 原始文档（可选）。用于检查「未处理的内嵌媒体」等导出前信息。
+    :param doc: 原始文档（可选）。用于检查「未处理的内嵌媒体」等导出前信息；
+        同时供解析器的**快速复检钩子**使用（扫描件不必二次 OCR，见
+        ``PdfParser.fast_verify``）。钩子不适用时自动回退到完整重解析。
     :param options: 导出选项，``allow_unprocessed_media=True`` 表示用户已二次
         确认要导出含未脱敏内嵌图片的 Office 文件（见 docs/red-lines.md E3）。
     """
@@ -685,11 +687,26 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
     residual: list[str] = []
     checked = 0
     options = dict(options or {})
+    fast_info: dict | None = None
 
-    try:
-        re_doc = parser.parse(exported, ctx)
-    except Exception as exc:
-        return {"verified": False, "residual": None, "issues": [f"成品无法重新解析：{exc}"]}
+    # 解析器可选钩子：扫描件成品用「渲染 + 矩形覆盖」代替整册 OCR。
+    # 钩子返回 None / 抛异常 = 无法证明安全，静默回退到原有完整重解析。
+    re_doc: Document | None = None
+    hook = getattr(parser, "fast_verify", None) if doc is not None else None
+    if callable(hook):
+        try:
+            fast = hook(exported, entities, ctx, doc=doc, options=options)
+        except Exception:
+            fast = None
+        if isinstance(fast, dict) and isinstance(fast.get("doc"), Document):
+            re_doc = fast["doc"]
+            fast_info = dict(fast.get("info") or {})
+    if re_doc is None:
+        try:
+            re_doc = parser.parse(exported, ctx)
+        except Exception as exc:
+            return {"verified": False, "residual": None,
+                    "issues": [f"成品无法重新解析：{exc}"]}
 
     text = _all_text(re_doc)
     # 换名版会把保形假值写回成品；假值里可能保留"人民法院/省市区"这类不敏感
@@ -788,10 +805,20 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
             issues.append("PDF 隐藏数据未清理：" + ", ".join(
                 f"{k}={v}" for k, v in pdf_hidden.items()))
 
+    # 扫描件快速复检的像素结论：黑框必须真的黑、替换框必须真的盖掉原图。
+    # （文本层/元数据/隐藏数据上面已经用与慢路径完全相同的逻辑检查过。）
+    if fast_info is not None:
+        unblacked = list(fast_info.get("unblacked") or [])
+        untouched = list(fast_info.get("untouched") or [])
+        if unblacked:
+            issues.append(f"仍有 {len(unblacked)} 处扫描页实体区域未涂黑")
+        if untouched:
+            issues.append(f"仍有 {len(untouched)} 处扫描页替换区域仍保留原图内容")
+
     ok = not issues
     if not ok:
         raise VerifyError("；".join(issues))
-    return {
+    result = {
         "verified": True,
         "residual": len(residual),
         "checked": checked,
@@ -801,6 +828,9 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
         "pdf_hidden": pdf_hidden,
         "issues": [],
     }
+    if fast_info is not None:
+        result["fast_verify"] = fast_info
+    return result
 
 
 def _all_text(doc: Document) -> str:

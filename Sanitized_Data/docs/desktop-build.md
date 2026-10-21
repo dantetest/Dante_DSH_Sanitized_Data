@@ -92,10 +92,10 @@ powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 | 文件 | 说明 |
 |---|---|
 | `dist\Sanitized_Data\` | 绿色版目录，可直接压缩分发 |
-| `out\desktop\Sanitized_Data-1.1.0-win64-portable.zip` | 绿色版压缩包（构建脚本自动生成） |
-| `dist_installer\Sanitized_Data_Setup_1.1.0_x64.exe` | 安装包（需要装 Inno Setup 6/7） |
+| `out\desktop\Sanitized_Data-1.1.1-win64-portable.zip` | 绿色版压缩包（构建脚本自动生成） |
+| `dist_installer\Sanitized_Data_Setup_1.1.1_x64.exe` | 安装包（需要装 Inno Setup 6/7） |
 
-v1.1.0 产物的体积与 SHA-256 见 [§五 构建记录](#五v110-重建记录2026-10-21)。
+v1.1.1 产物的体积与 SHA-256 见 [§六 构建记录](#六v111-重建记录2026-10-21)。
 
 > **构建脚本编码要求**：`desktop/build_win.ps1` 与 `desktop/installer.iss` 必须保存为
 > **UTF-8 with BOM**——Windows PowerShell 5.1 与 Inno Setup 才会按 UTF-8 解析中文；
@@ -289,3 +289,37 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 > 环境提示：本机曾在 DSH 工作区内直接执行安装包时 Setup 初始化退出（exit 1），把安装包复制到
 > 普通目录后安装成功——判断为工作区历史沙箱 ACL 残留影响，不是安装包缺陷；正式分发从 Release
 > 下载到普通目录双击即可。
+
+---
+
+## 六、v1.1.1 重建记录（2026-10-21）
+
+> 构建内容：真实测试集 QA §7 的 P2/P3 五项优化（扫描件 verify 零 OCR 快检、warning 去重、
+> 整页证件收紧、异常大码框待确认、TIF rasterio Orientation 修复）；版本号统一升到 `1.1.1`
+> （`config.py` / `app.spec` / `installer.iss` / `build_win.ps1` / Web 页面）。
+> 代码基线：`main` 上 tag `v1.1.1`。
+
+| 项 | 结果 |
+|---|---|
+| 版本 | `1.1.1` |
+| 构建时间 | 2026-10-21 13:40–13:48（Asia/Shanghai） |
+| 构建机 | Windows 10 Pro 19045 x64，Python 3.12.9 |
+| 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
+| PyInstaller | 6.22.3（onedir；含 `yinzhan` 子模块、cv2 数据文件 110 个） |
+| Inno Setup | 7.1.0（编译耗时 79s） |
+| 绿色版目录 `dist\Sanitized_Data\` | 约 422.7 MiB（解压后） |
+| 绿色版压缩包 `out\desktop\Sanitized_Data-1.1.1-win64-portable.zip` | **191,623,232 B（182.7 MiB）** / SHA-256 `0BDCEC7FE20DCC77E4BE2F0561627F430855F542A8F734628F814E5805DCAA35` |
+| 安装包 `dist_installer\Sanitized_Data_Setup_1.1.1_x64.exe` | **168,612,264 B（160.8 MiB）** / SHA-256 `E6CC8AAA8D0985BC82062FB515E5A543B32DFB01E3C0E9268070766881CCB2CA` |
+
+### 6.1 打包后自检
+
+| 检查项 | 期望 | v1.1.1 实测 |
+|---|---|---|
+| `/api/health` → `version` | `1.1.1` | ✅ `1.1.1`（独立端口 18760 + 临时数据目录） |
+| `/api/health` → `engine.ocr` | `true` | ✅ `true` |
+| `/api/health` → `engine.parsers` | ≥ 7（docx/image/mesh/pdf/text/tiff/xlsx） | ✅ 7 个全部加载 |
+| `/api/health` → `engine.scanners` | 含 `barcode` 等 | ✅ `barcode,visual_targets,sign_targets` |
+| 构建脚本退出码 | 0 | ✅ 0（含 PyInstaller、Inno 编译、绿色版压缩） |
+
+> 本版构建沿用 v1.1.0 的安装/卸载验收结论（安装器仅版本号变化，未改安装逻辑）；
+> 正式分发仍从 Release 下载到普通目录双击安装。

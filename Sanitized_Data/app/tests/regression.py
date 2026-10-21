@@ -1206,8 +1206,11 @@ def check_p0_fixes(gate: Gate) -> None:
                         "keeptags_no_274": pillow.get("keeptags_no_274")}))
     gate.hard("TIF 无 Orientation 源：尺寸不变且成品无 274",
               plain.get("ok") is True, _fmt_val(plain))
-    gate.hard("TIF rasterio 路径：不转正像素但 warning + 成品无 274（已知限制）",
-              raster.get("ok") is True, _fmt_val(raster))
+    gate.hard("TIF rasterio 路径：Orientation=6 parse/render/export 转正（60×120）且成品无 274",
+              raster.get("ok") is True,
+              _fmt_val({k: raster.get(k) for k in
+                        ("engine", "orientation_applied", "page_size", "out_size",
+                         "out_tag", "pixels_ok", "err")}))
 
 
 # ══════════════════════════ 6. MCP 工具（F9） ══════════════════════════

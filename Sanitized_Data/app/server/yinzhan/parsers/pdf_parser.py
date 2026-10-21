@@ -32,6 +32,15 @@ VISUAL_DPI = 150          # 找红章/手写用的渲染精度，150 够且快
 # 文本层少于这个字符数就当作扫描页走 OCR
 MIN_TEXT_CHARS = 8
 MIN_FONT_SIZE = 5.0
+
+# ── 扫描件成品快速复检（P2）──
+# 纯扫描 PDF 导出后不再整册重跑 OCR：低 DPI 渲染成品页，逐个导出矩形验证
+# 「黑框确实黑 / 替换框确实盖掉了原图墨迹」，文本层/元数据/隐藏数据仍按原逻辑检查。
+FAST_RECHECK_DPI = 96
+FAST_BLACK_MAX = 45          # 单通道 <= 45 视为黑像素（与内嵌图涂黑复检一致）
+FAST_BLACK_MIN = 0.98        # 黑框内部黑像素占比下限
+FAST_REPAINT_MAX = 0.80      # 替换框内「原墨迹仍为深色」的占比上限
+FAST_MIN_INK_PIXELS = 5      # 原图墨迹太少时不据此判断（无可泄漏的字）
 # 解析进 doc.meta、导出时整体清空的 PDF 元数据键
 _META_KEYS = (
     "author", "title", "producer", "creator", "subject",
@@ -320,6 +329,23 @@ def _pdf_hidden_summary(stats: dict[str, Any]) -> str:
     if stats.get("pdf_js"):
         parts.append("JavaScript")
     return "、".join(parts)
+
+
+def _pdf_hidden_meta(pdf: fitz.Document) -> tuple[dict[str, Any], str]:
+    """统计隐藏数据并返回可并入 ``doc.meta`` 的键值与摘要（不读原文内容）。
+
+    解析与快速复检共用同一份键名，避免 verify 的隐藏数据检查因路径不同而漂移。
+    """
+    hidden = _pdf_hidden_stats(pdf)
+    meta: dict[str, Any] = {}
+    for key in ("embedded_files", "pdf_annotations", "pdf_forms"):
+        meta[key] = int(hidden.get(key) or 0)
+    if hidden.get("embedded_file_names"):
+        meta["embedded_file_names"] = list(hidden["embedded_file_names"])
+    if hidden.get("pdf_annotation_types"):
+        meta["pdf_annotation_types"] = dict(hidden["pdf_annotation_types"])
+    meta["pdf_js"] = bool(hidden.get("pdf_js"))
+    return meta, _pdf_hidden_summary(hidden)
 
 
 def _strip_pdf_js(pdf: fitz.Document, warnings: list[str]) -> int:
@@ -1298,6 +1324,278 @@ def _insert_replacement(page: fitz.Page, rect: fitz.Rect, text: str) -> None:
         pass
 
 
+# ──────────────────── 扫描件成品快速复检（P2）────────────────────
+#
+# 背景：纯扫描 PDF 的 parse 已经把每页文字 OCR 出来；导出后再整册 OCR 一遍
+# （verify 重解析 + 内嵌图文字助检）只是把同一批像素再识别一次，多页扫描件
+# 因此耗时翻倍。这里提供**不削弱安全性**的快速复检：
+#   1. 只在「整册都是扫描页」时启用；文本层 PDF 仍走 parser.parse 完整重解析；
+#   2. 不跑 OCR：只提取成品文本层（残留/假值/隐藏文字）与元数据、隐藏数据；
+#   3. 低 DPI 渲染成品页，按导出时**同一套**矩形逐项验证：
+#      - 黑框：内部黑像素 ≥ 98%，证明涂黑确实落在成品上；
+#      - 替换框：原图墨迹在成品同一位置仍为深色的比例 ≤ 80%（替换框先用白底
+#        redaction 盖掉原图再写假值；比例接近 1 说明原图没被盖住）；
+#   4. 覆盖证明：parse 阶段文本里出现的每个实体值，其字符中心必须落在某个导出
+#      矩形内，否则**回退慢路径**（不冒险跳过）——「检出但没涂到」的第二处
+#      出现不会因为不 OCR 而漏掉。
+
+def _fast_verify_enabled() -> bool:
+    """快速复检开关（默认开；YINZHAN_PDF_FAST_VERIFY=0 可强制回退慢路径）。"""
+    raw = os.environ.get("YINZHAN_PDF_FAST_VERIFY")
+    if raw is None or not str(raw).strip():
+        return True
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _fast_recheck_dpi() -> int:
+    try:
+        value = int(os.environ.get("YINZHAN_PDF_FAST_VERIFY_DPI", "") or FAST_RECHECK_DPI)
+    except (TypeError, ValueError):
+        value = FAST_RECHECK_DPI
+    return max(72, min(150, value))
+
+
+def _effective_ops(ops_by_page: dict[int, list[dict[str, Any]]]) -> dict[int, list[dict[str, Any]]]:
+    """按导出时同一顺序合并矩形，得到成品上真正生效的绘制操作。"""
+    effective: dict[int, list[dict[str, Any]]] = {}
+    for page_no, ops in (ops_by_page or {}).items():
+        try:
+            merged = _merge_ops(ops, [])
+        except Exception:
+            return {}
+        if merged:
+            effective[int(page_no)] = merged
+    return effective
+
+
+def _box_contains(outer: Box, inner: Box, eps: float = 0.05) -> bool:
+    return (outer[0] - eps <= inner[0] and outer[1] - eps <= inner[1]
+            and outer[2] + eps >= inner[2] and outer[3] + eps >= inner[3])
+
+
+def _ops_cover_entity_spans(doc: Document, entities: Iterable[Entity],
+                            ops_by_page: dict[int, list[dict[str, Any]]]) -> bool:
+    """每个待处理实体的 span 都必须被成品上的某个操作矩形完整覆盖。
+
+    有任何一个 span 换算不出矩形、或矩形没被导出操作覆盖，都说明快速通道
+    无法证明它被处理过 —— 返回 False 让调用方回退完整重解析。
+    """
+    block_map: dict[str, tuple[int, Block]] = {}
+    for page in doc.pages:
+        for block in page.blocks:
+            block_map[block.id] = (page.index, block)
+    page_count = len(doc.pages)
+    for entity in entities or []:
+        if entity.status == "rejected":
+            continue
+        if entity.decision is not None and entity.decision.strategy == "keep":
+            continue
+        for span in entity.spans or []:
+            if span.block_id is not None:
+                hit = block_map.get(span.block_id)
+                if hit is None:
+                    return False
+                page_no, block = hit
+                rects = _span_rects_from_block(block, span)
+            elif span.rect:
+                page_no = (int(span.page) if span.page is not None
+                           else (0 if page_count == 1 else -1))
+                if page_no < 0 or page_no >= page_count:
+                    return False
+                normalized = _normalize_rect(span.rect, doc.pages[page_no])
+                rects = [normalized] if normalized else []
+            else:
+                return False
+            if not rects:
+                return False
+            ops = ops_by_page.get(page_no) or []
+            for rect in rects:
+                if rect[2] <= rect[0] or rect[3] <= rect[1]:
+                    return False
+                if not any(_box_contains(op["rect"], rect) for op in ops):
+                    return False
+    return True
+
+
+def _block_char_centers(block: Block) -> list[tuple[float, float]]:
+    """每个字符的中心点：有字符级坐标就用，OCR block 按 bbox 比例插值。"""
+    text = block.text or ""
+    bbox = block.bbox
+    if not text or not bbox:
+        return []
+    chars = (block.ref or {}).get("chars")
+    if isinstance(chars, list) and len(chars) >= len(text):
+        centers: list[tuple[float, float]] = []
+        for raw in chars[:len(text)]:
+            try:
+                x0, y0, x1, y1 = (float(v) for v in raw[:4])
+            except Exception:
+                centers.append(((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0))
+            else:
+                centers.append(((x0 + x1) / 2.0, (y0 + y1) / 2.0))
+        return centers
+    x0, y0, x1, y1 = bbox
+    count = len(text)
+    cy = (y0 + y1) / 2.0
+    return [(x0 + (x1 - x0) * (index + 0.5) / count, cy) for index in range(count)]
+
+
+def _covered_by_rects(x: float, y: float, rects: Iterable[Box], eps: float = 0.6) -> bool:
+    for rect in rects:
+        if (rect[0] - eps <= x <= rect[2] + eps
+                and rect[1] - eps <= y <= rect[3] + eps):
+            return True
+    return False
+
+
+def _has_uncovered_occurrences(doc: Document, entities: Iterable[Entity],
+                               ops_by_page: dict[int, list[dict[str, Any]]]) -> bool:
+    """parse 阶段文本里是否有实体值没落在任何导出矩形内（漏涂的第二处）。"""
+    rects_by_page: dict[int, list[Box]] = {}
+    for page_no, ops in (ops_by_page or {}).items():
+        rects_by_page[int(page_no)] = [tuple(op["rect"]) for op in ops]
+    blocks = [(page.index, block) for page in doc.pages for block in page.blocks]
+    for entity in entities or []:
+        if entity.status == "rejected" or not entity.value:
+            continue
+        if entity.decision is not None and entity.decision.strategy == "keep":
+            continue
+        needle = entity.value.strip()
+        if len(needle) < 2:
+            continue
+        for page_no, block in blocks:
+            text = block.text or ""
+            if needle not in text:
+                continue
+            centers = _block_char_centers(block)
+            if not centers:
+                # 有文字却没有几何信息：无法证明这处出现被矩形盖住，回退慢路径
+                return True
+            rects = rects_by_page.get(page_no) or []
+            start = 0
+            while True:
+                pos = text.find(needle, start)
+                if pos < 0:
+                    break
+                for index in range(pos, min(pos + len(needle), len(centers))):
+                    if not _covered_by_rects(centers[index][0], centers[index][1], rects):
+                        return True
+                start = pos + 1
+    return False
+
+
+def _render_rgb(page: fitz.Page, dpi: int):
+    """按显示坐标系渲染整页（旋转页也一致），返回 HxWx3 uint8。"""
+    import numpy as np
+
+    pix = page.get_pixmap(dpi=dpi, alpha=False)
+    arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+    return np.ascontiguousarray(arr[:, :, :3])
+
+
+def _rect_pixels(rect: Box, dpi: int, width: int, height: int) -> tuple[int, int, int, int] | None:
+    """页面坐标 -> 像素框；内缩 1px 避开 redaction 填充边缘的抗锯齿。"""
+    scale = dpi / 72.0
+    x0 = max(0, int(float(rect[0]) * scale))
+    y0 = max(0, int(float(rect[1]) * scale))
+    x1 = min(int(width), int(round(float(rect[2]) * scale)))
+    y1 = min(int(height), int(round(float(rect[3]) * scale)))
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return None
+    if x1 - x0 > 3:
+        x0 += 1
+        x1 -= 1
+    if y1 - y0 > 3:
+        y0 += 1
+        y1 -= 1
+    return x0, y0, x1, y1
+
+
+def _black_ratio(rgb, pixels: tuple[int, int, int, int]) -> float:
+    import numpy as np
+
+    x0, y0, x1, y1 = pixels
+    sub = rgb[y0:y1, x0:x1]
+    if sub.size == 0:
+        return 0.0
+    return float((np.max(sub, axis=2) <= FAST_BLACK_MAX).mean())
+
+
+def _ink_survival(orig_rgb, out_rgb, pixels: tuple[int, int, int, int]) -> float | None:
+    """原图深色墨迹在成品同一位置仍为深色的比例；墨迹太少时返回 None。"""
+    import numpy as np
+
+    x0, y0, x1, y1 = pixels
+    original = np.max(orig_rgb[y0:y1, x0:x1], axis=2)
+    output = np.max(out_rgb[y0:y1, x0:x1], axis=2)
+    ink = original <= 96
+    count = int(ink.sum())
+    if count < FAST_MIN_INK_PIXELS:
+        return None
+    return float((output[ink] <= 96).mean())
+
+
+def _fast_pixel_check(pdf: fitz.Document, doc: Document,
+                      ops_by_page: dict[int, list[dict[str, Any]]]):
+    """逐页低 DPI 渲染并核验导出矩形；无法证明时返回 None（回退慢路径）。"""
+    dpi = _fast_recheck_dpi()
+    needs_original = any(not op["black"] for ops in ops_by_page.values() for op in ops)
+    source = None
+    if needs_original:
+        try:
+            source = _open_pdf(Path(doc.path))
+        except Exception:
+            return None
+    black_checked = replacement_checked = rendered = 0
+    unblacked: list[int] = []
+    untouched: list[int] = []
+    try:
+        for page_no in sorted(ops_by_page):
+            if page_no < 0 or page_no >= pdf.page_count:
+                return None
+            ops = ops_by_page[page_no]
+            try:
+                out_rgb = _render_rgb(pdf[page_no], dpi)
+            except Exception:
+                return None
+            rendered += 1
+            orig_rgb = None
+            if source is not None and any(not op["black"] for op in ops):
+                if page_no >= source.page_count:
+                    return None
+                try:
+                    orig_rgb = _render_rgb(source[page_no], dpi)
+                except Exception:
+                    return None
+                if orig_rgb.shape != out_rgb.shape:
+                    return None
+            for op in ops:
+                rect = op.get("rect")
+                if not rect:
+                    continue
+                pixels = _rect_pixels(rect, dpi, out_rgb.shape[1], out_rgb.shape[0])
+                if pixels is None:
+                    return None
+                if op["black"]:
+                    black_checked += 1
+                    if _black_ratio(out_rgb, pixels) < FAST_BLACK_MIN:
+                        unblacked.append(int(page_no))
+                else:
+                    if orig_rgb is None:
+                        return None
+                    replacement_checked += 1
+                    survival = _ink_survival(orig_rgb, out_rgb, pixels)
+                    if survival is not None and survival > FAST_REPAINT_MAX:
+                        untouched.append(int(page_no))
+    finally:
+        if source is not None:
+            try:
+                source.close()
+            except Exception:
+                pass
+    return black_checked, unblacked, replacement_checked, untouched, rendered
+
+
 # ────────────────────────────── 解析器 ──────────────────────────────
 
 class PdfParser(registry.Parser):
@@ -1325,15 +1623,8 @@ class PdfParser(registry.Parser):
         # P0 隐藏数据统计（附件/批注/表单/JS）：写 meta 供 pipeline.verify 复检，
         # 导出时默认剥离；显式 keep_pdf_hidden=True 才保留。
         try:
-            hidden = _pdf_hidden_stats(pdf)
-            for key in ("embedded_files", "pdf_annotations", "pdf_forms"):
-                doc.meta[key] = int(hidden.get(key) or 0)
-            if hidden.get("embedded_file_names"):
-                doc.meta["embedded_file_names"] = list(hidden["embedded_file_names"])
-            if hidden.get("pdf_annotation_types"):
-                doc.meta["pdf_annotation_types"] = dict(hidden["pdf_annotation_types"])
-            doc.meta["pdf_js"] = bool(hidden.get("pdf_js"))
-            hidden_summary = _pdf_hidden_summary(hidden)
+            hidden_meta, hidden_summary = _pdf_hidden_meta(pdf)
+            doc.meta.update(hidden_meta)
             if hidden_summary:
                 doc.warnings.append(
                     f"检测到 PDF 隐藏数据（{hidden_summary}），导出时将默认剥离；"
@@ -1367,6 +1658,7 @@ class PdfParser(registry.Parser):
                     blocks = _page_text_blocks(page, page_index)
                     text = "".join(block.text for block in blocks)
                     scanned = len(text.strip()) < MIN_TEXT_CHARS
+                    udm_page.ref["scanned"] = bool(scanned)
                     if scanned:
                         ctx.report(page_index, page_count,
                                    f"正在识别第 {page_index + 1}/{page_count} 页（扫描件）")
@@ -1396,6 +1688,117 @@ class PdfParser(registry.Parser):
             except Exception:
                 pass
         return doc
+
+    def fast_verify(self, exported: Path, entities: list[Entity],
+                    ctx: ParseContext | None = None, *, doc: Document | None = None,
+                    options: dict | None = None) -> dict | None:
+        """扫描件成品的快速复检（不跑 OCR）。
+
+        返回 ``{"doc": 回填了成品文本层/元数据的 Document, "info": 统计}``；
+        任何「无法证明安全」的情况都返回 ``None``，由 ``pipeline.verify``
+        回退到原来的完整重解析 + OCR 复检。判定条件：
+
+        * 原始文档整册都是扫描页（``Page.ref["scanned"]``），否则不适用；
+        * 每个待处理实体的 span 都能换算成矩形，且被成品上的操作矩形覆盖；
+        * parse 阶段文本里实体值的每一处出现，字符中心都被导出矩形覆盖
+          （漏涂的第二处不会因为不 OCR 而漏掉）；
+        * 成品页数/页面尺寸/旋转与原件一致，文本层/元数据/隐藏数据可读；
+        * 每个黑框内部 ≥98% 黑像素；每个替换框内原图墨迹存活率 ≤80%。
+        """
+        if not _fast_verify_enabled():
+            return None
+        if (options or {}).get("keep_pdf_hidden"):
+            # 显式保留批注/表单/附件时，批注外观可能盖在涂黑框上影响像素判定；
+            # 这类非常规选项直接走完整重解析，保证判定口径不变。
+            return None
+        if doc is None or getattr(doc, "fmt", "") != "pdf":
+            return None
+        pages = list(getattr(doc, "pages", None) or [])
+        if not pages:
+            return None
+        # 文本层 PDF 仍走原有重解析 + 残留检查，行为完全不变
+        if any(not bool((page.ref or {}).get("scanned")) for page in pages):
+            return None
+        # 没有决策的实体（如待确认的大面积码框）在导出阶段可能被过滤，也可能被
+        # 调用方兜底成 black；快速通道无法确认它到底画没画，直接回退慢路径。
+        if any(e.status != "rejected" and e.decision is None
+               for e in (entities or [])):
+            return None
+        active = [e for e in entities or []
+                  if e.status != "rejected" and e.decision is not None]
+        decisions = {e.id: e.decision for e in active}
+        collect_warnings: list[str] = []
+        try:
+            raw_ops = _collect_ops(doc, active, decisions, collect_warnings)
+        except Exception:
+            return None
+        if collect_warnings:
+            # 有 span 换算不出矩形（定位块缺失/页号非法…），导出本身可能漏涂
+            return None
+        ops_by_page = _effective_ops(raw_ops)
+        if not ops_by_page:
+            # 没有绘制操作时无法证明「定位块仍在」；保守回退
+            if any(getattr(e, "spans", None) for e in active):
+                return None
+        if not _ops_cover_entity_spans(doc, active, ops_by_page):
+            return None
+        if _has_uncovered_occurrences(doc, entities or [], ops_by_page):
+            return None
+        try:
+            pdf = fitz.open(str(exported))
+        except Exception:
+            return None
+        try:
+            if int(pdf.page_count) != len(pages):
+                return None
+            for index, out_page in enumerate(pdf):
+                original = pages[index]
+                if abs(float(out_page.rect.width) - float(original.width)) > 0.5:
+                    return None
+                if abs(float(out_page.rect.height) - float(original.height)) > 0.5:
+                    return None
+                want_rotation = int((original.ref or {}).get("rotation") or 0)
+                if _rotation(out_page) != want_rotation:
+                    return None
+            # 只读文本层：没有任何 OCR
+            re_doc = Document(doc_id=_new_doc_id(), path=str(exported),
+                              fmt="pdf", meta=_document_meta(pdf))
+            try:
+                hidden_meta, _summary = _pdf_hidden_meta(pdf)
+            except Exception:
+                return None
+            re_doc.meta.update(hidden_meta)
+            for index in range(len(pages)):
+                page = pdf[index]
+                re_doc.pages.append(Page(
+                    index=index,
+                    width=float(page.rect.width),
+                    height=float(page.rect.height),
+                    blocks=_page_text_blocks(page, index),
+                    ref={"rotation": _rotation(page), "scanned": False},
+                ))
+            checked = _fast_pixel_check(pdf, doc, ops_by_page)
+        except Exception:
+            return None
+        finally:
+            try:
+                pdf.close()
+            except Exception:
+                pass
+        if checked is None:
+            return None
+        black_checked, unblacked, replacement_checked, untouched, rendered = checked
+        info = {
+            "used": True,
+            "ocr_calls": 0,
+            "pages": len(pages),
+            "rendered_pages": rendered,
+            "black_checked": black_checked,
+            "replacement_checked": replacement_checked,
+            "unblacked": list(unblacked),
+            "untouched": list(untouched),
+        }
+        return {"doc": re_doc, "info": info}
 
     def export(self, doc: Document, entities: list[Entity],
                decisions: dict[str, Decision], out_path: Path,

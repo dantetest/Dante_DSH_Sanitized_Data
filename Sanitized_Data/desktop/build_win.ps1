@@ -71,7 +71,7 @@ if (Test-Path $exe) {
     if ($null -eq $oldData) { Remove-Item Env:YINZHAN_DATA_DIR -ErrorAction SilentlyContinue } else { $env:YINZHAN_DATA_DIR = $oldData }
     Start-Sleep -Seconds 10
     # 端口/版本都按本次实例校验，避免「自检命中了别的旧版本实例」造成假通过。
-    $expectVersion = '1.1.0'
+    $expectVersion = '1.1.1'
     try {
         $iv = Select-String -Path (Join-Path $PSScriptRoot 'installer.iss') -Pattern '#define MyAppVersion "([^"]+)"'
         if ($iv) { $expectVersion = $iv.Matches[0].Groups[1].Value }
@@ -123,7 +123,7 @@ if ($iscc) {
 }
 
 Write-Host "`n[7/7] 打绿色版压缩包" -ForegroundColor Cyan
-$zip = Join-Path $Root 'out\desktop\Sanitized_Data-1.1.0-win64-portable.zip'
+$zip = Join-Path $Root "out\desktop\Sanitized_Data-$expectVersion-win64-portable.zip"
 New-Item -ItemType Directory -Force -Path (Split-Path $zip) | Out-Null
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path (Join-Path $Root 'dist\Sanitized_Data') -DestinationPath $zip -CompressionLevel Optimal

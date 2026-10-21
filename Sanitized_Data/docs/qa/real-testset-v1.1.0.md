@@ -15,6 +15,11 @@
 > **更新（2026-10-21，发布前）**：R04 根因（地址保形假值保留完整原值 + verify 假值豁免过宽）
 > 已修复并复验，真实测试集修复后 **17/17 全链路通过、P0=0**；本报告保留修复前记录作为证据。
 > 修复内容与复验数据见 [r04-fix-verification.md](r04-fix-verification.md)。
+>
+> **更新（2026-10-21，v1.1.1）**：§7 的 P2/P3 五项（扫描件 OCR 双跑、warning 重复、
+> 整页证件过判、异常大码框、TIF rasterio Orientation）已全部修复并复验，
+> 见 [p2p3-fix-verification.md](p2p3-fix-verification.md) 与
+> [实现说明](../impl/p2p3-optimizations.md)；本报告保留修复前数据作为对照。
 
 | 指标 | 结果 |
 |---|---|

@@ -8,7 +8,7 @@ from . import paths
 
 APP_NAME = "数据隐站"
 APP_NAME_EN = paths.APP_NAME_EN
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 # 资源（只读）：源码运行时是 app/，打包后是 sys._MEIPASS
 APP_DIR = paths.resource_root()

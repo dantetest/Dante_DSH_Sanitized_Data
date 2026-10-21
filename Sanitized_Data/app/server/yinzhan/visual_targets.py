@@ -32,6 +32,12 @@ P0 范围
   没有可识别脸/朝向/字段越界时返回 ``fallback=1`` 的整卡 ``id_document``（不漏）。
   注释格式：``side=front|back;fields=n[;fallback=1];orient=0|90|180|270``，
   ``orient`` 表示把原页面逆时针旋转多少度得到正向卡。
+
+  整页过判抑制（P2）：身份证正/反面字段级命中可靠时（正面 4 字段、反面 2 行），
+  ``whole_page`` 不再无条件整页扩张——页面长宽比明显不像证件（手机竖拍/文档页）时
+  改返回几何拟合的整卡框；拟合不出可信卡片则只返回字段命中，避免整页涂黑。
+  页面本身长宽比≈证件（紧裁卡面/卡面扫描）仍保留整页兜底；字段读不出/无法定向
+  的 ``fallback=1`` 分支不受影响，仍返回整卡/整页（宁可多遮，不可漏）。
 - ``plate``：OCR 文本框 + 中国车牌正则（含新能源 8 位、挂/学/警后缀）作为基础路径；
   全图 HSV 蓝/绿/黄底色 + 矩形拟合找**完整牌面**，OCR 仅确认归属；
   不可读时回退低置信候选（note 标 unconfirmed），返回比 OCR 框更宽的整块牌面。
@@ -1249,6 +1255,75 @@ def _refine_back_fields(fields: dict[str, Box],
     return fields
 
 
+#: 字段级命中可靠（可抑制整页扩张）的最小字段数：正面模板固定 4 字段、反面 2 行。
+#: 少于该值说明几何/模板异常，宁可按整页兜底（不漏遮）。
+_ID_FRONT_MIN_FIELDS = 4
+_ID_BACK_MIN_FIELDS = 2
+#: 「整页本身就像证件」的容差：页面长宽比接近身份证横版 1.585（或竖版 0.631）时，
+#: 整页 ≈ 整卡，相机紧裁/卡面扫描保留整页兜底不会明显浪费成品（whole 档需要）。
+_ID_PAGE_ASPECT_TOL = 0.10
+#: 字段级可靠时，整卡框最多占页面的比例；超过说明框已接近整页，不再当作「合理整卡」。
+#: 取 0.89 而非 0.90：QA 把面积比四舍五入到 3 位后按 ≥0.90 判整页，留 1% 余量。
+_ID_CARD_BOX_MAX_AREA = 0.89
+#: 卡片框长宽比合理区间（含 90° 旋转/轻度透视；身份证 1.585，名片/护照更宽）。
+_ID_CARD_BOX_MIN_ASPECT = 1.15
+_ID_CARD_BOX_MAX_ASPECT = 3.20
+
+
+def _page_is_card_shaped(width: int, height: int) -> bool:
+    """页面长宽比是否接近身份证（横版或竖版）。
+
+    用户把照片紧裁成卡片、或扫描件页面就是卡面时，整页涂黑 ≈ 整卡涂黑，
+    可继续用整页兜底（尤其 whole 档需要整卡全覆盖）；手机竖拍/文档页的
+    长宽比与证件差异明显，不应把整页当证件。
+    """
+    if width <= 0 or height <= 0:
+        return False
+    ratio = max(float(width), float(height)) / max(1.0, min(float(width), float(height)))
+    return abs(ratio - _ID_CARD_ASPECT) / _ID_CARD_ASPECT <= _ID_PAGE_ASPECT_TOL
+
+
+def _plausible_card_box(card_box: Box | None, width: int, height: int) -> bool:
+    """字段/锚点几何拟合出的整卡框是否可信（在页内、像卡片、明显小于整页）。"""
+    if card_box is None:
+        return False
+    if _inside_ratio(card_box, float(width), float(height)) < 0.95:
+        return False
+    box_w = max(0.0, card_box[2] - card_box[0])
+    box_h = max(0.0, card_box[3] - card_box[1])
+    if box_w < 40.0 or box_h < 24.0:
+        return False
+    page_area = float(width) * float(height) or 1.0
+    if box_w * box_h > _ID_CARD_BOX_MAX_AREA * page_area:
+        return False
+    ratio = max(box_w, box_h) / max(1.0, min(box_w, box_h))
+    return _ID_CARD_BOX_MIN_ASPECT <= ratio <= _ID_CARD_BOX_MAX_ASPECT
+
+
+def _id_document_box(whole_page: bool, card_page: Box | None,
+                     width: int, height: int) -> Box | None:
+    """字段级命中可靠时的 ``id_document`` 框（P2：抑制整页证件过判）。
+
+    - 非 whole_page：沿用整卡外扩 10%，不改变既有行为；
+    - whole_page 且页面长宽比≈身份证：整页≈整卡，保留整页兜底；
+    - whole_page 其它（手机竖拍/文档页）：返回拟合的整卡框——优先外扩 10% 且
+      面积仍明显小于整页（<89%）；外扩后会接近整页则用拟合框本身；拟合框不可信时
+      返回 ``None``（只留给字段级命中，不再整页扩张）。
+    """
+    if not whole_page:
+        if card_page is None:
+            return None
+        return _expand_card_rect(card_page, width, height, ratio=0.10)
+    if _page_is_card_shaped(width, height):
+        return (0.0, 0.0, float(width), float(height))
+    if card_page is None or not _plausible_card_box(card_page, width, height):
+        return None
+    expanded = _expand_card_rect(card_page, width, height, ratio=0.10)
+    if _plausible_card_box(expanded, width, height):
+        return expanded
+    return _clamp_box(card_page, float(width), float(height))
+
+
 def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
                         text_boxes: Sequence[tuple[str, Box]]) -> list[ScanHit]:
     if not text_boxes:
@@ -1374,11 +1449,16 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
                 continue
             hits.append(ScanHit(kind=kind, rect=box, confidence=0.88,
                                 note=field_note))
-        doc_rect = page_rect if whole_page else _expand_card_rect(
-            card_page, width, height, ratio=0.10)
-        hits.append(ScanHit(kind="id_document", rect=doc_rect,
-                            confidence=round(min(0.97, conf), 3),
-                            note=field_note))
+        # 两行字段已可靠命中：whole_page 不再无条件整页扩张（P2 整页证件过判）。
+        if whole_page and len(fields) >= _ID_BACK_MIN_FIELDS:
+            doc_rect = _id_document_box(True, card_page, width, height)
+        else:
+            doc_rect = page_rect if whole_page else _expand_card_rect(
+                card_page, width, height, ratio=0.10)
+        if doc_rect is not None:
+            hits.append(ScanHit(kind="id_document", rect=doc_rect,
+                                confidence=round(min(0.97, conf), 3),
+                                note=field_note))
         return hits
 
     front = _detect_id_card_front(rgb, text_boxes, width, height)
@@ -1403,11 +1483,16 @@ def _detect_id_document(rgb: np.ndarray, ctx: ScanContext,
         field_conf = 0.90 if kind in ("id_photo", "id_name", "id_number") else 0.86
         hits.append(ScanHit(kind=kind, rect=box, confidence=field_conf,
                             note=field_note))
-    doc_rect = page_rect if whole_page else _expand_card_rect(
-        card_page, width, height, ratio=0.10)
-    hits.append(ScanHit(kind="id_document", rect=doc_rect,
-                        confidence=round(min(0.97, conf), 3),
-                        note=field_note))
+    # 四字段已可靠命中：whole_page 不再无条件整页扩张（P2 整页证件过判）。
+    if whole_page and len(fields) >= _ID_FRONT_MIN_FIELDS:
+        doc_rect = _id_document_box(True, card_page, width, height)
+    else:
+        doc_rect = page_rect if whole_page else _expand_card_rect(
+            card_page, width, height, ratio=0.10)
+    if doc_rect is not None:
+        hits.append(ScanHit(kind="id_document", rect=doc_rect,
+                            confidence=round(min(0.97, conf), 3),
+                            note=field_note))
     return hits
 
 
