@@ -52,9 +52,14 @@ v1.1.2 把二者收敛为**同一套矩形**：
 
 见 Release 页 `SHA256SUMS.txt`：
 
-| 文件 | SHA-256 |
-|---|---|
-| `Sanitized_Data_Setup_1.1.2_x64.exe` | （构建后回填） |
-| `Sanitized_Data-1.1.2-win64-portable.zip` | （构建后回填） |
-| `Sanitized_Data-1.1.2-win64.zip` | （构建后回填） |
-| `Sanitized_Data-1.1.2-linux64.tar.gz` | （构建后回填） |
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `Sanitized_Data-1.1.2-win64.zip`（源码包） | 2,538,460 B（2.42 MiB） | `3471772268A2C9C7E3CDA234FCB95A3BF8257FB001FABE474C96B76D64DB43B5` |
+| `Sanitized_Data-1.1.2-linux64.tar.gz`（源码包） | 2,381,494 B（2.27 MiB） | `4A698213913DA2223F978B2E52090173E405799F6BB4F531660D627C5D2A84C3` |
+| `Sanitized_Data_Setup_1.1.2_x64.exe`（安装包） | 168,704,289 B（160.9 MiB） | `CC6DF2636903A77A99F8F9F36D0619193B14FFA9CB22ED50EED0111922246AA6` |
+| `Sanitized_Data-1.1.2-win64-portable.zip`（绿色版） | 191,717,563 B（182.8 MiB） | `0CF30971E23E49FD7F48A4F6E305A73B8A190DAB00AF62652130DEE43773AFDD` |
+
+> 部署后请用 `GET /api/health` 确认：`version=1.1.2`、`build=20261021-preview-parity`、
+> `engine.preview_parity=export-parity/v1`。旧版（1.1.1 及以前）会出现「预览整行黑、
+> 下载只涂实体」的不一致。
+
