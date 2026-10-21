@@ -10,7 +10,7 @@
 
 | 门禁 | 结果 |
 |---|---|
-| `app/tests/regression.py` | **247 项硬检查全绿**（4 条软提示；TIF rasterio 检查已随修复更新断言） |
+| `app/tests/regression.py` | **250 项硬检查全绿**（1 条软提示；TIF rasterio 检查已随修复更新断言） |
 | `app/tests/run_all.py` | **19/19 套件通过**，515.22s（新增 `pdfverifyfast` / `idwholepage` / `warnings`） |
 | 新增专项测试 | `test_pdf_verify_fast.py` 5/5；`test_id_wholepage.py` 8/8；`test_warnings_pending.py` 9/9 |
 | 受影响域回归 | `test_tiff.py` 39/39；`test_visual.py` 61/61；`test_pdf_hidden.py` 19/19；`test_pdf_embedded.py` 40/40 |

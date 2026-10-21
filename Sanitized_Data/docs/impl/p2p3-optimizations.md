@@ -142,7 +142,7 @@ rasterio 路径此前不按 tag 274 转正像素，parse/render/export 都按原
 ## 7. 验收与版本
 
 - `app/tests/run_all.py`：**19 套**全绿（515.22s，新增 3 套）。
-- `app/tests/regression.py`：**247 项**硬检查全绿（TIF 检查文案/断言随修复更新）。
+- `app/tests/regression.py`：**250 项**硬检查全绿（TIF 检查文案/断言随修复更新）。
 - 真实测试集抽测（R04 10 页 / R17 17 页，human 全链路）：
   - R04：**85.4s → 34.9s（2.4×）**，verify **42.6s → 4.26s**，0 OCR，residual=0；
   - R17：**112.1s → 61.4s（1.8×）**，verify **~56s → 3.15s**，0 OCR，residual=0；
