@@ -138,5 +138,5 @@
 ## 7. 维护约定
 
 - 能力/口径变更必须同步：本表 + [../README.md](../README.md)（支持表/已知限制）+ [release-notes-v1.1.0.md](release-notes-v1.1.0.md)。
-- 测试为准：`app/tests/regression.py`（当前 249 项，以最新输出为准）、`run_all`（16 套件）、`test_mesh`、`test_tiff` 全绿是发布门槛。
+- 测试为准：`app/tests/regression.py`（当前 251 项，以最新输出为准）、`run_all`（16 套件）、`test_mesh`、`test_tiff` 全绿是发布门槛。
 - 新格式/新目标上线前，先在本表增加行并标注档位，再补测试与文档。

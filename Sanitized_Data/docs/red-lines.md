@@ -156,7 +156,7 @@
 | 规则包 | **8 个**（common/finance-cn/legal-cn/medical-cn/geo-cn/trade-cn/pipl-cn/table-cn），自有规则 **104 条**（P1.5 新增 legal-cn `cn.passport_no`） |
 | 编译规则数 | pdf/text 89、docx 100、xlsx 103、image/tiff 86、mesh 13（+1 护照号） |
 | 5 个既有样例 | 实体 52 个（对账单 13→19 为预期新增），双导出 residual 全 0，元数据/隐藏数据全清（本轮无聊天/招牌/证件样例，**功能基线数值不变**） |
-| 红线门禁 | `regression.py` **249 项检查全绿（硬项失败 0；以最新输出为准）**（+0 软提示）；退出码 0 |
+| 红线门禁 | `regression.py` **251 项检查全绿（硬项失败 0；以最新输出为准）**（+0 软提示）；退出码 0 |
 | 全套测试 | `run_all.py` **15 个套件**全绿：regression + barcodes/finance/trade/visual/legal/pipl/table/pdfhidden/signs/officemedia/csv/pdfembedded/mesh/tiff（test_visual 61、test_sign_targets 39、test_office_media 43、test_csv_table 115 断言、test_pdf_embedded 40、test_mesh 7、test_tiff 36） |
 | 身份证 A 方案 | `fields` 默认（正面头像/姓名/号码/住址；反面签发机关/有效期限；性别/民族/出生、国徽/标题保留）、`whole` 可选整卡；API 默认/非法值回退 fields；无法定向/两行读不出回退整卡 |
 | P1-A 第一波 | 聊天截图逐项（5 类 CHAT_*，仅图片、微信式布局）；招牌/门牌/路牌/铭牌 OCR 扫描（4 kind，pending）；未成年人身份证生日推断 + `/minor-strict`；时间模糊 `time_blur`；组合风险 `combination_risk` |
