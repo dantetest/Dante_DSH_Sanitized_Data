@@ -157,8 +157,8 @@ v1.0.0 构建（2026-10-19）之后合入、v1.1.0 一并交付的能力（按�
 |---|---|---|
 | `Sanitized_Data_Setup_1.1.0_x64.exe` | 164,420,430 B（156.8 MiB） | `88692234BC3A9105BB8F0D017462C5FFE67A34A7B3B54AA00CABC5C9270EC10D` |
 | `Sanitized_Data-1.1.0-win64-portable.zip` | 187,452,485 B（178.8 MiB） | `0C7722498A51325B2B42355EFF6D25086B94EEC604260F256B2EFEBABBB2ADC4` |
-| `Sanitized_Data-1.1.0-win64.zip`（源码包） | （源码包生成后回填） | （源码包生成后回填） |
-| `Sanitized_Data-1.1.0-linux64.tar.gz`（源码包） | （源码包生成后回填） | （源码包生成后回填） |
+| `Sanitized_Data-1.1.0-win64.zip`（源码包） | 2,490,079 B（2.37 MiB） | `578AFCF764B414307EC26C220C85707BD55A1703A2B448E8CB66D96C0341BC34` |
+| `Sanitized_Data-1.1.0-linux64.tar.gz`（源码包） | 2,340,724 B（2.23 MiB） | `54BAE9250C7C55DD4790C98D4CBA2EBFFB193FA650712FAA90C7120F50C18BF0` |
 
 - 发布提交：**tag `v1.1.0`**
 - 构建时间：**2026-10-21 12:33（Asia/Shanghai）**；PyInstaller 6.22.3 · Inno Setup 7.1.0
