@@ -40,3 +40,28 @@
 3. AI 模式跳过自动人脸误检是基于「证件/内嵌图页保护」的启发式；若文档扫描页含真实人脸照片，AI 版可能不涂黑（human 版仍涂黑）。
 4. 跨文档映射仍不共享（同一原值在不同文档可能是不同假值）；组级还原为后续版本能力。
 5. 漏检 PII（规则未覆盖的姓名/编号等）在 human/AI 两版均可能残留，产品不承诺匿名化，仅承诺已识别的敏感信息被替换/涂黑。
+
+## 五、收尾补充（2026-10-22）
+
+| 项 | 说明 |
+|---|---|
+| 本地日志 | 启动/就绪/请求/错误/心跳/退出写 `data/logs/server.log`，按日归档默认保留 30 天；query/请求体/上传文件名/文档内容不落日志 |
+| 服务器状态 | `python app/server/status.py [--json]` 只读本地文件 + 最多一次 127.0.0.1 `/api/health`，供部署/排障 |
+| 日志开关 | `YINZHAN_LOG_DIR/LEVEL/KEEP_DAYS/REQUESTS/HEARTBEAT_SEC/CLIENT_IP/STDERR`；日志不可写时回退数据目录再降级 stderr，服务照常启动 |
+| YuNet 侧脸 | 随包 OpenCV Zoo YuNet（232,589 B，模型文件 MIT）；照片侧脸/低头/闭眼/躺卧召回提升，真实照片主脸 4/13→12/13；模型卡训练数据 WIDER FACE CC BY-NC-ND，对外商用分发前请法务确认 |
+| 图片涂黑预览 | 图片任务补 `export_black_rects`，预览涂黑框与 human 成品同源（此前图片任务预览 0 框） |
+| 人脸检测总门禁 | `test_visual` 68/68、`regression` 249 项硬检查、`run_all` 29/29、`e2e` 5/5 |
+
+## 六、产物与校验
+
+> Windows v1.1.3 安装包/绿色版已随发布页提供；macOS v1.1.3 未重建，继续使用 v1.1.2 DMG。
+> 精确大小/SHA-256 见 Release 附件 `SHA256SUMS.txt`（构建完成后回填本节）。
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `Sanitized_Data_Setup_1.1.3_x64.exe`（安装包） | 164,105,916 B（156.5 MiB） | `A5FE164C8D41003F25BAED74EEAE50D30575F56AE25E0E5C963F574699D5C45D` |
+| `Sanitized_Data-1.1.3-win64-portable.zip`（绿色版） | 187,149,590 B（178.5 MiB） | `1C0D566E3874A3AC869DE92B9E5220C7AFFB2A4F759AF018F742C2BDB7394D45` |
+
+源码包（`-win64.zip` / `-linux64.tar.gz`）与 macOS v1.1.2 DMG 的 SHA-256 见 Release 附件
+`SHA256SUMS.txt`；macOS v1.1.3 未重建。
+
