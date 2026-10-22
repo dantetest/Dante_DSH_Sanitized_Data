@@ -16,32 +16,21 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import audit, registry, vault
-from .config import BUILD_ID, DATA_DIR, MAX_UPLOAD, UPLOAD_DIR, VERSION, WEB_DIR
+from . import audit, logging_setup, registry, vault
+from .config import BUILD_ID, MAX_UPLOAD, UPLOAD_DIR, VERSION, WEB_DIR
 from .jobs import MANAGER
 from .ocr import get_ocr
 from .udm import YinzhanError
 from .utils import safe_name, sha256_bytes
 
-LOG_PATH = DATA_DIR / "server.log"
-LOG_MAX_BYTES = 2 * 1024 * 1024
-
 
 def log_error(text: str) -> None:
-    """错误同时写 data/server.log 和标准错误，方便用户把日志发回来。"""
-    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {text.rstrip()}\n"
-    try:
-        if LOG_PATH.exists() and LOG_PATH.stat().st_size > LOG_MAX_BYTES:
-            LOG_PATH.unlink(missing_ok=True)
-        with open(LOG_PATH, "a", encoding="utf-8") as fh:
-            fh.write(line)
-    except Exception:
-        pass
-    try:
-        sys.stderr.write(line)
-        sys.stderr.flush()
-    except Exception:
-        pass
+    """兼容旧调用点：错误写本地文件日志（按日期翻转）并同步到 stderr。"""
+    logging_setup.log_error(text)
+
+
+def log_warning(text: str) -> None:
+    logging_setup.log_warning(text)
 
 
 def _is_client_gone(exc: BaseException) -> bool:
@@ -260,6 +249,8 @@ class Handler(BaseHTTPRequestHandler):
     # ── 工具 ──
     def _send(self, status: int, body: bytes, ctype: str,
               extra: dict | None = None, filename: str | None = None):
+        self._req_status = int(status)
+        self._req_bytes = len(body)
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -277,6 +268,31 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    # ── 请求日志（只记运维事实：method/path/status/耗时/字节数） ──
+    def _begin_request(self) -> None:
+        self._req_t0 = time.perf_counter()
+        self._req_status = 0
+        self._req_bytes = 0
+        self._req_path = urllib.parse.urlparse(self.path).path
+
+    def _end_request(self) -> None:
+        """无论成功/异常都写一行请求日志；query 在 format_request 里丢弃。"""
+        try:
+            if not logging_setup.requests_enabled():
+                return
+            elapsed_ms = (time.perf_counter() - self._req_t0) * 1000.0
+            peer = self.client_address[0] if self.client_address else ""
+            client_ip = logging_setup.pick_client_ip(
+                peer,
+                self.headers.get("X-Real-IP", "") if self.headers else "",
+                self.headers.get("X-Forwarded-For", "") if self.headers else "",
+            )
+            logging_setup.log_request(
+                self.command or "?", self._req_path,
+                self._req_status, self._req_bytes, elapsed_ms, client_ip)
+        except Exception:
             pass
 
     def _json(self, obj, status: int = 200):
@@ -320,8 +336,10 @@ class Handler(BaseHTTPRequestHandler):
             item = item.strip()
             if item and _host_only(item) == origin_host:
                 return True
-        log_error("跨站请求被拒 origin=%s host=%s xfh=%s" % (
-            origin, self.headers.get("Host"), self.headers.get("X-Forwarded-Host")))
+        log_warning("跨站请求被拒 origin=%s host=%s xfh=%s" % (
+            logging_setup.sanitize_field(origin, 200),
+            logging_setup.sanitize_field(self.headers.get("Host", ""), 200),
+            logging_setup.sanitize_field(self.headers.get("X-Forwarded-Host", ""), 200)))
         return False
 
     # ── 请求体 ──
@@ -445,25 +463,48 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": {"code": "not_found", "message": f"没有这个接口：{path}"}}, 404)
 
     def do_GET(self):
-        self._dispatch("GET")
+        self._begin_request()
+        try:
+            self._dispatch("GET")
+        finally:
+            self._end_request()
 
     def do_HEAD(self):
         """下载器和反向代理常先发 HEAD 探测大小。"""
         self._head_only = True
+        self._begin_request()
         try:
             self._dispatch("GET")
         finally:
             self._head_only = False
+            self._end_request()
 
     def do_POST(self):
-        self._dispatch("POST")
+        self._begin_request()
+        try:
+            self._dispatch("POST")
+        finally:
+            self._end_request()
 
     def do_OPTIONS(self):
-        self._json({"ok": True})
+        self._begin_request()
+        try:
+            self._json({"ok": True})
+        finally:
+            self._end_request()
 
     def log_message(self, fmt, *args):
-        if os.environ.get("YINZHAN_DEBUG"):
-            super().log_message(fmt, *args)
+        """http.server 默认会打印含完整请求行/query 的访问日志；已结构化覆盖，静音。"""
+        return
+
+    def log_error(self, fmt, *args):
+        """协议层错误（坏请求行/头）记 WARNING；清掉 query/换行，防日志注入。"""
+        try:
+            message = fmt % args
+        except Exception:
+            message = str(fmt)
+        logging_setup.get_logger("http").warning(
+            "%s", logging_setup.sanitize_field(message, 500, strip_query=True))
 
 
 class QuietServer(ThreadingHTTPServer):
@@ -480,7 +521,10 @@ class QuietServer(ThreadingHTTPServer):
         exc = sys.exc_info()[1]
         if exc is not None and _is_client_gone(exc):
             return
-        log_error("请求处理异常 %s\n%s" % (client_address, traceback.format_exc()))
+        # 客户端 IP 默认不记（与请求日志同口径）；开启 YINZHAN_LOG_CLIENT_IP 才带
+        peer = client_address[0] if client_address else ""
+        ip = logging_setup.pick_client_ip(peer) or "-"
+        log_error("请求处理异常 client=%s\n%s" % (ip, traceback.format_exc()))
 
 
 class Ctx:

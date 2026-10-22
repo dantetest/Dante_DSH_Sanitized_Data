@@ -1,6 +1,9 @@
 [Unit]
 Description=Sanitized Data (数据隐站) local redaction engine
 After=network.target
+# 启动失败/端口冲突时不要 3 秒无限重启：5 次内失败就停下等人工处理
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -10,6 +13,11 @@ WorkingDirectory=/opt/sanitized-data
 Environment=PYTHONIOENCODING=utf-8
 Environment=PYTHONUTF8=1
 Environment=NO_BROWSER=1
+# 本地文件日志：data/logs/server.log；按日期翻转，保留最近 30 个归档（约 30 天）。
+# 查看状态：/opt/sanitized-data 下 `python app/server/status.py`
+Environment=YINZHAN_LOG_LEVEL=INFO
+Environment=YINZHAN_LOG_KEEP_DAYS=30
+Environment=YINZHAN_LOG_HEARTBEAT_SEC=300
 # 只监听本机，由 nginx 反代对外提供 HTTPS
 ExecStart=/opt/sanitized-data/start.sh --host 127.0.0.1 --port 8760
 Restart=on-failure

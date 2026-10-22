@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -26,13 +28,35 @@ SERVER_DIR = ROOT / "app" / "server"
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
-from yinzhan import api, config                      # noqa: E402
+from yinzhan import api, config, logging_setup          # noqa: E402
 from yinzhan.app import pick_port, preload, purge_runtime_dirs, write_runtime  # noqa: E402
 
 WINDOW_TITLE = "数据隐站 · Sanitized_Data"
 MUTEX_NAME = "Global\\SanitizedData_SingleInstance_v1"
 
 _mutex_handle = None
+_STOP_REASON = "正常退出"
+
+
+def _install_signal_handlers() -> None:
+    """SIGTERM / Ctrl+C 时先记 stop 日志，再走 finally 清理。"""
+    def _on_signal(signum, frame):
+        global _STOP_REASON
+        try:
+            name = signal.Signals(signum).name
+        except Exception:
+            name = str(signum)
+        _STOP_REASON = f"收到信号 {name}"
+        raise KeyboardInterrupt
+
+    for sig_name in ("SIGTERM", "SIGINT"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _on_signal)
+        except (ValueError, OSError):
+            pass
 
 
 # ───────────────────────── 工具 ─────────────────────────
@@ -176,16 +200,35 @@ def main() -> int:
         _activate_existing()
         return 0
 
+    # 桌面版/绿色版没有控制台：启动、失败、退出都要落到本地日志文件
+    logging_setup.setup_logging()
+    logging_setup.install_exception_hooks()
+    logging_setup.log_startup({"entry": "desktop",
+                               "frozen": bool(getattr(sys, "frozen", False))})
+    logging_setup.start_heartbeat()
+    _install_signal_handlers()
+    global _STOP_REASON
+    _STOP_REASON = "正常退出"
+
     httpd = None
+    reason = "正常退出"
     try:
+        logging_setup.get_logger(__name__).info("加载解析插件与 OCR…")
         httpd, port, boot = _start_server()
         url = f"http://{config.HOST}:{port}/"
         print(f"  数据目录  {config.DATA_DIR}")
         print(f"  服务地址  {url}")
         if not boot.get("ocr"):
             print("  ! OCR 不可用：", boot.get("ocr_error"))
+        logging_setup.log_ready({
+            "entry": "desktop", "url": url, "port": port,
+            "ocr": bool(boot.get("ocr")),
+            "plugin_errors": len(boot.get("errors") or []),
+        })
+        logging_setup.get_logger(__name__).info("桌面窗口准备就绪")
 
         mode = _run_window(url)
+        logging_setup.get_logger(__name__).info("窗口模式结束 mode=%s", mode)
 
         # 窗口模式：窗口关闭即退出；浏览器模式：等用户按 Ctrl+C
         if mode == "browser":
@@ -194,24 +237,45 @@ def main() -> int:
                 while True:
                     time.sleep(0.5)
             except KeyboardInterrupt:
-                pass
+                reason = _STOP_REASON
+        return 0
+    except KeyboardInterrupt:
+        reason = _STOP_REASON
         return 0
     except Exception as exc:                      # noqa: BLE001
-        import traceback
         traceback.print_exc()
-        _msgbox(f"启动失败：\n\n{exc}\n\n日志：{config.DATA_DIR / 'server.log'}")
+        try:
+            logging_setup.get_logger(__name__).critical(
+                "桌面版启动失败\n%s", traceback.format_exc())
+        except Exception:
+            pass
+        log_ref = (logging_setup.current_log_path()
+                   or logging_setup.log_dir_path()
+                   or (config.DATA_DIR / "logs"))
+        _msgbox(f"启动失败：\n\n{exc}\n\n日志：{log_ref}")
+        reason = "启动失败"
         return 1
     finally:
+        # 先停心跳再写 stop：保证 stop 是最后一条记录
+        logging_setup.stop_heartbeat()
+        logging_setup.log_shutdown(reason)
         if httpd is not None:
             try:
                 httpd.shutdown()
             except Exception:
                 pass
+            try:
+                httpd.server_close()
+            except Exception:
+                pass
         purge_runtime_dirs()
-        try:
-            (config.DATA_DIR / "desktop.lock").unlink(missing_ok=True)
-        except Exception:
-            pass
+        for leftover in (config.DATA_DIR / "desktop.lock",
+                         config.RUNTIME_PATH):
+            try:
+                leftover.unlink(missing_ok=True)
+            except Exception:
+                pass
+        logging_setup.shutdown_logging()
 
 
 if __name__ == "__main__":

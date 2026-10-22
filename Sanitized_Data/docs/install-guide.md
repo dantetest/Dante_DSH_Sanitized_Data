@@ -103,12 +103,13 @@ pip install -r app/server/requirements.txt
 | 上传副本 / 工作目录 | `<数据目录>\uploads\`、`<数据目录>\work\`（**退出时自动清空**） |
 | 导出成品 | `<数据目录>\out\`（保留，用户主动交付的文件） |
 | 加密映射库 / 密钥 | `<数据目录>\keys\`、`<数据目录>\yinzhan.db` |
-| 运行信息 | `<数据目录>\runtime.json`（端口 / URL / 版本 / PID） |
-| 服务日志 | `<数据目录>\server.log` |
+| 运行信息 | `<数据目录>\runtime.json`（端口 / URL / 版本 / PID / 日志路径） |
+| 服务日志 | `<数据目录>\logs\server.log`（按日期翻转为 `server-YYYY-MM-DD.log`，默认保留最近 30 个、约 30 天） |
 | 诊断文件 | `<数据目录>\diagnose.txt`（运行 `--diagnose` 后生成） |
 
 - macOS 桌面版（v1.1.2 起提供 arm64 / Intel DMG）对应 `~/Library/Application Support/Sanitized_Data`。
 - 数据目录可覆盖：设置环境变量 `YINZHAN_DATA_DIR`；导出目录可单独用 `YINZHAN_OUTPUT_DIR` 覆盖。
+- 服务日志默认在 `<数据目录>\logs\`，每天 0 点后按日期翻转（由当日首条日志触发）；服务器端排查见 [README「日志与状态监控」](../README.md#日志与状态监控)。
 - 安装版/绿色版**程序目录与数据目录分离**，替换程序不影响数据。
 
 ### 4.2 源码运行
@@ -120,8 +121,9 @@ pip install -r app/server/requirements.txt
 ├─ uploads/  work/     临时（退出清空）
 ├─ out/                导出成品
 ├─ keys/  yinzhan.db   加密映射库 / 审计库
-├─ runtime.json        端口 / URL
-└─ server.log          服务日志
+├─ logs/               服务日志（server.log + 按日期归档）
+├─ runtime.json        端口 / URL / 日志路径
+└─ server.log          旧版单文件日志（启动时自动迁移到 logs/，可删除）
 ```
 
 > 映射库用于「换名版」还原，密钥留在本机；**不要**把 `data/keys` 或 `yinzhan.db` 发给别人。审计库只记类型/数量/文件哈希，不记内容原值。
@@ -134,7 +136,7 @@ pip install -r app/server/requirements.txt
 
 1. 退出程序（确保窗口关闭、任务栏无残留进程）。
 2. 「设置 → 应用 → 已安装的应用」找到「数据隐站」→ 卸载；或开始菜单 →「数据隐站」→「卸载 数据隐站」。
-3. 卸载会删除程序目录（`%LOCALAPPDATA%\Programs\Sanitized_Data`）、开始菜单项与程序目录下的 `logs`。
+3. 卸载会删除程序目录（`%LOCALAPPDATA%\Programs\Sanitized_Data`）与开始菜单项；服务日志在数据目录 `logs/` 下，不随卸载删除。
 4. **数据目录 `%LOCALAPPDATA%\Sanitized_Data` 不会被删除**（保留映射库/审计库/成品）。
 
 彻底清理（确认不再需要历史映射与成品后）：
@@ -184,9 +186,9 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Sanitized_Data"
 | 杀软报毒/拦截 | PyInstaller 打包程序常见误报 | 添加信任/白名单；核对 SHA-256；必要时提交误报申诉 |
 | 双击安装包没反应 | 安装包不完整 / 被拦截 | 核对 SHA-256 后重新下载；看 Windows 事件/杀软记录 |
 | 启动后没有独立窗口，开了浏览器 | WebView2 缺失或安装失败 | 属预期兜底，功能完全一样；想要独立窗口可手动安装 [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/)。此模式下没有主窗口，退出需在任务管理器结束 `Sanitized_Data.exe`（或先补装 WebView2） |
-| 双击 `Sanitized_Data.exe` 没反应/闪退 | 启动失败 / 上次实例残留 / 数据目录不可写 | 看 `<数据目录>\server.log`；在程序目录运行 `Sanitized_Data.exe --diagnose`，把生成的 `diagnose.txt` 发给支持；任务管理器结束残留进程后重试 |
+| 双击 `Sanitized_Data.exe` 没反应/闪退 | 启动失败 / 上次实例残留 / 数据目录不可写 | 看 `<数据目录>\logs\server.log`；在程序目录运行 `Sanitized_Data.exe --diagnose`，把生成的 `diagnose.txt` 发给支持；任务管理器结束残留进程后重试 |
 | 提示「已经在运行」 | 单实例机制：再次双击会激活已有实例 | 找已打开的窗口/浏览器标签页；无响应则结束进程后重试 |
-| 浏览器显示「本机服务未连接」 | OCR 首次加载中 / 服务未起 | 等 2–5 秒刷新；仍不行看 `server.log` |
+| 浏览器显示「本机服务未连接」 | OCR 首次加载中 / 服务未起 | 等 2–5 秒刷新；仍不行看 `<数据目录>\logs\server.log`，或源码运行 `python app/server/status.py` |
 | 端口被占 | 8760 起被占用 | 自动顺延（8760–8839），实际端口看 `<数据目录>\runtime.json`；也可设 `YINZHAN_PORT` |
 | 界面显示版本不是 v1.1.2 | 运行的是旧程序 / 覆盖安装未完成 | 确认启动的是新安装目录的 exe；重装 v1.1.2 |
 | 数据目录不可写 / 启动即崩 | 企业受限环境 AppData 权限 | 程序会自动降级到程序目录或临时目录；也可显式指定 `YINZHAN_DATA_DIR` 到可写目录 |
@@ -206,6 +208,13 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Sanitized_Data"
 | `YINZHAN_PORT` | 自动 8760 起 | 指定监听端口 |
 | `YINZHAN_DESKTOP` | 打包运行时自动置 1 | 源码方式模拟桌面版数据目录 |
 | `YINZHAN_ALLOWED_ORIGINS` | 空 | 服务器反代场景显式放行来源（见 README） |
+| `YINZHAN_LOG_DIR` | `<数据目录>\logs` | 日志目录（按日期翻转） |
+| `YINZHAN_LOG_LEVEL` | `INFO` | 日志级别（排障可设 `DEBUG`） |
+| `YINZHAN_LOG_KEEP_DAYS` | `30` | 历史日志按日归档保留个数（约 30 天）；0 = 不清理 |
+| `YINZHAN_LOG_REQUESTS` | `1` | 0 = 关闭逐请求日志 |
+| `YINZHAN_LOG_HEARTBEAT_SEC` | `300` | 心跳间隔秒数；0 = 关闭 |
+| `YINZHAN_LOG_CLIENT_IP` | `0` | 1 = 请求日志记客户端 IP |
+| `YINZHAN_LOG_STDERR` | 自动 | 0 = 关闭控制台同步输出 |
 | `YINZHAN_TIFF_GEO_MODE` | `neutralized` | TIF 坐标处理：`neutralized`（LOCAL_CS）或 `strip`（彻底去参考） |
 
 > 命令行：`Sanitized_Data.exe --diagnose` 生成诊断文件；源码运行还支持 `--port` / `--host` / `--no-browser` / `--no-ocr`。
