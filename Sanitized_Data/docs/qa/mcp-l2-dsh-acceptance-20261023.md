@@ -61,6 +61,17 @@ dsh --profile web --patch out\dsh_mcp.patch.yml --no-open --port 60361
 > 放顶层会被 loader 当作“补丁不存在的 id”跳过（本次联调踩过）。
 > 安装版 command 换成 `%LOCALAPPDATA%\Programs\Sanitized_Data\Sanitized_Data_MCP.exe`。
 
+### 2.4 截图证据
+
+| 文件 | 内容 |
+|---|---|
+| `out/mcp_acceptance/dsh-redact-tool.png` | DSH 真实调用 `mcp__sanitized-data__redact_text`，工具卡与脱敏结果 |
+| `out/mcp_acceptance/dsh-job-tools.png` | DSH 顺序调用 `sanitize_file`→`get_sanitize_job`→`open_sanitize_workbench`，返回同一 job 与深链 |
+| `out/mcp_acceptance/workbench-same-job.png` | 打开返回的 `console?job=j_a01399fb`，工作台显示 MCP 创建的同一任务（名片.png，6 实体） |
+| `out/mcp_acceptance/dsh-tool-call-card.png` | 工具调用进行中的 DSH 卡片（通用工具卡，非定制 T1） |
+| `out/mcp_acceptance/mcp-page.png` | `/mcp` 页面 L2 工具/深链说明 |
+
+
 ## 3. 门禁结果
 
 > 本轮最终数字见 §3.1（全量 run_all/regression 完成后回填）。
