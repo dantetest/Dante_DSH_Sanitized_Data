@@ -40,7 +40,7 @@
     <div class="chips">
       <span class="chip">stdio 本地进程</span>
       <span class="chip">不经网络</span>
-      <span class="chip">4 个工具</span>
+      <span class="chip">15 个工具 + 资源</span>
       <span class="chip">无需账号</span>
     </div>
     <div class="btns">
@@ -51,7 +51,7 @@
 
   <section>
     <h2>它提供什么工具</h2>
-    <p class="muted" style="margin-bottom:24px">Agent 能调用这四个工具，全部在本机执行</p>
+    <p class="muted" style="margin-bottom:24px">Agent 能调用 15 个工具（4 个基础 + 11 个复核/Job），全部在本机执行</p>
     <div class="grid g2">
       <div class="card">
         <div class="ico">TOOL 01</div>
@@ -81,6 +81,46 @@
         <h3><code>list_rules</code></h3>
         <p>列出本机可用的规则包与规则条目（通用 / 法律 / 医疗 / 财务 / 测绘）。</p>
       </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>L2：Job 化复核 + 工作台深链</h2>
+    <p class="muted" style="max-width:820px">
+      除了四个基础工具，L2 还提供 11 个 <code>sanitize_*</code> 工具：先建 Job（不重复解析），
+      再查实体/接受/拒绝/替换/框选补漏，最后导出并查审计。所有操作和 Web 工作台共用同一个
+      <code>j_*</code> 任务、审计链与 <code>data/out</code> 成品。
+    </p>
+    <div class="grid g2">
+      <div class="card">
+        <div class="ico">JOB</div>
+        <h3>检测 → 复核 → 导出</h3>
+        <pre style="margin-top:12px"><span class="c">// 建任务（已就绪返回 stage=ready）</span>
+sanitize_file { "path": "D:\\合同.pdf" }
+<span class="c">// 看实体/处理待确认</span>
+get_sanitize_entities { "job_id": "j_ab12cd34" }
+update_sanitize_entity { "job_id": "...", "entity_id": "...",
+  "action": "accept" | "reject" | "replace", "value": "..." }
+<span class="c">// 导出 + 审计</span>
+export_sanitize_job { "job_id": "...", "mode": "ai" }
+get_sanitize_audit { "job_id": "..." }</pre>
+      </div>
+      <div class="card">
+        <div class="ico">WORKBENCH</div>
+        <h3>同一 Job 打开完整工作台</h3>
+        <p>复杂细修（框选补漏 / 整图涂黑 / 证件档位 / 时间模糊 / 未成年人严格模式）回浏览器：</p>
+        <pre style="margin-top:12px">open_sanitize_workbench { "job_id": "j_ab12cd34" }
+<span class="c">// 返回</span>
+{ "url": "http://127.0.0.1:8760/console?job=j_ab12cd34",
+  "workbench_available": true }</pre>
+        <p>安装版/源码版都可以；Web 服务未启动时会返回 <code>no_workbench</code>
+        启动引导，不会给出失效深链。MCP 与 Web 共用同一数据目录与审计。</p>
+      </div>
+    </div>
+    <div class="note" style="margin-top:20px">
+      <b>DSH / Agent 工具名：</b>客户端里显示为
+      <code>mcp__sanitized-data__sanitize_file</code> 等；资源
+      <code>sanitize://jobs/{id}/...</code> 提供任务快照/实体/审计/页面预览。
     </div>
   </section>
 
@@ -141,6 +181,8 @@ python3 /opt/sanitized-data/app/server/mcp_server.py</pre>
       <b>路径怎么写：</b>Windows 的 JSON 里反斜杠要写两个 <code>\\</code>；
       如果 <code>python</code> 不在 PATH 里，把 <code>command</code> 换成 Python 的绝对路径，
       例如 <code>C:\\Python312\\python.exe</code>。
+      安装版可直接用 <code>C:\\Users\\&lt;你&gt;\\AppData\\Local\\Programs\\Sanitized_Data\\Sanitized_Data_MCP.exe</code>
+      （<code>args</code> 留空），无需 Python。
     </div>
   </section>
 
@@ -169,7 +211,7 @@ python3 /opt/sanitized-data/app/server/mcp_server.py</pre>
           <h3>确认客户端认到了服务</h3>
           <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
             在客户端的 MCP / 工具列表里应该能看到 <code>sanitized-data</code>，
-            以及它下面的四个工具。
+            以及它下面的 15 个工具与资源。
           </p>
         </div>
       </div>

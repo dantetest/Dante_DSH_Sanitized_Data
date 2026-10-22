@@ -947,6 +947,11 @@ async function enterConsole() {
       state.entities.length ? Promise.resolve({ entities: state.entities }) : api('/api/jobs/' + jid + '/entities'),
     ]);
     if (job) state.job = job;
+    if (job && job.name && !state.fileName) {
+      state.fileName = String(job.name);
+      ui.docName.textContent = state.fileName;
+      document.title = state.fileName + ' · 数据隐站';
+    }
     if (ents && Array.isArray(ents.entities)) state.entities = ents.entities;
     state.pages = Math.max(1, totalPages(state.job));
     state.counts = readCounts(state.job, state.entities);
@@ -2148,6 +2153,32 @@ function bindModal() {
     });
   });
 }
+async function resumeJobFromQuery() {
+  // MCP/DSH「打开完整工作台」深链：/console?job=j_xxxxxxxx
+  // 只读恢复同一个 Job（不再上传/新建任务），行为与从投放进入的对照台一致。
+  let jid = '';
+  try {
+    jid = (new URLSearchParams(window.location.search).get('job') || '').trim();
+  } catch (err) { return false; }
+  if (!/^j_[0-9a-f]{8}$/i.test(jid)) return false;
+  resetJobState();
+  state.jobId = jid;
+  state.fileName = '';
+  setScreen('scan');
+  setScanStage('正在恢复检测任务…');
+  try {
+    const job = await api('/api/jobs/' + encodeURIComponent(jid));
+    state.job = job || null;
+    state.fileName = (job && job.name) || '';
+    await enterConsole();
+    return true;
+  } catch (err) {
+    resetJobState();
+    setScreen('drop');
+    toast((err && err.human) || '这个检测任务已失效，请重新投放文件。');
+    return false;
+  }
+}
 function init() {
   cacheDom();
   mountWholePageButton();
@@ -2164,6 +2195,7 @@ function init() {
   bindDivider();
   setScreen('drop');
   loadHealth();
+  if (new URLSearchParams(window.location.search).get('job')) resumeJobFromQuery();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();

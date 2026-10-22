@@ -149,8 +149,12 @@ def create_job(ctx):
         raise ApiError("缺少 upload_id 或 path")
     job = MANAGER.create(path, strictness=strictness, pack_ids=packs,
                          id_card_mode=id_card_mode,
-                         time_blur=bool(body.get("time_blur")))
+                         time_blur=bool(body.get("time_blur")),
+                         # MCP 客户端（Claude Desktop/DSH）经本地 HTTP 建任务时标记来源；
+                         # 其他调用不传则默认 api，不影响既有行为。
+                         origin="mcp" if body.get("origin") == "mcp" else "api")
     return {"job_id": job.id, "name": job.name, "fmt": job.fmt,
+            "origin": job.origin,
             "id_card_mode": job.id_card_mode, "time_blur": job.time_blur}
 
 

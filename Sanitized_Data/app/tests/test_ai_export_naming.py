@@ -10,8 +10,10 @@
 本测试锁定（全部虚构数据，仓库不放真实样例）：
 1. jobs 导出（``MANAGER.export``）ai 名 = ``AI视图_{sha256前8}_换名_{seal}{ext}``，
    不含源 stem 的任何 token；human 名与改动前规则逐字一致（``{stem}_已隐去_{seal}``）；
-2. MCP ``sanitize_document`` ai 输出名 = ``AI视图_{sha256前8}_换名{suffix}``，
-   human 保持 ``{stem}_已隐去{suffix}``；
+2. MCP ``sanitize_document`` 走 JobManager（L2/M2 起）后与工作台/审计同源，
+   ai 输出名 = ``AI视图_{sha256前8}_换名_{seal}{suffix}``，
+   human 输出名 = ``{stem}_已隐去_{seal}{suffix}``（seal 命名是 M2 的预期变化，
+   这样成品名与 audit.out_name / seal_no 一致）；
 3. 同一内容换一个源文件名导出，sha8 相同、名字仍中性（取自内容哈希而非文件名）。
 
 运行（Windows 控制台请带 -X utf8）：
@@ -36,6 +38,9 @@ from pathlib import Path
 _TMP = Path(tempfile.mkdtemp(prefix="yz_ai_export_naming_"))
 os.environ["YINZHAN_DATA_DIR"] = str(_TMP / "data")
 os.environ["YINZHAN_OUTPUT_DIR"] = str(_TMP / "data" / "out")
+# hybrid 后端：本测试数据目录没有 runtime.json，固定 local 后端保证确定性
+# （MCP 段校验本地 JobManager 命名；HTTP 后端见 test_mcp_v2.py 的 TestHttpBackend）。
+os.environ["YINZHAN_MCP_BACKEND"] = "local"
 
 REPO = Path(__file__).resolve().parents[2]
 SERVER = REPO / "app" / "server"
@@ -51,7 +56,9 @@ SRC1_NAME = "张伟_华鑫建材有限公司_发票_13800138000.pdf"
 SRC2_NAME = "李雷_山海贸易有限公司_合同_13900139000.pdf"
 
 AI_NAME_RE = re.compile(r"^AI视图_([0-9a-f]{8})_换名_(\d{8}-\d{4})\.pdf$")
-MCP_AI_NAME_RE = re.compile(r"^AI视图_([0-9a-f]{8})_换名\.pdf$")
+# L2/M2：MCP sanitize_document 也走 MANAGER.export，命名与工作台/审计同源（带 seal）。
+MCP_AI_NAME_RE = AI_NAME_RE
+HUMAN_NAME_RE = re.compile(r"^.+_已隐去_(\d{8}-\d{4})\.pdf$")
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -208,8 +215,8 @@ def main() -> int:
     check("两份同内容导出共享同一 sha8（不随源名变）",
           bool(m2) and m2.group(1) == sha8, f"{ai_name} / {ai2_name}")
 
-    # ── 3) MCP sanitize_document：ai 中性 / human 不变 ──
-    print("\n[3] MCP sanitize_document", flush=True)
+    # ── 3) MCP sanitize_document：L2/M2 起走 JobManager，命名与工作台/审计同源 ──
+    print("\n[3] MCP sanitize_document（JobManager/seal 命名）", flush=True)
     old_cwd = os.getcwd()
     cwd = _TMP / "mcp_cwd"
     cwd.mkdir(parents=True, exist_ok=True)
@@ -222,22 +229,36 @@ def main() -> int:
         out_ai = Path(p_ai.get("output") or "")
         mm = MCP_AI_NAME_RE.match(out_ai.name)
         check("MCP ai 调用 ok", p_ai.get("ok") is True, str(p_ai)[:200])
-        check("MCP ai 名格式 = AI视图_{sha8}_换名.pdf", mm is not None, out_ai.name)
+        check("MCP ai 名格式 = AI视图_{sha8}_换名_{seal}.pdf（同 MANAGER）",
+              mm is not None, out_ai.name)
         check("MCP ai 名 sha8 = 源文件 sha256 前 8 位",
               bool(mm) and mm.group(1) == sha8,
               f"name_sha8={mm.group(1) if mm else '?'} src_sha8={sha8}")
         _assert_neutral(out_ai.name, tokens1, "MCP ai 名")
         check("MCP ai 成品存在且非空",
               out_ai.is_file() and out_ai.stat().st_size > 0, str(out_ai))
+        check("MCP ai 成品落 data/out（不再 cwd/sanitized_output）",
+              out_ai.parent.resolve() == (Path(os.environ["YINZHAN_OUTPUT_DIR"])).resolve(),
+              str(out_ai.parent))
         check("MCP ai verify residual=0",
               (p_ai.get("verify") or {}).get("residual") == 0,
               str(p_ai.get("verify")))
+        # 本测试数据目录是临时目录、没有 runtime.json → hybrid 自动走 local 后端：
+        # 此时不得返回一个打开必然 404 的 Web 深链，必须明确 workbench_available=false。
+        check("MCP ai 返回 job_id/origin + workbench 可用性",
+              bool(p_ai.get("job_id")) and p_ai.get("origin") == "mcp"
+              and p_ai.get("workbench_available") is False
+              and p_ai.get("workbench_url") is None,
+              f"job_id={p_ai.get('job_id')} origin={p_ai.get('origin')} "
+              f"wb={p_ai.get('workbench_available')}")
 
         p_h = _mcp_payload(mcp_server.tool_sanitize_document(
             {"path": str(src1), "mode": "human"}))
         out_h = Path(p_h.get("output") or "")
-        check("MCP human 命名保持原规则（{stem}_已隐去{suffix}）",
-              out_h.name == f"{src1.stem}_已隐去{src1.suffix}", out_h.name)
+        mh = HUMAN_NAME_RE.match(out_h.name)
+        check("MCP human 命名 = {stem}_已隐去_{seal}{suffix}（同 MANAGER）",
+              mh is not None and out_h.name.startswith(f"{src1.stem}_已隐去_"),
+              out_h.name)
         check("MCP human 成品存在且非空",
               out_h.is_file() and out_h.stat().st_size > 0, str(out_h))
     finally:

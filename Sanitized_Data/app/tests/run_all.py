@@ -105,6 +105,8 @@ def _specs() -> list[dict]:
          "label": "Batch2 PDF 扫描件表格列检测器"},
         {"key": "ai2visual", "file": TESTS / "test_ai2_visual_policy.py", "timeout": 300,
          "label": "Batch2 AI 视图视觉/待确认策略"},
+        {"key": "mcpv2", "file": TESTS / "test_mcp_v2.py", "timeout": 600,
+         "label": "MCP L2（Job/资源/复核工具/双协议/HTTP 后端）"},
         {"key": "logging", "file": TESTS / "test_logging.py", "timeout": 120,
          "label": "本地文件日志（按日期翻转/保留/请求脱敏）"},
     ]

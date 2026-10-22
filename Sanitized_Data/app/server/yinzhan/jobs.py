@@ -128,6 +128,8 @@ class Job:
     name: str
     path: str
     fmt: str
+    # 来源：api=工作台/网页；mcp=Agent MCP 调用（只读标记，用于列表徽标与淘汰豁免）
+    origin: str = "api"
     strictness: str = "standard"
     # 证件脱敏档位：fields=只遮头像/姓名/身份证号/住址（默认）；whole=整卡涂黑
     id_card_mode: str = "fields"
@@ -200,6 +202,7 @@ class Job:
                 "created_at": self.created_at,
                 "pack": self.pack_label,
                 "strictness": self.strictness,
+                "origin": self.origin,
                 "id_card_mode": self.id_card_mode,
                 "time_blur": self.time_blur,
                 "minor_detected": self.minor_detected,
@@ -220,7 +223,7 @@ class JobManager:
     def create(self, path: Path, strictness: str = "standard",
                pack_ids: list[str] | None = None,
                id_card_mode: str = "fields",
-               time_blur: bool = False) -> Job:
+               time_blur: bool = False, origin: str = "api") -> Job:
         parser = registry.find_parser(path)
         if parser is None:
             raise YinzhanError(f"暂不支持这种文件：{path.suffix or '无扩展名'}")
@@ -230,6 +233,7 @@ class JobManager:
             id=job_id, name=_display_name(path.name), path=str(path),
             fmt=parser.format_id, strictness=strictness, pack_ids=pack_ids,
             id_card_mode=mode, time_blur=bool(time_blur), parser=parser,
+            origin="mcp" if origin == "mcp" else "api",
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -1305,10 +1309,20 @@ MAX_JOBS_IN_MEMORY = 24
 
 
 def _evict(self: "JobManager") -> None:
-    """内存里只留最近若干个任务，老的连源文件一起清掉。"""
+    """内存里只留最近若干任务，老的连源文件一起清掉。
+
+    MCP 来源的最近 8 个任务豁免淘汰：Agent 会话可能持续数分钟才回来复核/导出，
+    不能被工作台的新任务挤掉；超过 8 个后仍按最老优先淘汰。
+    """
     with self._lock:
+        mcp_ids = [jid for jid in self._order
+                   if jid in self._jobs and self._jobs[jid].origin == "mcp"]
+        protected = set(mcp_ids[-8:])
         while len(self._order) > MAX_JOBS_IN_MEMORY:
-            old_id = self._order.pop(0)
+            old_id = next((jid for jid in self._order if jid not in protected), None)
+            if old_id is None:
+                break
+            self._order.remove(old_id)
             job = self._jobs.pop(old_id, None)
             if job is not None:
                 _remove_for_job(job)

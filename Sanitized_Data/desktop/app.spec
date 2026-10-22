@@ -79,7 +79,7 @@ hiddenimports += [
 block_cipher = None
 
 a = Analysis(
-    [str(ENTRY)],
+    [str(ENTRY), str(APP / "server" / "mcp_server.py")],
     pathex=[str(APP / "server"), str(ROOT / "desktop")],
     binaries=binaries,
     datas=datas,
@@ -100,8 +100,17 @@ a = Analysis(
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+
+def _entry(name: str):
+    """按源文件名取 Analysis 入口（a.scripts 为 (dest, src, typecode)）。"""
+    for script in a.scripts:
+        if Path(str(script[1])).name == name:
+            return script
+    raise SystemExit(f"missing entry script: {name}")
+
+
 exe = EXE(
-    pyz, a.scripts, [],
+    pyz, [_entry("main.py")], [],
     exclude_binaries=True,
     name="Sanitized_Data",
     debug=False,
@@ -113,8 +122,22 @@ exe = EXE(
     icon=str(ASSETS / ("app.icns" if sys.platform == "darwin" else "app.ico")),
 )
 
+# MCP stdio 入口：无 GUI，stdout 只走 JSON-RPC（Claude Desktop / Cursor / DSH 直接 spawn）
+mcp_exe = EXE(
+    pyz, [_entry("mcp_server.py")], [],
+    exclude_binaries=True,
+    name="Sanitized_Data_MCP",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=True,
+    disable_windowed_traceback=False,
+    icon=str(ASSETS / ("app.icns" if sys.platform == "darwin" else "app.ico")),
+)
+
 coll = COLLECT(
-    exe, a.binaries, a.zipfiles, a.datas,
+    exe, mcp_exe, a.binaries, a.zipfiles, a.datas,
     strip=False, upx=False, upx_exclude=[],
     name="Sanitized_Data",
 )

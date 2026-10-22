@@ -76,17 +76,23 @@ BIND_HOST=0.0.0.0 ./start.sh          # 也可用环境变量
 
 ## MCP 接入
 
-`app/server/mcp_server.py` 是一个 stdio 的 MCP 服务，让支持 MCP 的 Agent
-在把文件交给模型之前先调用本机脱敏。
+`app/server/mcp_server.py`（安装版为 `Sanitized_Data_MCP.exe`）是一个 stdio 的 MCP 服务，
+让支持 MCP 的 Agent 在把文件交给模型之前先调用本机脱敏。
 
 | 工具 | 作用 |
 |---|---|
-| `sanitize_document` | 脱敏一个本地文件，返回可外发副本路径 |
+| `sanitize_document` | 脱敏一个本地文件，返回可外发副本路径（旧契约冻结，新增 job_id/origin/workbench_url） |
 | `redact_text` | 就地脱敏一段文本（适合发日志/报错前过一遍） |
-| `check_support` | 检查格式是否支持 |
-| `list_rules` | 列出规则包 |
+| `check_support` / `list_rules` | 检查格式 / 列出规则包 |
+| `sanitize_file` + `get_sanitize_job` + `get_sanitize_entities` | Job 化：建任务、轮询、查实体（默认不回原值） |
+| `update_sanitize_entity` / `mark_sanitize_region` / `accept_all_sanitize_entities` | 复核：接受/拒绝/替换/框选补漏 |
+| `export_sanitize_job` / `get_sanitize_audit` / `rehydrate_sanitize_text` | 导出、审计链校验、本机还原 |
+| `open_sanitize_workbench` | 返回 `http://127.0.0.1:<端口>/console?job=<id>` 深链，打开同一 Job |
 
-Claude Desktop 的 `claude_desktop_config.json`：
+另提供 `sanitize://jobs/...` resources 与 `review-before-export` / `workbench-fallback` prompts。
+MCP 优先通过本机 Web 服务共享 Job（同一审计/成品/深链），Web 未启动时回退本地 JobManager。
+
+Claude Desktop 的 `claude_desktop_config.json`（源码运行）：
 
 ```json
 {
@@ -99,7 +105,10 @@ Claude Desktop 的 `claude_desktop_config.json`：
 }
 ```
 
-完整配置（Cursor、通用 stdio、验证步骤）见 `/mcp` 页面。
+安装版可直接把 `command` 指向
+`%LOCALAPPDATA%\Programs\Sanitized_Data\Sanitized_Data_MCP.exe`（args 留空）。
+DSH 集成（`@deepseek-ai/dsh-mcp-client` 的 patch 写法、工具名 `mcp__sanitized-data__*`）见
+[docs/impl/mcp.md](docs/impl/mcp.md)；完整配置/验证步骤见 `/mcp` 页面。
 
 ---
 
