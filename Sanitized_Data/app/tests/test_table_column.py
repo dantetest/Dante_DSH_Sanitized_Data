@@ -47,12 +47,20 @@ from yinzhan import pipeline, registry, rules as rules_mod   # noqa: E402
 from yinzhan.ocr import get_ocr                      # noqa: E402
 from yinzhan.udm import DetectContext, ParseContext, Rule    # noqa: E402
 
-#: table-cn 自有规则 id（11 条；新增/删除需同步本测试与 docs/impl/table.md）
+#: table-cn 自有规则 id（xlsx/docx/text 的 11 条；新增/删除需同步本测试与 docs/impl/table.md）
 RULE_IDS = {
     "table.person", "table.contact", "table.id_card", "table.phone",
     "table.address", "table.email", "table.org", "table.bank_card",
     "table.account", "table.amount", "table.txn_no",
 }
+
+#: Batch2-B3：扫描件 PDF 几何列规则（scope=pdf，detect=pdf_table_column）
+PDF_RULE_IDS = {
+    "table.pdf_person", "table.pdf_cert", "table.pdf_id_card",
+    "table.pdf_phone", "table.pdf_account", "table.pdf_org",
+}
+
+ALL_RULE_IDS = RULE_IDS | PDF_RULE_IDS
 
 #: 既有样例上"可解释的新增实体"白名单（见 docs/impl/table.md §5）：
 #   - 王建国：客户名称列使 NER 低置信候选通过闸门（默认 strictness 下原本漏检）
@@ -177,9 +185,19 @@ def test_rule_pack_and_detector():
 
     own = [rule for rule in packs["table-cn"] if rule.pack == "table-cn"]
     ids = {rule.id for rule in own}
-    check(f"table-cn 自有规则 {len(RULE_IDS)} 条", len(own) == len(RULE_IDS), f"实际 {len(own)}")
-    check("规则 id 与测试清单一致", ids == RULE_IDS, f"缺少 {sorted(RULE_IDS - ids)} 多出 {sorted(ids - RULE_IDS)}")
+    check(f"table-cn 自有规则 {len(ALL_RULE_IDS)} 条", len(own) == len(ALL_RULE_IDS), f"实际 {len(own)}")
+    check("规则 id 与测试清单一致", ids == ALL_RULE_IDS, f"缺少 {sorted(ALL_RULE_IDS - ids)} 多出 {sorted(ids - ALL_RULE_IDS)}")
     for rule in own:
+        if rule.id in PDF_RULE_IDS:
+            # Batch2-B3：扫描件 PDF 几何列规则
+            check(f"{rule.id} scope 仅 pdf", rule.scope == ["pdf"], str(rule.scope))
+            check(f"{rule.id} priority < 15（让位既有规则）", rule.priority < 15, str(rule.priority))
+            check(f"{rule.id} 替换策略 surrogate",
+                  rule.replace.get("strategy") == "surrogate", str(rule.replace))
+            check(f"{rule.id} detect 类型 pdf_table_column",
+                  [item.get("type") for item in rule.detect] == ["pdf_table_column"],
+                  str([item.get("type") for item in rule.detect]))
+            continue
         check(f"{rule.id} scope 含 xlsx/docx/text（P1-B CSV/TSV）",
               set(rule.scope) >= {"xlsx", "docx", "text"}, str(rule.scope))
         check(f"{rule.id} priority < 15（让位既有规则）", rule.priority < 15, str(rule.priority))
@@ -189,10 +207,11 @@ def test_rule_pack_and_detector():
               [item.get("type") for item in rule.detect] == ["table_column"],
               str([item.get("type") for item in rule.detect]))
 
-    # 格式编译：table 规则在 xlsx/docx + P1-B 的 text(CSV/TSV) 生效；include 进来的 common 仍生效
+    # 格式编译：table 规则在 xlsx/docx + P1-B 的 text(CSV/TSV) 生效；pdf 只跑扫描件规则
     for fmt, expected in (("xlsx", len(RULE_IDS)), ("docx", len(RULE_IDS)),
                           ("text", len(RULE_IDS)),
-                          ("pdf", 0), ("image", 0), ("tiff", 0), ("mesh", 0)):
+                          ("pdf", len(PDF_RULE_IDS)),
+                          ("image", 0), ("tiff", 0), ("mesh", 0)):
         got = [rule for rule in rules_mod.compile_rules(packs, fmt) if rule.pack == "table-cn"]
         check(f"{fmt} 格式包含 {expected} 条 table 规则", len(got) == expected, f"实际 {len(got)}")
     selected = rules_mod.compile_rules(packs, "xlsx", ["table-cn"])

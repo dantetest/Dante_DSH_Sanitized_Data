@@ -15,7 +15,10 @@
 #     `status: pending` 转人工确认（本包默认 accepted，避免存量导入时全是待确认）；
 #   * value_pattern 是"值形状守卫"：列里混入 "无/N/A/合计" 之类文字时跳过；
 #   * exclude_validate 让位更权威规则（如证件号列里的合法 USCC 留给 cn.uscc）。
-#   * 规则只在 xlsx/docx 生效（解析器已提供 ref={sheet,row,col} / {t,r,c}）。
+#   * 规则分两类作用域：
+#       - xlsx/docx/text：解析器已提供 ref={sheet,row,col} / {t,r,c}，走 table_column；
+#       - pdf（Batch2-B3）：扫描件 OCR 只有独立 block + bbox，走 pdf_table_column
+#         按「表头 + 几何列对齐」还原列语义（doc10 第 14 页人员配备表）。
 
 pack: table-cn
 name: 表格 · 表头列级
@@ -205,4 +208,106 @@ rules:
         value_pattern: '^[A-Za-z0-9][A-Za-z0-9\-_/]{3,39}$'
         min_len: 4
         max_len: 40
+    replace: {strategy: surrogate}
+
+  # ── 扫描件 PDF：几何列对齐（Batch2-B3，detectors/pdf_table.py） ──
+  # 表头单元格与数据单元格在 OCR 里是独立 block，按「表头下方 + 中心 x 对齐 +
+  # 值形状」还原整列。priority 全部 < 15：普通正则/NER 先命中时保留其类型标签。
+  - id: table.pdf_person
+    entity: PERSON
+    label: 表格姓名列
+    level: L2
+    scope: [pdf]
+    priority: 14
+    detect:
+      - type: pdf_table_column
+        value_kind: person
+        headers: [姓名, 名字, 员工姓名, 客户名称, 申请人, 参保人, 患者姓名,
+                  学生姓名, 开户人姓名, 法定代表人, 联系人, 联系人姓名, 经办人]
+        x_tolerance_ratio: 0.4
+        x_tolerance_pt: 8
+        min_values: 2
+        confidence: 0.85
+    replace: {strategy: surrogate}
+
+  - id: table.pdf_cert
+    entity: LICENSE
+    label: 表格证书号列
+    level: L2
+    scope: [pdf]
+    priority: 13
+    detect:
+      - type: pdf_table_column
+        value_kind: cert
+        headers: [证书号, 证书编号, 证书号码, 执业证号, 注册证号, 资格证号]
+        x_tolerance_ratio: 0.4
+        x_tolerance_pt: 8
+        min_values: 2
+        confidence: 0.85
+    replace: {strategy: surrogate}
+
+  - id: table.pdf_id_card
+    entity: ID_CARD
+    label: 表格证件号列
+    level: L3
+    scope: [pdf]
+    priority: 12
+    detect:
+      - type: pdf_table_column
+        value_kind: id_card
+        headers: [身份证号, 身份证号码, 身份证, 证件号, 证件号码, 身份证件号,
+                  居民身份证号, 护照号]
+        x_tolerance_ratio: 0.4
+        x_tolerance_pt: 8
+        min_values: 2
+        confidence: 0.85
+    replace: {strategy: surrogate}
+
+  - id: table.pdf_phone
+    entity: PHONE
+    label: 表格电话列
+    level: L2
+    scope: [pdf]
+    priority: 11
+    detect:
+      - type: pdf_table_column
+        value_kind: phone
+        headers: [手机号, 手机号码, 手机, 联系电话, 电话, 联系方式, 电话号码,
+                  办公电话, 家庭电话]
+        x_tolerance_ratio: 0.4
+        x_tolerance_pt: 8
+        min_values: 2
+        confidence: 0.85
+    replace: {strategy: surrogate}
+
+  - id: table.pdf_account
+    entity: ACCOUNT
+    label: 表格账号列
+    level: L3
+    scope: [pdf]
+    priority: 10
+    detect:
+      - type: pdf_table_column
+        value_kind: account
+        headers: [账号, 帐号, 账户, 账户号, 客户号, 客户编号]
+        x_tolerance_ratio: 0.4
+        x_tolerance_pt: 8
+        min_values: 2
+        confidence: 0.85
+    replace: {strategy: surrogate}
+
+  - id: table.pdf_org
+    entity: ORG
+    label: 表格单位列
+    level: L2
+    scope: [pdf]
+    priority: 9
+    detect:
+      - type: pdf_table_column
+        value_kind: org
+        headers: [单位, 工作单位, 公司, 公司名称, 单位名称, 机构名称, 用人单位]
+        x_tolerance_ratio: 0.4
+        x_tolerance_pt: 8
+        min_values: 2
+        confidence: 0.85
     replace: {strategy: surrogate}

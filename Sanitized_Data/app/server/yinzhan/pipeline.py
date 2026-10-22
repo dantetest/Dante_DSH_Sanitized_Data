@@ -5,8 +5,10 @@
 """
 from __future__ import annotations
 
+import difflib
 import re
 import types
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -227,6 +229,298 @@ def decisions_of(entities: list[Entity]) -> dict[str, Decision]:
     return {e.id: (e.decision or Decision(strategy="black", black=True)) for e in entities}
 
 
+# ══════════════════ 近似实体假值归并（Phase A2，只影响 AI 换名版） ══════════════════
+# 同一真实实体在 OCR/跨页场景会以近似变体被识别成多个实体（公司名少一字、中间
+# 夹空格、扫描误识等）。如果每个变体各自换名，AI 读到的文档会自相矛盾：同一甲方
+# 出现多个假名，模型无法确认是同一个主体。这里把「同类型 + 近似原值」的实体归成
+# 一簇，统一复用最完整原值的假值；human（全黑覆盖）导出不受影响。
+#
+# 只处理字符串类实体；AMOUNT 由金额一致性单独处理，明确不参与归并。
+CONSOLIDATE_TYPES = frozenset({
+    "PERSON", "ORG", "ADDRESS", "CASE_NO", "CONTRACT_NO", "LICENSE_NO",
+    "USCC", "EMAIL", "ACCOUNT", "BANK", "BANK_CARD", "PASSPORT",
+    "SOCIAL_ID", "SEAL_NAME", "SIGN_NAME",
+})
+CONSOLIDATE_EXCLUDED_TYPES = frozenset({"AMOUNT"})
+CONSOLIDATE_CONTAIN_RATIO = 0.85     # 一个包含另一个时，短/长长度比阈值
+CONSOLIDATE_SIM_THRESHOLD = 0.88     # difflib 相似度阈值
+CONSOLIDATE_MAX_LEN_DIFF = 4         # 用相似度判据时的长度差上限
+CONSOLIDATE_MIN_NORM_LEN = 2         # 规范化后过短的值不参与归并
+
+# ADDRESS 变体（Phase A2-Refine）：OCR 常把「自治区」省掉、尾部年份/门牌截断，
+# 通用阈值覆盖不到。放宽阈值，但额外要求两值同属一个行政区（见 _address_prefix_ok）。
+ADDRESS_CONTAIN_RATIO = 0.70
+ADDRESS_SIM_THRESHOLD = 0.85
+ADDRESS_MAX_LEN_DIFF = 5
+ADDRESS_PREFIX_MIN = 4
+# 行政区后缀在 OCR 里时有时无：比较前先归一（否则「西藏自治」与「西藏日喀」
+# 只有 2 个公共字符，同一地址的变体会被漏掉）。省级前缀也可能整个缺失
+# （「西藏日喀则…」vs「日喀则…」），只允许「恰好一方带省级前缀」时单边归一。
+_ADDRESS_ADMIN_TOKENS = ("特别行政区", "自治区", "自治州", "自治县")
+_PROVINCE_TOKENS = (
+    "内蒙古", "黑龙江", "西藏", "新疆", "宁夏", "广西", "香港", "澳门",
+    "北京", "天津", "上海", "重庆", "河北", "山西", "辽宁", "吉林",
+    "江苏", "浙江", "安徽", "福建", "江西", "山东", "河南", "湖北",
+    "湖南", "广东", "海南", "四川", "贵州", "云南", "陕西", "甘肃",
+    "青海", "台湾",
+)
+
+# ORG 简称别名（Phase A2-Refine）：剥掉常见机构后缀得到 core，较短 core 是较长
+# core 的前缀即视为同一机构（「云基公司」与「云基智慧工程股份有限公司」）。
+ORG_MIN_CORE_LEN = 2
+ORG_SUFFIXES = (
+    "股份有限公司", "有限责任公司", "集团有限公司", "有限公司", "分公司",
+    "律师事务所", "会计师事务所", "事务所", "人民法院", "法院",
+    "人民检察院", "检察院", "人民医院", "医院",
+    "银行", "支行", "分行", "中心", "集团", "研究院", "设计院",
+    "学院", "大学", "委员会", "管理局", "合作社", "工作室", "公司",
+)
+# 短 core 命中这些草稿词/指代词时禁止归并：它们多来自 OCR 把正文片段误判成
+# ORG（doc06/doc07 实测），不能把误报并进真实机构。
+ORG_ALIAS_STOPWORDS = frozenset({
+    "按照", "可以", "函请", "业主", "通知", "方有权", "管理", "公章",
+    "我公司", "贵公司", "该公司", "本公司", "甲方", "乙方", "丙方",
+    "委托方", "受托方", "发包方", "承包方", "设计方", "施工方",
+    "采购方", "供货方", "招标人", "投标人", "单位", "部门", "项目",
+    "合同", "协议", "文件", "资料", "规定", "要求", "有关", "相关",
+    "上述", "如下", "详见", "根据", "依据", "本协议", "本合同", "本项目",
+})
+
+# 常见中英文标点 + 空白：仅用于「是否同一实体」的比对，不改变原值本身。
+_CONSOLIDATE_PUNCT = re.compile(
+    r"[\s\u3000，。；：、（）()\[\]【】{}<>《》〈〉,.;:!?！？\"'“”‘’"
+    r"·—–\-_/\\|+*=~`@#$%^&]+")
+
+
+def _consolidate_norm(value: str) -> str:
+    """比对用规范化：NFKC + 去空白 + 去常见中英文标点。"""
+    text = unicodedata.normalize("NFKC", value or "")
+    return _CONSOLIDATE_PUNCT.sub("", text)
+
+
+def _consolidate_similar(a: str, b: str) -> bool:
+    """规范化后的两个原值是否近似（判据见上方常量，单测固化阈值）。"""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if not la or not lb:
+        return False
+    if a in b or b in a:
+        if min(la, lb) / float(max(la, lb)) >= CONSOLIDATE_CONTAIN_RATIO:
+            return True
+    if abs(la - lb) <= CONSOLIDATE_MAX_LEN_DIFF:
+        if difflib.SequenceMatcher(None, a, b).ratio() >= CONSOLIDATE_SIM_THRESHOLD:
+            return True
+    return False
+
+
+def _shared_prefix_len(a: str, b: str) -> int:
+    n = 0
+    for ca, cb in zip(a, b):
+        if ca != cb:
+            break
+        n += 1
+    return n
+
+
+def _address_admin_core(text: str) -> str:
+    """去掉行政区后缀，供「是否同属一个行政区」前缀比较（不改原值）。"""
+    for token in _ADDRESS_ADMIN_TOKENS:
+        text = text.replace(token, "")
+    return text
+
+
+def _strip_province_once(text: str) -> tuple[str, bool]:
+    for token in _PROVINCE_TOKENS:
+        if text.startswith(token) and len(text) > len(token):
+            return text[len(token):], True
+    return text, False
+
+
+def _address_prefix_ok(a: str, b: str) -> bool:
+    """两地址是否同属一个行政区（规范化后共享前 4 个字符）。
+
+    先去掉「自治区/自治州/特别行政区」等后缀；若仍不满足，且恰好一方带省级
+    前缀（如「西藏日喀则…」vs「日喀则…」），把该前缀单边归一再比。双方都带
+    省级前缀但省份不同（四川 vs 云南）时直接判否，避免跨省误并。
+    """
+    a = _address_admin_core(a)
+    b = _address_admin_core(b)
+    if a == b:
+        return True
+    if _shared_prefix_len(a, b) >= ADDRESS_PREFIX_MIN:
+        return True
+    sa, pa = _strip_province_once(a)
+    sb, pb = _strip_province_once(b)
+    if pa == pb:                      # 双方都带或都不带省级前缀：不做单边归一
+        return False
+    return _shared_prefix_len(sa, sb) >= ADDRESS_PREFIX_MIN
+
+
+def _address_similar(a: str, b: str) -> bool:
+    """ADDRESS 专属判据：同行政区前缀 + 放宽的包含/相似度阈值。
+
+    比较在「去行政区后缀」后的有效串上进行（「西藏自治区日喀则…」与
+    「西藏日喀则…」视为同一形态），但 canonical/输出仍用原值。
+    """
+    a = _address_admin_core(a)
+    b = _address_admin_core(b)
+    if not _address_prefix_ok(a, b):
+        return False
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if not la or not lb:
+        return False
+    if a in b or b in a:
+        if min(la, lb) / float(max(la, lb)) >= ADDRESS_CONTAIN_RATIO:
+            return True
+    if abs(la - lb) <= ADDRESS_MAX_LEN_DIFF:
+        if difflib.SequenceMatcher(None, a, b).ratio() >= ADDRESS_SIM_THRESHOLD:
+            return True
+    return False
+
+
+def _org_core(value: str) -> str:
+    """剥掉常见机构后缀，得到简称 core（如「云基公司」→「云基」）。"""
+    core = value or ""
+    changed = True
+    while changed:
+        changed = False
+        for suffix in ORG_SUFFIXES:
+            if len(core) > len(suffix) and core.endswith(suffix):
+                core = core[: -len(suffix)]
+                changed = True
+                break
+    return core
+
+
+def _org_alias_similar(a: str, b: str) -> bool:
+    """ORG 简称别名：较短 core 是较长 core 的前缀（含相等），且短 core 不是误检词。"""
+    core_a, core_b = _org_core(a), _org_core(b)
+    if len(core_a) > len(core_b):
+        core_a, core_b = core_b, core_a
+    if len(core_a) < ORG_MIN_CORE_LEN or not core_b.startswith(core_a):
+        return False
+    if core_a in ORG_ALIAS_STOPWORDS or core_b in ORG_ALIAS_STOPWORDS:
+        return False
+    return True
+
+
+def _consolidate_pair(a: str, b: str, etype: str) -> bool:
+    """按实体类型分派同簇判据（两个参数都已规范化）。"""
+    if a == b:
+        return True
+    if etype == "ADDRESS":
+        return _address_similar(a, b)
+    if _consolidate_similar(a, b):
+        return True
+    if etype == "ORG":
+        return _org_alias_similar(a, b)
+    return False
+
+
+def consolidate_surrogates(entities: list[Entity], rules: dict[str, Rule] | None = None,
+                           session: Session | None = None) -> dict:
+    """把近似原值的同类型实体归并成同一假值（幂等）。
+
+    * 只考虑 accepted/pending、decision 为 surrogate 且 replacement 非空的字符串类
+      实体；rejected、black/keep/drop、无假值的实体一律跳过（`AMOUNT` 不归并）。
+    * 通用同簇判据：规范化后相等，或一个包含另一个且长度比 >= 0.85，或 difflib
+      相似度 >= 0.88 且长度差 <= 4；并查集处理链式归并（A~B、B~C 但 A!~C 也同簇）。
+    * ADDRESS 专用判据（Phase A2-Refine）：要求共享行政区前缀（去掉「自治区/
+      自治州/特别行政区」等后缀后前 4 个规范化字符相同），且包含长度比 >= 0.70
+      或 difflib >= 0.85 且长度差 <= 5。
+    * ORG 简称别名（Phase A2-Refine）：剥掉常见机构后缀后，较短 core 是较长 core
+      的前缀（短 core 长度 >= 2），且短 core 不在误检词黑名单里。
+    * canonical = 规范化后最长/最完整的原值（并列取原值最长者，再并列取先出现），
+      复用它的 replacement 赋给簇内所有实体（原来不同的假值被统一）。
+    * 同步 `session.map[(etype, variant)] = canonical_replacement` 并 mark_used，
+      保证 vault 落盘后每个 OCR 变体都能被映射覆盖/还原。
+    """
+    session = session if session is not None else Session()
+    items: list[tuple[Entity, str]] = []
+    for entity in entities:
+        decision = entity.decision
+        if entity.status == "rejected" or decision is None:
+            continue
+        if entity.etype in CONSOLIDATE_EXCLUDED_TYPES:
+            continue
+        if entity.etype not in CONSOLIDATE_TYPES:
+            continue
+        if getattr(decision, "black", False) or decision.strategy != "surrogate":
+            continue
+        if not (decision.replacement or "") or not (entity.value or ""):
+            continue
+        norm = _consolidate_norm(entity.value)
+        if len(norm) < CONSOLIDATE_MIN_NORM_LEN:
+            continue
+        items.append((entity, norm))
+
+    total = len(items)
+    stats = {"candidates": total, "groups": 0, "members": 0, "changed": 0}
+    if total < 2:
+        return stats
+
+    parent = list(range(total))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[rj] = ri
+
+    for i in range(total):
+        for j in range(i + 1, total):
+            if items[i][0].etype != items[j][0].etype:
+                continue
+            if _consolidate_pair(items[i][1], items[j][1], items[i][0].etype):
+                union(i, j)
+
+    clusters: dict[int, list[int]] = {}
+    for i in range(total):
+        clusters.setdefault(find(i), []).append(i)
+
+    for idxs in clusters.values():
+        if len(idxs) < 2:
+            continue
+        # canonical：规范化后最长（最完整）→ 原值最长 → 先出现
+        canonical_i = max(
+            idxs, key=lambda k: (len(items[k][1]), len(items[k][0].value), -k))
+        canonical = items[canonical_i][0]
+        replacement = canonical.decision.replacement
+        if not replacement:                      # 防御：canonical 没有假值则整簇跳过
+            continue
+        stats["groups"] += 1
+        stats["members"] += len(idxs)
+        for k in idxs:
+            entity = items[k][0]
+            if entity.decision.replacement != replacement:
+                entity.decision = Decision(strategy="surrogate",
+                                           replacement=replacement)
+                stats["changed"] += 1
+        # 每个变体都写进会话映射：vault 落盘后「变体原值 → 统一假值」可查。
+        # 同一假值对应多个原值时，vault.rehydrate 按映射插入顺序替换，先插入的
+        # 原值生效；把 canonical（最完整原值）排到簇内最前，保证还原结果为
+        # canonical 而不是某个 OCR 截断变体。先 pop 再插可确定顺序且保持幂等。
+        for k in idxs:
+            session.map.pop((items[k][0].etype, items[k][0].value), None)
+        session.map[(canonical.etype, canonical.value)] = replacement
+        session.mark_used(canonical.etype, replacement)
+        for k in idxs:
+            entity = items[k][0]
+            if entity is canonical:
+                continue
+            session.map[(entity.etype, entity.value)] = replacement
+            session.mark_used(entity.etype, replacement)
+    return stats
+
+
 # ══════════════════════════════ 值级传播 ══════════════════════════════
 
 def propagate_values(doc: Document, entities: list[Entity],
@@ -280,6 +574,131 @@ def _span_taken(entities: list[Entity], block_id: str, start: int, end: int,
             if s.block_id == block_id and s.start >= 0 and s.start < end and start < s.end:
                 return True
     return False
+
+
+# ══════════════════ 明细金额同值扩散（Batch2-B2，会影响 human 涂黑范围） ══════════════════
+# 发票/合同里同一金额常写两次：合计行「¥49504.95」被规则整体命中，明细行却只写
+# 裸数字「49504.95」——规则不命中裸数字，导出后明细行仍是原值。这里对每个
+# AMOUNT 实体取"数值核心"，在同页其它位置找同一个裸数值并补 span，让它跟合计行
+# 共用同一决策（AI 版同假值、human 版同涂黑）。
+
+AMOUNT_NUMERIC_MIN_DIGITS = 3
+
+# 数值核心：带千分位的整数或裸数字，可带小数
+_AMOUNT_NUMERIC_CORE_RE = re.compile(
+    r"(?<![\d.])(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
+# 命中位置前后若是这些上下文，多半是年份/编号/百分比，不是金额
+_AMOUNT_BAD_AFTER = set("年月日号页份条章节项次位%％")
+_AMOUNT_BAD_BEFORE = set("第")
+# 全角数字/小数点归一（逐字符 1:1，字符位置不变，span 可直接回填原文本）
+_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９．", "0123456789.")
+
+
+def _amount_numeric_core(value: str) -> str | None:
+    """取金额的"数值核心"：'¥49504.95'→'49504.95'、'50000元'→'50000'。
+
+    '人民币 123,456.78 元'→'123,456.78'；中文大写（无阿拉伯数字）返回 None。
+    一个值里出现多个数字时取数字位数最多的那个（避开标签里的年份等）。
+    """
+    best: str | None = None
+    best_key: tuple[int, int] | None = None
+    for match in _AMOUNT_NUMERIC_CORE_RE.finditer(str(value or "")):
+        core = match.group("num")
+        digits = sum(1 for ch in core if ch.isdigit())
+        if digits < AMOUNT_NUMERIC_MIN_DIGITS:
+            continue
+        key = (digits, match.end())
+        if best_key is None or key > best_key:
+            best, best_key = core, key
+    return best
+
+
+def propagate_amount_numeric_values(doc: Document, entities: list[Entity]) -> int:
+    """在同一页其它位置补上明细行里的裸金额数值（只追加 span）。
+
+    * 只处理 ``AMOUNT``、未 rejected、决策非 black/keep 的实体；数值核心至少
+      3 位数字（中文大写没有阿拉伯数字，不处理）。
+    * 同页文本 block 内做**精确字符串匹配**（可选全角数字归一），匹配位置前后
+      不得紧邻数字/小数点；跳过「2024年/第 2024 条/50%」这类年份/编号/百分比
+      上下文；不与任何已有实体 span 重叠（含自己的 span）。
+    * 只增加 span、不增删实体、不改决策：AI 版这些明细金额与合计行同假值，
+      human 版与合计行同涂黑（因此 human 的黑块会增加，属预期变化）。
+
+    :return: 新增 span 数。
+    """
+    if not doc or not entities:
+        return 0
+    page_texts: dict[int, list] = {}
+    block_page: dict[str, int] = {}
+    for page in doc.pages:
+        blocks = [b for b in page.blocks if b.kind == "text" and b.text]
+        page_texts[page.index] = blocks
+        for block in blocks:
+            block_page[block.id] = page.index
+
+    occupied: dict[str, list[tuple[int, int]]] = {}
+    for entity in entities:
+        for span in getattr(entity, "spans", None) or []:
+            if not span.block_id or span.start is None or span.end is None:
+                continue
+            if span.start < 0 or span.end <= span.start:
+                continue
+            occupied.setdefault(span.block_id, []).append((span.start, span.end))
+
+    def overlaps(block_id: str, start: int, end: int) -> bool:
+        return any(start < o_end and o_start < end
+                   for o_start, o_end in occupied.get(block_id, ()))
+
+    added = 0
+    for entity in entities:
+        if str(getattr(entity, "etype", "") or "").upper() != "AMOUNT":
+            continue
+        if str(getattr(entity, "status", "") or "") == "rejected":
+            continue
+        decision = getattr(entity, "decision", None)
+        if decision is not None:
+            if getattr(decision, "black", False):
+                continue
+            if str(getattr(decision, "strategy", "") or "") in ("black", "keep"):
+                continue
+        core = _amount_numeric_core(getattr(entity, "value", "") or "")
+        if not core:
+            continue
+        pages: set[int] = set()
+        for span in getattr(entity, "spans", None) or []:
+            if span.block_id and span.block_id in block_page:
+                pages.add(block_page[span.block_id])
+            elif getattr(span, "page", None) is not None:
+                try:
+                    pages.add(int(span.page))
+                except (TypeError, ValueError):
+                    pass
+        for page_index in sorted(pages):
+            for block in page_texts.get(page_index, ()):
+                text = block.text
+                norm = text.translate(_FULLWIDTH_DIGITS)
+                pos = 0
+                while True:
+                    hit = norm.find(core, pos)
+                    if hit < 0:
+                        break
+                    start, end = hit, hit + len(core)
+                    pos = end
+                    # 前后不得紧邻数字/小数点（避免命中更长数字的一部分）
+                    if start > 0 and norm[start - 1] in "0123456789.":
+                        continue
+                    if end < len(norm) and norm[end] in "0123456789.":
+                        continue
+                    before = text[start - 1] if start > 0 else ""
+                    after = text[end] if end < len(text) else ""
+                    if after in _AMOUNT_BAD_AFTER or before in _AMOUNT_BAD_BEFORE:
+                        continue
+                    if overlaps(block.id, start, end):
+                        continue
+                    entity.spans.append(Span(block_id=block.id, start=start, end=end))
+                    occupied.setdefault(block.id, []).append((start, end))
+                    added += 1
+    return added
 
 
 # ══════════════════════════════ 表单填空里的人名 ══════════════════════════════

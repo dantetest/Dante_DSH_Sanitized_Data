@@ -33,6 +33,45 @@ VISUAL_DPI = 150          # 找红章/手写用的渲染精度，150 够且快
 MIN_TEXT_CHARS = 8
 MIN_FONT_SIZE = 5.0
 
+# ── 「给 AI 看」扫描页不可见文本层（F3）──
+# 扫描页本身没有文本层，换名版导出时把 OCR 正文（实体已换成假值/占位）用
+# render_mode=3（不可见）写回页面，纯文本抽取器才能读到正文。渲染像素不变，
+# 但 get_text/PDF 抽取能读到；只对 mode="ai" 生效，human 涂黑版不写。
+AI_TEXT_LAYER_MIN_PT = 3.0     # 不可见文本层最小字号（越小越放得下，反正看不见）
+AI_TEXT_LAYER_MAX_PT = 11.0    # 不可见文本层最大字号
+AI_TEXT_LAYER_BLACK_MARK = "█"  # black 实体的原值占位（不得写回原值）
+
+# ── Phase A1：扫描页 AI 模式的可见替换文字改图片渲染（去重）──
+# 背景：可见替换文字也是真文字，会和不可见文本层里的假值叠加，导致 get_text
+# 里同一假值出现两次（doc08 ORG x15 等）。扫描页 AI 模式改为把假值渲染成
+# 像素图贴回（文字不再进文本层），可提取文本只剩隐藏文本层一份。
+# YINZHAN_AI_REPLACEMENT_IMAGE=0 可回退到旧「写文字」路径（测试/兼容用）。
+AI_REPLACEMENT_IMAGE = os.environ.get(
+    "YINZHAN_AI_REPLACEMENT_IMAGE", "1").strip().lower() not in (
+        "0", "false", "no", "off", "none")
+AI_REPLACEMENT_IMAGE_MAX_DPI = 288     # 渲染分辨率上限（288 ≈ 4x）
+AI_REPLACEMENT_IMAGE_MIN_DPI = 120
+AI_REPLACEMENT_IMAGE_MAX_PX = 1400     # 单条图片最大像素宽，控制成品体积
+
+# ── Batch2-B4：AI 模式低置信 FACE 误检降级（human 模式不受影响）──
+# 扫描合同页上的 Haar 人脸检测经常把标题/表格误判成 FACE 并打黑块（doc07 第 1 页
+# 标题等）。AI 换名版可跳过「无证件/内嵌图实体页」上的自动 FACE（视觉内容恢复
+# 可读）；human 涂黑版保持原样（隐私优先）。
+# 阈值说明：Haar frontal 基准分硬编码 0.92（小脸系数后 0.874/0.782…），所以
+# 「自动 FACE」实际都 < 0.95；0.95 上限 = 跳过自动检测到的 FACE，但保留未来接入
+# 更高置信人脸模型/手工框的余地。可用 YINZHAN_AI_FACE_SKIP_MAX_CONF 覆盖。
+AI_FACE_SKIP_ENABLED = os.environ.get(
+    "YINZHAN_AI_FACE_SKIP", "1").strip().lower() not in (
+        "0", "false", "no", "off", "none")
+try:
+    AI_FACE_SKIP_MAX_CONFIDENCE = float(
+        os.environ.get("YINZHAN_AI_FACE_SKIP_MAX_CONF", "0.95") or 0.95)
+except (TypeError, ValueError):
+    AI_FACE_SKIP_MAX_CONFIDENCE = 0.95
+# 这些实体所在页说明页面里有真实证件/证件头像/内嵌图片，禁止跳 FACE（宁可不跳）
+AI_FACE_PROTECT_ETYPES = frozenset(
+    ("ID_DOCUMENT", "ID_PHOTO", "EMBEDDED_IMAGE"))
+
 # ── 扫描件成品快速复检（P2）──
 # 纯扫描 PDF 导出后不再整册重跑 OCR：低 DPI 渲染成品页，逐个导出矩形验证
 # 「黑框确实黑 / 替换框确实盖掉了原图墨迹」，文本层/元数据/隐藏数据仍按原逻辑检查。
@@ -1283,15 +1322,40 @@ def _merge_black_rects(rects: list[Box]) -> list[Box]:
 
 
 def _merge_ops(ops: list[dict[str, Any]], warnings: list[str]) -> list[dict[str, Any]]:
-    """合并交叠矩形：黑框合并并优先；同文本的替换框合并，避免 redaction 互相切割。"""
+    """合并交叠矩形：黑框合并并优先；同文本的替换框合并，避免 redaction 互相切割。
+
+    F1（v1.1.2 后修）：替换框与黑框相交时**不能丢弃**。以前直接 ``continue``，
+    该处原文既没 redaction 也没写假值，只被黑框遮住中间，两端原值可见
+    （实测 doc05 第 1 页「四[黑块]察设计有限公司」）。现在把相交的替换矩形
+    并入黑框集合（迭代到不动点后重新合并黑框），该区域整块涂黑、原文被真正
+    redaction 掉；不与黑框相交的替换框行为不变。
+    """
     black_rects = _merge_black_rects([op["rect"] for op in ops if op["black"]])
 
+    pending = [op for op in ops if not op["black"]]
+    # 先把与黑框相交的替换框吸进黑框集合；新并入的矩形可能又和别的替换框
+    # 相交，因此迭代到不动点，每次变化后重新按同一规则合并黑框。
+    absorbed = 0
+    changed = True
+    while changed and pending:
+        changed = False
+        remaining: list[dict[str, Any]] = []
+        for op in pending:
+            if any(box_intersects(op["rect"], rect) for rect in black_rects):
+                black_rects.append(op["rect"])
+                absorbed += 1
+                changed = True
+            else:
+                remaining.append(op)
+        pending = remaining
+        if changed:
+            black_rects = _merge_black_rects(black_rects)
+    if absorbed:
+        warnings.append(
+            f"{absorbed} 个替换区域与涂黑区域重叠，已按涂黑处理（原文已删除）")
+
     replacements: list[dict[str, Any]] = []
-    for op in ops:
-        if op["black"]:
-            continue
-        if any(box_intersects(op["rect"], rect) for rect in black_rects):
-            continue
+    for op in pending:
         target = None
         for existing in replacements:
             if box_intersects(op["rect"], existing["rect"]):
@@ -1309,8 +1373,32 @@ def _merge_ops(ops: list[dict[str, Any]], warnings: list[str]) -> list[dict[str,
             + replacements)
 
 
+def _replacement_fallback_font(text: str, width: float, height: float) -> float:
+    """兜底单行字号：同时受矩形宽/高约束，避免文字画到替换框甚至页面之外。
+
+    china-s 的 ASCII 字形偏宽；旧兜底只按高度估字号，遇到窄框会把后半截画到
+    页面外，文本层抽取只剩前半截（doc01/02 的金额假值被截断即此因）。
+    """
+    font = max(MIN_FONT_SIZE, min(float(height) * 0.72, 12.0))
+    try:
+        unit = float(fitz.get_text_length(text, fontname="china-s", fontsize=1.0))
+    except Exception:
+        unit = 0.0
+    if unit > 0:
+        font = min(font, max(1.0, float(width) * 0.98 / unit))
+    return max(1.0, font)
+
+
 def _insert_replacement(page: fitz.Page, rect: fitz.Rect, text: str) -> None:
-    """redaction 之后把替换文字写回矩形；字号按矩形高度估算并逐步收缩。"""
+    """redaction 之后把替换文字写回矩形；字号按矩形高度估算并逐步收缩。
+
+    F2（v1.1.2 后修）：页面带 /Rotate 时，``insert_textbox`` 的矩形是**未旋转
+    坐标**，若不传 ``rotate``，文字在显示方向上是旋转/错位的（实测 doc08
+    /Rotate=270，OCR 只能读出 5/16 个假值）。这里统一传 ``rotate=page.rotation``，
+    显示方向即为水平；旋转 90/270 时未旋转矩形的高对应显示行宽、宽对应显示
+    行高，字号按短边（inner.width）估算。旋转 0 页的参数与旧实现完全一致，
+    输出不变。
+    """
     text = (text or "").replace("\r", " ").replace("\n", " ").strip()
     if not text or rect.width <= 0.2 or rect.height <= 0.2:
         return
@@ -1319,12 +1407,17 @@ def _insert_replacement(page: fitz.Page, rect: fitz.Rect, text: str) -> None:
     inner = fitz.Rect(box.x0 + pad, box.y0 + pad, box.x1 - pad, box.y1 - pad)
     if inner.is_empty:
         inner = box
-    size = max(MIN_FONT_SIZE, float(inner.height) * 0.72)
+    rotation = _rotation(page)
+    # 旋转 90/270：未旋转矩形的宽 = 显示行高（决定字号），高 = 显示行宽。
+    if rotation in (90, 270):
+        size = max(MIN_FONT_SIZE, float(inner.width) * 0.72)
+    else:
+        size = max(MIN_FONT_SIZE, float(inner.height) * 0.72)
     while size >= MIN_FONT_SIZE:
         try:
             status = page.insert_textbox(
                 inner, text, fontname="china-s", fontsize=size,
-                color=(0, 0, 0), align=0, overlay=True,
+                color=(0, 0, 0), align=0, overlay=True, rotate=rotation,
             )
         except Exception:
             status = -1
@@ -1333,14 +1426,443 @@ def _insert_replacement(page: fitz.Page, rect: fitz.Rect, text: str) -> None:
         size *= 0.85
     # 兜底：矩形太小放不下，直接写一行，保证假值确实落在原位置
     try:
-        page.insert_text(
-            (inner.x0, min(inner.y1, inner.y0 + inner.height * 0.85)), text,
-            fontname="china-s",
-            fontsize=max(MIN_FONT_SIZE, min(float(rect.height) * 0.72, 12.0)),
-            color=(0, 0, 0), overlay=True,
-        )
+        if not rotation:
+            page.insert_text(
+                (inner.x0, min(inner.y1, inner.y0 + inner.height * 0.85)), text,
+                fontname="china-s",
+                fontsize=_replacement_fallback_font(text, rect.width,
+                                                    rect.height),
+                color=(0, 0, 0), overlay=True,
+            )
+        else:
+            # 旋转页：先在显示坐标里取文本框左下角，再换算回未旋转坐标，
+            # 并按页面旋转写一行，显示方向保持水平。
+            display = fitz.Rect(rect) * page.rotation_matrix
+            start = fitz.Point(
+                display.x0, min(display.y1, display.y0 + display.height * 0.85))
+            start = start * page.derotation_matrix
+            page.insert_text(
+                start, text, fontname="china-s",
+                fontsize=_replacement_fallback_font(
+                    text, display.width, display.height),
+                color=(0, 0, 0), overlay=True, rotate=rotation,
+            )
     except Exception:
         pass
+
+
+# ── Phase A1：扫描页 AI 模式的可见替换文字 → 图片渲染（避免文本层重复）──
+#
+# 可见假值如果仍是真文字，会和不可见文本层里的同一假值叠加：get_text 里一个
+# 假值出现两次，页尾还会多出一串按内容流顺序排队的替换文字。扫描页没有原文
+# 文本层、正文完全由隐藏层提供，因此这里把可见假值渲染成像素图贴回：
+#   * 视觉/OCR 仍能读到假值（形状、字号、换行与旧文字路径一致）；
+#   * 文本抽取只剩隐藏文本层一份，假值计数 == 原值在 OCR 正文里的出现次数；
+#   * 只对 mode=ai 且 scanned=True 的页生效，human 模式不受影响。
+
+def _ai_replacement_image_enabled() -> bool:
+    return AI_REPLACEMENT_IMAGE
+
+
+def _render_replacement_pixmap(display_rect: fitz.Rect,
+                               text: str) -> fitz.Pixmap | None:
+    """把替换文字在「显示方向」的小页上排版后渲染成白底黑字像素图。
+
+    排版逻辑尽量与旧 ``_insert_replacement`` 一致（同样的字号估算与收缩），
+    这样可见效果不变，只是文字变成了图片、不再进文本层。
+    """
+    width = max(6.0, float(display_rect.width))
+    height = max(6.0, float(display_rect.height))
+    tmp = fitz.open()
+    try:
+        page = tmp.new_page(width=width, height=height)
+        pad = min(0.6, height * 0.05)
+        inner = fitz.Rect(pad, pad, width - pad, height - pad)
+        if inner.is_empty or inner.width <= 0.5 or inner.height <= 0.5:
+            inner = fitz.Rect(0, 0, width, height)
+        size = max(MIN_FONT_SIZE, float(inner.height) * 0.72)
+        placed = False
+        while size >= 2.5:
+            try:
+                status = page.insert_textbox(
+                    inner, text, fontname="china-s", fontsize=size,
+                    color=(0, 0, 0), align=0, overlay=True)
+            except Exception:
+                status = -1
+            if status >= 0:
+                placed = True
+                break
+            size *= 0.85
+        if not placed:
+            # 兜底：单行缩到能塞进矩形。图片不能像文字那样溢出，否则白底会
+            # 盖住相邻正文；宁可小一点也不能超出替换区域。
+            try:
+                unit = float(fitz.get_text_length(
+                    text, fontname="china-s", fontsize=1.0))
+            except Exception:
+                unit = 0.0
+            if unit <= 0:
+                unit = max(1.0, len(text) * 1.0)
+            fit = min(float(inner.height) * 0.9, float(inner.width) / unit)
+            fit = max(1.5, fit)
+            try:
+                page.insert_text(
+                    (inner.x0, inner.y0 + fit), text, fontname="china-s",
+                    fontsize=fit, color=(0, 0, 0), overlay=True)
+                placed = True
+            except Exception:
+                placed = False
+        if not placed:
+            return None
+        # 像素规模控制：默认约 288dpi；超宽时降 dpi，避免成品体积膨胀
+        dpi = min(AI_REPLACEMENT_IMAGE_MAX_DPI,
+                  AI_REPLACEMENT_IMAGE_MAX_PX * 72.0 / width)
+        dpi = max(AI_REPLACEMENT_IMAGE_MIN_DPI, dpi)
+        return page.get_pixmap(dpi=dpi, alpha=False)
+    except Exception:
+        return None
+    finally:
+        try:
+            tmp.close()
+        except Exception:
+            pass
+
+
+def _insert_replacement_image(page: fitz.Page, rect: fitz.Rect,
+                              text: str) -> bool:
+    """扫描页 AI 模式：把替换文字渲染成图片贴回矩形（不产生可提取文字）。
+
+    ``rect`` 是未旋转坐标（``_to_pdf_space`` 的结果）。返回 False 表示图片
+    路径不可用，调用方回退到旧的文字写回。
+    """
+    text = (text or "").replace("\r", " ").replace("\n", " ").strip()
+    if not text or rect.width <= 0.2 or rect.height <= 0.2:
+        return True
+    if not _ai_replacement_image_enabled():
+        return False
+    try:
+        display = _to_page_space(rect, page)
+        pix = _render_replacement_pixmap(fitz.Rect(display), text)
+        if pix is None:
+            return False
+        page.insert_image(
+            fitz.Rect(rect), pixmap=pix, rotate=_rotation(page),
+            overlay=True, keep_proportion=False)
+        return True
+    except Exception:
+        return False
+
+
+# ─────────────────── 「给 AI 看」扫描页不可见文本层（F3）───────────────────
+#
+# 背景：扫描件没有文本层，换名版导出只写回实体替换文字 → 纯文本抽取器只能读到
+# 几十到几百字的假值片段，读不到正文。F3 在 mode="ai" 且该页是扫描页时，把
+# parse 阶段的 OCR 文本（实体原值换成假值/占位）用 render_mode=3 写回页面：
+# 渲染像素不变，但 get_text / pdftotext 能读到正文 + 假值。
+# 安全约束：文本层里不得出现任何已检出实体的原值（否则 pipeline.verify 会判
+# 残留并拒绝交付）；keep/rejected 保留原文，black/drop 用占位符，其余用假值。
+# human 模式（涂黑版）绝不写这层。
+
+def _ai_text_layer_enabled(options: dict | None) -> bool:
+    """只有「给 AI 看」的换名版才写不可见文本层。"""
+    return str((options or {}).get("mode") or "").strip().lower() == "ai"
+
+
+def _ai_text_target(entity: Entity, decision: Decision | None) -> str | None:
+    """实体在不可见文本层里的替换文本；None 表示保留原文（keep/未决策）。"""
+    if decision is None or decision.strategy == "keep":
+        return None
+    if decision.black or decision.strategy in ("black", "drop"):
+        # 视觉实体（印章/手写签名等）没有文字原值，不需要占位
+        if not entity.value:
+            return None
+        return AI_TEXT_LAYER_BLACK_MARK * len(entity.value)
+    # surrogate / mask / 其它非黑策略：写回假值（与可见替换文字一致）
+    return decision.replacement or ""
+
+
+def _ai_text_targets(entities: Iterable[Entity] | None,
+                     decisions: dict[str, Decision] | None
+                     ) -> tuple[dict[str, list[tuple[int, int, str, str]]],
+                                dict[str, str]]:
+    """收集「块内 span 替换」和「全文值级替换」两张表，供文本层替换使用。
+
+    span 条目带原值（第 4 项）：值级扩散/折行会让 span 只覆盖原值的一段，
+    写文本层时要用假值对应片段替换，否则同一个假值会被造出多次、破坏
+    「假值出现次数 == 原值出现次数」不变量。
+    """
+    span_targets: dict[str, list[tuple[int, int, str, str]]] = {}
+    value_targets: dict[str, str] = {}
+    for entity in entities or []:
+        decision = (decisions or {}).get(entity.id) or entity.decision
+        target = _ai_text_target(entity, decision)
+        if target is None:
+            continue
+        if entity.value:
+            value_targets[entity.value] = target
+        for span in entity.spans or []:
+            if not span.block_id or span.start is None or span.start < 0:
+                continue
+            start, end = int(span.start), int(span.end)
+            if end <= start:
+                continue
+            span_targets.setdefault(span.block_id, []).append(
+                (start, end, target, entity.value or ""))
+    return span_targets, value_targets
+
+
+def _ai_fragment_target(fragment: str, value: str, target: str) -> str:
+    """span 只覆盖原值的一段时，取假值的对应片段（避免伪造出整个假值）。
+
+    值级扩散/折行产生的 span 只覆盖原值的一部分；如果直接写整个假值，同一个
+    假值会被多造出几次，破坏「假值出现次数 == 原值出现次数」不变量。这里按
+    长度比例映射到假值片段，并保证**永远不返回完整假值**（除非 fragment 就是
+    完整原值），否则短假值（如 12 字公司名被 16 字原值的前缀命中）会整段重复。
+    """
+    if not fragment or not value or fragment == value:
+        return target
+    flen, vlen, tlen = len(fragment), len(value), len(target or "")
+    if tlen <= 0:
+        return target
+    if flen >= vlen or tlen <= 1:
+        return AI_TEXT_LAYER_BLACK_MARK * flen
+    take = max(1, min(tlen - 1, int(round(flen * tlen / vlen))))
+    if value.startswith(fragment):
+        return target[:take]
+    if value.endswith(fragment):
+        return target[-take:]
+    pos = value.find(fragment)
+    if pos >= 0:
+        start = min(max(0, int(round(pos * tlen / vlen))), tlen - take)
+        return target[start:start + take]
+    # 对不上（OCR 变体/跨块碎片）：用占位，避免原值残留、也避免假值重复计数
+    return AI_TEXT_LAYER_BLACK_MARK * flen
+
+
+def _ai_substituted_text(text: str, block_id: str,
+                         span_targets: dict[str, list[tuple[int, int, str, str]]],
+                         value_targets: dict[str, str]) -> str:
+    """把一块 OCR 文本里的实体原值换成假值/占位（span 内 + 全块第二处出现）。"""
+    if not text:
+        return text
+    spans = sorted(span_targets.get(block_id) or [],
+                   key=lambda item: (item[0], -(item[1] - item[0])))
+    parts: list[str] = []
+    cursor = 0
+    for start, end, target, value in spans:
+        start = max(0, min(start, len(text)))
+        end = max(start, min(end, len(text)))
+        if start < cursor or end <= start:
+            continue
+        parts.append(text[cursor:start])
+        parts.append(_ai_fragment_target(text[start:end], value, target))
+        cursor = end
+    parts.append(text[cursor:])
+    result = "".join(parts)
+    # 值级扩散：span 之外的第二处出现也要换（长值优先，避免短值先吃掉长值）。
+    for value, target in sorted(value_targets.items(), key=lambda kv: -len(kv[0])):
+        if value and value in result:
+            result = result.replace(value, target)
+    # 兜底：替换后仍残留的原值再清一遍（自身假值包含原值的情况跳过，
+    # 与 pipeline.verify 的「假值区间豁免」口径保持一致）。
+    for value, target in sorted(value_targets.items(), key=lambda kv: -len(kv[0])):
+        if value and value in result and value not in target:
+            result = result.replace(value, target)
+    return result
+
+
+def _write_ai_text_layer_rotated(page: fitz.Page,
+                                 prepared: list[tuple[Any, str]],
+                                 rotation: int) -> int:
+    """旋转页的不可见文本层：按阅读顺序写成「未旋转坐标里的横排」整页文本块。
+
+    不可见文本层的位置不参与显示（render_mode=3），但会参与文本抽取：
+    若仍按原 bbox 竖排写入，``get_text(sort=True)``（QA/审计读取口径）会把
+    竖排字形按 x 排序成逐字换行，正文/假值会被拆散。这里直接整页横排写一遍，
+    保证 sort=True/False 都能按行读出连续正文。旋转 90/270 的页面才走这里。
+    """
+    lines = [text.replace("\r", " ").replace("\n", " ") for _b, text in prepared]
+    try:
+        raw_rect = fitz.Rect(0.0, 0.0, float(page.rect.width),
+                             float(page.rect.height)) * page.derotation_matrix
+    except Exception:
+        return 0
+    raw_rect.normalize()
+    if raw_rect.is_empty or raw_rect.width <= 1 or raw_rect.height <= 1:
+        return 0
+    body = "\n".join(lines)
+    fontsize = min(AI_TEXT_LAYER_MAX_PT, 5.0)
+    while fontsize >= AI_TEXT_LAYER_MIN_PT:
+        try:
+            status = page.insert_textbox(
+                raw_rect, body, fontname="china-s", fontsize=fontsize,
+                color=(0, 0, 0), align=0, overlay=True,
+                render_mode=3, rotate=0,
+            )
+        except Exception:
+            status = -1
+        if status >= 0:
+            return len(prepared)
+        fontsize -= 0.5
+    # 兜底：放不下时保证「文本层里有内容」优先于位置精度（反正不可见）
+    try:
+        page.insert_text(
+            (raw_rect.x0, max(raw_rect.y0 + AI_TEXT_LAYER_MIN_PT,
+                              raw_rect.y1 - AI_TEXT_LAYER_MIN_PT)),
+            body, fontname="china-s", fontsize=AI_TEXT_LAYER_MIN_PT,
+            color=(0, 0, 0), overlay=True, render_mode=3, rotate=0,
+        )
+        return len(prepared)
+    except Exception:
+        return 0
+
+
+def _write_ai_text_layer(page: fitz.Page, udm_page: Page,
+                         span_targets: dict[str, list[tuple[int, int, str, str]]],
+                         value_targets: dict[str, str]) -> int:
+    """向扫描页写不可见（render_mode=3）文本层；返回写入的块数。
+
+    Phase A1：同 bbox + 同文本的 OCR 重复块只写一次，避免隐藏层内部再放大重复。
+    """
+    rotation = _rotation(page)
+    prepared: list[tuple[Any, str]] = []
+    seen_blocks: set[tuple[Any, ...]] = set()
+    for block in udm_page.blocks:
+        if block.kind != "text":
+            continue
+        text = block.text or ""
+        if not text.strip():
+            continue
+        new_text = _ai_substituted_text(text, block.id, span_targets, value_targets)
+        if not new_text.strip():
+            continue
+        bbox_key = (tuple(round(float(v), 1) for v in block.bbox)
+                    if block.bbox else None)
+        key = (text, bbox_key)
+        if key in seen_blocks:
+            continue
+        seen_blocks.add(key)
+        prepared.append((block, new_text))
+    if not prepared:
+        return 0
+    if rotation in (90, 270):
+        # 旋转页：整页横排写，避免 sort=True 抽取把竖排字形拆成逐字换行
+        return _write_ai_text_layer_rotated(page, prepared, rotation)
+    written = 0
+    for block, new_text in prepared:
+        if not block.bbox:
+            continue
+        display = fitz.Rect(block.bbox)
+        try:
+            raw = display * page.derotation_matrix if rotation else fitz.Rect(display)
+        except Exception:
+            continue
+        raw.normalize()
+        if raw.is_empty or raw.width <= 0.1 or raw.height <= 0.1:
+            continue
+        # 字号按显示行高选，尽量一行放下
+        fontsize = min(AI_TEXT_LAYER_MAX_PT,
+                       max(AI_TEXT_LAYER_MIN_PT, float(display.height) * 0.65))
+        placed = False
+        while fontsize >= AI_TEXT_LAYER_MIN_PT:
+            try:
+                status = page.insert_textbox(
+                    raw, new_text, fontname="china-s", fontsize=fontsize,
+                    color=(0, 0, 0), align=0, overlay=True,
+                    render_mode=3, rotate=0,
+                )
+            except Exception:
+                status = -1
+            if status >= 0:
+                placed = True
+                break
+            fontsize -= 0.5
+        if placed:
+            written += 1
+            continue
+        # 兜底：放不下时保证「文本层里有内容」优先于位置精度（反正不可见）
+        try:
+            start = fitz.Point(display.x0, display.y1)
+            page.insert_text(
+                start, new_text, fontname="china-s",
+                fontsize=AI_TEXT_LAYER_MIN_PT, color=(0, 0, 0),
+                overlay=True, render_mode=3, rotate=0,
+            )
+            written += 1
+        except Exception:
+            pass
+    return written
+
+
+# ──────────────────── Batch2-B4：AI 模式 FACE 误检降级 ────────────────────
+#
+# 背景：扫描合同页的 Haar 人脸检测会把标题/表格纹理误判成 FACE，导出后打黑块，
+# 把「给 AI 看」的换名版标题等正文遮住。降级规则（只在 mode=ai 生效）：
+#   * 该 FACE 所在页没有 ID_DOCUMENT / ID_PHOTO / EMBEDDED_IMAGE 实体
+#     （有证件/证件头像/内嵌图片的页宁可多涂，不跳）；
+#   * 且 confidence < 阈值（默认 0.85，可用 YINZHAN_AI_FACE_SKIP_MAX_CONF 覆盖）；
+# human 涂黑版不做任何过滤（10/10 像素 diff=0）。
+# 跳过的 FACE id 会记录在 doc.extra["ai_skipped_faces"]（含本次成品路径），
+# 供 fast_verify 复检时按同一口径排除，避免「导出没画、复检却要求黑块」。
+
+def _entity_pages(doc: Document, entity: Entity) -> set[int]:
+    """实体涉及的页号集合（矩形 span 取 span.page；文本 span 反查 block 所在页）。"""
+    pages: set[int] = set()
+    total = len(getattr(doc, "pages", None) or [])
+    for span in entity.spans or []:
+        if span.rect:
+            if span.page is not None:
+                try:
+                    page = int(span.page)
+                except (TypeError, ValueError):
+                    page = -1
+                if 0 <= page < total:
+                    pages.add(page)
+            elif total == 1:
+                pages.add(0)
+        elif span.block_id:
+            for page in doc.pages:
+                if any(block.id == span.block_id for block in page.blocks):
+                    pages.add(int(page.index))
+                    break
+    return pages
+
+
+def _ai_filter_face_entities(doc: Document,
+                             entities: Iterable[Entity] | None
+                             ) -> tuple[list[Entity], list[Entity]]:
+    """AI 模式：跳过「无证件/内嵌图页」上的低置信 FACE（误检黑块降级）。
+
+    返回 ``(保留实体, 被跳过的 FACE 实体)``。human 模式不调用本函数。
+    """
+    items = list(entities or [])
+    protected_pages: set[int] = set()
+    for entity in items:
+        if (entity.etype or "").upper() in AI_FACE_PROTECT_ETYPES:
+            protected_pages |= _entity_pages(doc, entity)
+    kept: list[Entity] = []
+    skipped: list[Entity] = []
+    for entity in items:
+        if (entity.etype or "").upper() != "FACE":
+            kept.append(entity)
+            continue
+        try:
+            confidence = float(entity.confidence or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        pages = _entity_pages(doc, entity)
+        # 只有「扫描页」上的 FACE 才属于本策略；文本层页保留原逻辑（避免误伤
+        # 文本层 PDF 里真实证件照片/内嵌图场景）。
+        scanned_only = bool(pages) and all(
+            0 <= page < len(doc.pages)
+            and (doc.pages[page].ref or {}).get("scanned")
+            for page in pages)
+        if (confidence < AI_FACE_SKIP_MAX_CONFIDENCE and scanned_only
+                and not (pages & protected_pages)):
+            skipped.append(entity)
+        else:
+            kept.append(entity)
+    return kept, skipped
 
 
 # ──────────────────── 扫描件成品快速复检（P2）────────────────────
@@ -1764,13 +2286,24 @@ class PdfParser(registry.Parser):
         # 文本层 PDF 仍走原有重解析 + 残留检查，行为完全不变
         if any(not bool((page.ref or {}).get("scanned")) for page in pages):
             return None
+        # Batch2-B4：本次 AI 导出按策略跳过的 FACE 不参与快速复检的
+        # 「覆盖/像素」判定（按成品路径绑定，后续 human 导出不会误用同一策略）。
+        skip_ids: set[str] = set()
+        try:
+            marker = (getattr(doc, "extra", None) or {}).get(
+                "ai_skipped_faces") or {}
+            if str(marker.get("path") or "") == str(Path(exported).resolve()):
+                skip_ids = {str(item) for item in (marker.get("ids") or [])}
+        except Exception:
+            skip_ids = set()
         # 没有决策的实体（如待确认的大面积码框）在导出阶段可能被过滤，也可能被
         # 调用方兜底成 black；快速通道无法确认它到底画没画，直接回退慢路径。
         if any(e.status != "rejected" and e.decision is None
                for e in (entities or [])):
             return None
         active = [e for e in entities or []
-                  if e.status != "rejected" and e.decision is not None]
+                  if e.status != "rejected" and e.decision is not None
+                  and e.id not in skip_ids]
         decisions = {e.id: e.decision for e in active}
         collect_warnings: list[str] = []
         try:
@@ -1851,6 +2384,29 @@ class PdfParser(registry.Parser):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         warnings: list[str] = []
+        # Batch2-B4：AI 模式下把「无证件/内嵌图页」上的低置信 FACE 误检降级
+        # （不画黑块）；human 模式不做过滤，涂黑版保持原样。
+        ai_mode = _ai_text_layer_enabled(options)
+        skipped_faces: list[Entity] = []
+        if ai_mode and AI_FACE_SKIP_ENABLED:
+            try:
+                entities, skipped_faces = _ai_filter_face_entities(doc, entities)
+            except Exception as exc:
+                skipped_faces = []
+                warnings.append(f"AI 模式 FACE 过滤跳过：{exc}")
+            if skipped_faces:
+                # 每页一条 warning，便于审计解释「AI 版为什么少了一块黑」
+                page_counts: dict[int, int] = {}
+                for entity in skipped_faces:
+                    pages = _entity_pages(doc, entity) or {-1}
+                    for page_no in pages:
+                        page_counts[int(page_no)] = (
+                            page_counts.get(int(page_no), 0) + 1)
+                for page_no in sorted(page_counts):
+                    where = f"第 {page_no + 1} 页 " if page_no >= 0 else ""
+                    warnings.append(
+                        f"{where}AI 视图跳过 {page_counts[page_no]} 个自动人脸误检"
+                        "（仅换名版；涂黑版不变）")
         ops_by_page = _collect_ops(doc, entities, decisions, warnings)
 
         source = Path(doc.path)
@@ -1892,15 +2448,32 @@ class PdfParser(registry.Parser):
             except Exception as exc:
                 warnings.append(f"PDF 隐藏数据剥离失败：{exc}")
 
+        # F3：换名版扫描页要补「不可见文本层」。处理范围 = 有绘制操作的页
+        # ∪ 全部扫描页（没有实体的扫描页也要让 AI 读到正文）。
+        ai_text_layer = ai_mode
+        ai_span_targets: dict[str, list[tuple[int, int, str, str]]] = {}
+        ai_value_targets: dict[str, str] = {}
+        pages_to_draw = sorted(ops_by_page)
+        if ai_text_layer:
+            ai_span_targets, ai_value_targets = _ai_text_targets(entities, decisions)
+            scanned_pages = {int(p.index) for p in doc.pages
+                             if (p.ref or {}).get("scanned")}
+            pages_to_draw = sorted(set(pages_to_draw) | scanned_pages)
+        pages_by_index = {int(p.index): p for p in doc.pages}
+
         try:
-            for page_no in sorted(ops_by_page):
+            for page_no in pages_to_draw:
                 try:
                     if page_no < 0 or page_no >= pdf.page_count:
                         warnings.append(f"第 {page_no + 1} 页不存在，已跳过")
                         continue
                     page = pdf[page_no]
+                    udm_page = pages_by_index.get(page_no)
+                    scanned_page = bool(
+                        udm_page is not None
+                        and (udm_page.ref or {}).get("scanned"))
                     replacements: list[tuple[fitz.Rect, str]] = []
-                    ops = _merge_ops(ops_by_page[page_no], warnings)
+                    ops = _merge_ops(ops_by_page.get(page_no, []), warnings)
                     for op in ops:
                         rect = _to_pdf_space(op["rect"], page)
                         rect.normalize()
@@ -1913,9 +2486,25 @@ class PdfParser(registry.Parser):
                             replacements.append((rect, op["text"]))
                     if ops:
                         page.apply_redactions()
-                    # 必须在 apply_redactions 之后写回替换文字
+                    # F3：扫描页先写不可见文本层，再写可见替换文字，
+                    # 纯文本抽取时正文在前、假值在后。
+                    if ai_text_layer and scanned_page:
+                        try:
+                            _write_ai_text_layer(page, udm_page,
+                                                 ai_span_targets,
+                                                 ai_value_targets)
+                        except Exception as exc:
+                            warnings.append(
+                                f"第 {page_no + 1} 页 AI 文本层写入失败：{exc}")
+                    # 必须在 apply_redactions 之后写回替换文字。
+                    # 扫描页 AI 模式改图片渲染：可见层保留假值，但文本层只有
+                    # 隐藏层一份（否则同一假值会在 get_text 里出现两次）。
                     for rect, text in replacements:
-                        _insert_replacement(page, rect, text)
+                        placed = False
+                        if ai_text_layer and scanned_page:
+                            placed = _insert_replacement_image(page, rect, text)
+                        if not placed:
+                            _insert_replacement(page, rect, text)
                 except Exception as exc:
                     warnings.append(f"第 {page_no + 1} 页导出失败：{exc}")
 
@@ -1983,6 +2572,17 @@ class PdfParser(registry.Parser):
             }
         except Exception:
             pass
+
+        # Batch2-B4：记录本次 AI 导出跳过的 FACE（绑定成品路径），
+        # 供 fast_verify 用同一口径复检（human 导出的路径不同，不会误用）。
+        if ai_mode and skipped_faces:
+            try:
+                doc.extra["ai_skipped_faces"] = {
+                    "path": str(out_path.resolve()),
+                    "ids": [str(entity.id) for entity in skipped_faces],
+                }
+            except Exception:
+                pass
 
         doc.extra["out_path"] = str(out_path)
         try:

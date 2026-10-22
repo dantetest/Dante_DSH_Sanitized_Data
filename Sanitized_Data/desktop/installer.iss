@@ -1,4 +1,4 @@
-﻿; 数据隐站 · Windows 安装包（Inno Setup 6）
+; 数据隐站 · Windows 安装包（Inno Setup 6）
 ; 编译：iscc desktop\installer.iss
 ;
 ; 设计要点（面向非技术用户）：
@@ -10,7 +10,7 @@
 
 #define MyAppName "数据隐站"
 #define MyAppNameEn "Sanitized_Data"
-#define MyAppVersion "1.1.2"
+#define MyAppVersion "1.1.3"
 #define MyAppPublisher "BLCTEK"
 #define MyAppExeName "Sanitized_Data.exe"
 

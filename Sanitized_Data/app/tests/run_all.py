@@ -91,6 +91,20 @@ def _specs() -> list[dict]:
          "label": "P2 整页证件过判收紧（字段级命中抑制整页）自测"},
         {"key": "warnings", "file": TESTS / "test_warnings_pending.py", "timeout": 300,
          "label": "P2/P3 warning 去重 + 异常大码框待确认自测"},
+        {"key": "aiview", "file": TESTS / "test_ai_view_export.py", "timeout": 300,
+         "label": "「给 AI 看」PDF 导出修复（黑框相交/旋转页/扫描件文本层）"},
+        {"key": "aiexportname", "file": TESTS / "test_ai_export_naming.py", "timeout": 300,
+         "label": "「给 AI 看」导出文件名中性化（human 命名不变）"},
+        {"key": "aiconsistency", "file": TESTS / "test_ai_consistency.py", "timeout": 300,
+         "label": "「给 AI 看」近似原值假值一致性（AI 专属）"},
+        {"key": "ai2rules", "file": TESTS / "test_ai2_rules.py", "timeout": 300,
+         "label": "Batch2 补检测规则（开票人/联系人/账户名/并列当事人）"},
+        {"key": "ai2amount", "file": TESTS / "test_ai2_amount.py", "timeout": 300,
+         "label": "Batch2 明细金额同值扩散 + 大写/小写一致性"},
+        {"key": "ai2pdftable", "file": TESTS / "test_ai2_pdf_table.py", "timeout": 300,
+         "label": "Batch2 PDF 扫描件表格列检测器"},
+        {"key": "ai2visual", "file": TESTS / "test_ai2_visual_policy.py", "timeout": 300,
+         "label": "Batch2 AI 视图视觉/待确认策略"},
     ]
     return specs
 

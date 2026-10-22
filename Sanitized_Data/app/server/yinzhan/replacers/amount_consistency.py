@@ -373,6 +373,40 @@ def _parse_token(entity, rule) -> _Token | None:
 # ── 格式化 ────────────────────────────────────────────────────────────
 
 
+#: 中文大写金额与小写金额视为"同一笔钱"的相对误差容限（OCR 变体误差，Batch2-B2）
+CN_UPPER_ALIGN_TOLERANCE = Decimal("0.02")
+
+
+def _align_cn_upper_tokens(tokens: list[_Token]) -> int:
+    """把中文大写金额对齐到同文档唯一近似的小写金额（Batch2-B2）。
+
+    背景：OCR 会把同一笔金额在大写行/小写行识别出微小差异（如 366740.37 vs
+    366731.20），若各自缩放，AI 版大写与小写会自相矛盾。这里对每个大写 token：
+    在同文档的非大写 token 中找相对差 <= 2% 的候选值；**唯一候选**时把大写
+    token 的 canonical 对齐到该小写值（随后由 format_cn_amount 重新生成大写，
+    与同一 scaled 值一致）；多候选/无候选保持原逻辑。返回对齐的 token 数。
+    """
+    lower = [token for token in tokens if not token.is_cn_upper]
+    aligned = 0
+    for token in tokens:
+        if not token.is_cn_upper:
+            continue
+        candidates: dict[Decimal, _Token] = {}
+        for candidate in lower:
+            scale = max(abs(token.canonical), abs(candidate.canonical))
+            if scale == 0:
+                continue
+            if abs(token.canonical - candidate.canonical) / scale <= CN_UPPER_ALIGN_TOLERANCE:
+                candidates[candidate.canonical] = candidate
+        if len(candidates) != 1:          # 无候选 / 多候选：保持原逻辑
+            continue
+        target = next(iter(candidates))
+        if target != token.canonical:
+            token.canonical = target
+            aligned += 1
+    return aligned
+
+
 def _format_number(value: Decimal, decimals: int, has_comma: bool) -> str:
     """按原样的小数位/千分位渲染一个数（value 已经是目标单位）。"""
     quantum = Decimal(1).scaleb(-decimals) if decimals else Decimal(1)
@@ -550,6 +584,11 @@ def build_amount_plan(entities, rules, session) -> dict[str, str]:
     if not tokens:
         return {}
 
+    # Batch2-B2：大写金额行与小写金额行常因 OCR 差几分钱（如 366740.37 vs
+    # 366731.20）。唯一近似候选时把大写 canonical 对齐到小写值，让两者参与同一
+    # 缩放、大写由 format_cn_amount 重新生成，避免 AI 版大小写自相矛盾。
+    _align_cn_upper_tokens(tokens)
+
     factor = _select_factor(tokens, session)
 
     # 唯一金额值 → 缩放后"元"数值。
@@ -641,6 +680,7 @@ def apply_plan(entities, plan: dict[str, str], session=None) -> int:
 
 __all__ = [
     "AMOUNT_ETYPES",
+    "CN_UPPER_ALIGN_TOLERANCE",
     "DEFAULT_FACTOR_RANGE",
     "build_amount_plan",
     "apply_plan",

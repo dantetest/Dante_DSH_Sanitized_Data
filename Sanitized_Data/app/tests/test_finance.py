@@ -54,7 +54,7 @@ NEW_RULE_IDS = frozenset({
     "cn.account_license_no", "cn.swift_bic", "cn.bank_routing_no",
     "cn.pay_platform_id", "cn.invoice_code", "cn.invoice_no",
     "cn.invoice_person", "cn.contract_no", "cn.audit_report_no",
-    "cn.audit_cpa",
+    "cn.audit_cpa", "cn.account_name",
 })
 
 #: v1 既有 5 条（行为必须保持不变）
@@ -238,7 +238,7 @@ def test_rule_pack_v2():
     ids = {rule.id for rule in finance}
     assert V1_RULE_IDS <= ids, f"v1 规则丢失：{V1_RULE_IDS - ids}"
     assert NEW_RULE_IDS <= ids, f"v2 新增规则缺失：{NEW_RULE_IDS - ids}"
-    assert len(finance) == 22, f"finance-cn 自有规则应为 22 条，实际 {len(finance)}"
+    assert len(finance) == 23, f"finance-cn 自有规则应为 23 条，实际 {len(finance)}"
 
     # 所有 validate 名必须已注册，且不能是 unknown→none 的静默降级
     for rule in finance:

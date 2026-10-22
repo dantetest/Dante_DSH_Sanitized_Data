@@ -316,6 +316,19 @@ class JobManager:
             except Exception as exc:
                 job.warnings.append(f"金额一致性处理跳过：{exc}")
 
+            # Phase A2：跨字段/跨页 OCR 变体归并 —— 同一实体的近似原值统一假值，
+            # 否则 AI 读到的文档里同一甲方会出现多个假名、自相矛盾。human 导出全黑
+            # 覆盖，效果上只影响换名版。
+            try:
+                merged = pipeline.consolidate_surrogates(
+                    job.entities, job.rules, job.session)
+                if merged.get("groups"):
+                    job.warnings.append(
+                        f"近似实体假值归并 {merged['groups']} 组"
+                        f"（{merged['members']} 个实体，统一 {merged['changed']} 个假值）")
+            except Exception as exc:
+                job.warnings.append(f"近似实体假值归并跳过：{exc}")
+
             # OCR 会把同一行切碎（公章压字、扫描歪斜），这里把已识别的值在
             # 全文其它位置补齐，否则签字页上的公司名会漏。
             try:
@@ -324,6 +337,16 @@ class JobManager:
                     job.warnings.append(f"同值扩散补了 {propagated} 处")
             except Exception as exc:
                 job.warnings.append(f"同值扩散跳过：{exc}")
+
+            # Batch2-B2：明细行金额同值扩散 —— 合计行与明细行的同一个数值共用
+            # 同一实体决策，避免明细行裸数字漏脱敏（human 版黑块会相应增加）。
+            try:
+                amount_spans = pipeline.propagate_amount_numeric_values(
+                    doc, job.entities)
+                if amount_spans:
+                    job.warnings.append(f"明细金额同值扩散 {amount_spans} 处")
+            except Exception as exc:
+                job.warnings.append(f"明细金额同值扩散跳过：{exc}")
 
             # 视觉标记（红章 / 手写签名）：OCR 读不出字，规则也匹配不到，
             # 但它们恰恰是合同里最能定位主体和签署人的东西。
@@ -674,9 +697,17 @@ class JobManager:
             job.stage = "exporting"
         try:
             seal = _seal_no()
-            suffix = "换名" if mode == "ai" else "已隐去"
-            stem = Path(job.name).stem
-            out = unique_path(OUTPUT_DIR / f"{safe_name(stem, 60)}_{suffix}_{seal}{_ext(job.path)}")
+            # 源文件哈希只算一次：它既是 audit 的 doc_hash，也是 AI 中性文件名里
+            # 的 sha8（导出名不能带源 stem，见 ai_export_name 注释）。
+            src_hash = sha256_file(job.path)
+            ext = _ext(job.path)
+            if mode == "ai":
+                out = unique_path(OUTPUT_DIR / ai_export_name(src_hash, ext, seal))
+            else:
+                # 给人看（human）版命名规则保持原样，逐字节不变。
+                stem = Path(job.name).stem
+                out = unique_path(
+                    OUTPUT_DIR / f"{safe_name(stem, 60)}_已隐去_{seal}{ext}")
             result = self._export_to(job, mode, out, do_verify=True, options=options)
 
             counts = job.counts()
@@ -684,7 +715,7 @@ class JobManager:
             pdf_hidden = (job.doc.extra or {}).get("pdf_hidden") if job.doc else None
             office_media = (job.doc.extra or {}).get("office_media") if job.doc else None
             audit.append(
-                job_id=job.id, doc_name=job.name, doc_hash=sha256_file(job.path),
+                job_id=job.id, doc_name=job.name, doc_hash=src_hash,
                 fmt=job.fmt,
                 counts={"total": counts["total"], "by_type": counts["by_type"],
                         # 未自动处理隐藏对象经用户二次确认放行时，审计留下痕迹
@@ -726,6 +757,18 @@ class JobManager:
     def _export_to(self, job: Job, mode: str, out: Path, do_verify: bool,
                    options: dict | None = None) -> dict:
         options = dict(options or {})
+        # Batch2-B4（第二步）：AI 换名版把「待确认的手写视觉实体」按涂黑纳入
+        # 导出（安全优先，免得 AI 读到手写签名/批注）；human 涂黑版保持现状
+        # （pending 仍交给人工确认，不在这里自动处理）。
+        ai_handwriting_black = 0
+        if mode == "ai":
+            for entity in job.entities:
+                if (entity.status != "pending"
+                        or (entity.etype or "").upper() != "HANDWRITING"):
+                    continue
+                entity.decision = Decision(
+                    strategy="black", black=True, replacement=None)
+                ai_handwriting_black += 1
         # 没有 decision 的实体 = 尚未确认（典型：异常大面积码类框）。它们不参与
         # 导出，也绝不能在导出阶段被兜底成 black；用户 accept 后才会补上决策。
         ents = [e for e in job.entities
@@ -736,6 +779,14 @@ class JobManager:
 
         res = pipeline.export(job.doc, job.parser, ents, out,
                               {"mode": mode, **options})
+        if ai_handwriting_black:
+            msg = (f"AI 视图将 {ai_handwriting_black} 个疑似手写签名按涂黑处理"
+                   "（仅换名版；涂黑版保持人工确认）")
+            res.warnings.append(msg)
+            try:
+                job.warnings.append(msg)
+            except Exception:
+                pass
         info = {"path": res.path, "warnings": _dedupe_warnings(list(res.warnings))}
         if do_verify:
             ctx = ParseContext(ocr=get_ocr(), workdir=str(WORK_DIR))
@@ -1152,6 +1203,19 @@ def _occupied(entities: list[Entity], block_id: str, start: int, end: int) -> bo
             if s.block_id == block_id and s.start >= 0 and s.start < end and start < s.end:
                 return True
     return False
+
+
+def ai_export_name(sha256_hex: str, ext: str, seal: str = "") -> str:
+    """「给 AI 看」成品的文件名（中性化）。
+
+    文件名本身经常携带个人信息（"张三_身份证.jpg"、"某某公司_对账单.pdf"），
+    导出给 AI 时不能沿用源 stem。这里只保留**内容 sha256 前 8 位**（同一文件
+    稳定可对账，且无法反推原名）、模式 token ``_换名_``（供 UI/测试识别）和
+    交付编号 ``seal``（MCP 路径没有编号时传空串）。human（给人看）版不用本
+    函数，保持既有 ``{stem}_已隐去_{seal}`` 规则不变。
+    """
+    token = f"AI视图_{sha256_hex[:8]}_换名"
+    return f"{token}_{seal}{ext}" if seal else f"{token}{ext}"
 
 
 def _ext(path: str) -> str:

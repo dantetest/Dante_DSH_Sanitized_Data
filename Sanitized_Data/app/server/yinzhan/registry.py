@@ -116,7 +116,8 @@ _PLUGIN_FALLBACK = {
                 "text_parser", "tiff_parser", "mesh_parser"),
     "detectors": ("regex_det", "dict_det", "ner_det", "joined_det",
                   "finance_validators", "trade_validators",
-                  "pipl_validators", "numeric_det", "table_det"),
+                  "pipl_validators", "numeric_det", "table_det",
+                  "pdf_table"),
     "replacers": ("surrogate", "black", "mask", "amount_consistency"),
 }
 

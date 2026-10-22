@@ -18,11 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from yinzhan import registry                      # noqa: E402
 from yinzhan.config import VERSION, WORK_DIR       # noqa: E402
-from yinzhan.jobs import _load_rules               # noqa: E402
+from yinzhan.jobs import _load_rules, ai_export_name  # noqa: E402
 from yinzhan.ocr import get_ocr                    # noqa: E402
 from yinzhan.udm import (                          # noqa: E402
     Block, Document, Page, ParseContext, Span,
 )
+from yinzhan.utils import sha256_file              # noqa: E402
 from yinzhan import pipeline                       # noqa: E402
 
 PROTOCOL = "2024-11-05"
@@ -131,7 +132,17 @@ def tool_sanitize_document(args: dict) -> dict:
             amount_consistency.apply_plan(det.entities, plan, session)
     except Exception:
         pass
+    # Phase A2：近似原值（OCR 变体）统一假值，避免 AI 读到自相矛盾的多个假名。
+    try:
+        pipeline.consolidate_surrogates(det.entities, det.rules, session)
+    except Exception:
+        pass
     pipeline.propagate_values(doc, det.entities)
+    # Batch2-B2：明细行金额同值扩散（合计行与明细行共用同一决策）。
+    try:
+        pipeline.propagate_amount_numeric_values(doc, det.entities)
+    except Exception:
+        pass
 
     from yinzhan.jobs import _embedded_media_info, _low_confidence_entities, _visual_entities
 
@@ -158,8 +169,12 @@ def tool_sanitize_document(args: dict) -> dict:
 
     out_dir = Path.cwd() / "sanitized_output"
     out_dir.mkdir(parents=True, exist_ok=True)
-    suffix = "换名" if mode == "ai" else "已隐去"
-    out = out_dir / f"{src.stem}_{suffix}{src.suffix}"
+    if mode == "ai":
+        # 「给 AI 看」：输出名必须中性，不能把源文件名（可能含姓名/公司/案号）
+        # 交给 Agent；human（给人看）保持既有 `{stem}_已隐去` 命名不变。
+        out = out_dir / ai_export_name(sha256_file(src), src.suffix)
+    else:
+        out = out_dir / f"{src.stem}_已隐去{src.suffix}"
     res = pipeline.export(doc, parser, ents, out, {"mode": mode})
 
     counts: dict[str, int] = {}
