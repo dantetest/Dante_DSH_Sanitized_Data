@@ -786,7 +786,10 @@ class TestFaceLogic(unittest.TestCase):
                              "YINZHAN_SCAN_FACE_MIN_NEIGHBORS",
                              "YINZHAN_SCAN_FACE_PHOTO",
                              "YINZHAN_SCAN_FACE_PHOTO_MAX_SIDE",
-                             "YINZHAN_SCAN_FACE_PHOTO_MIN_SKIN")}
+                             "YINZHAN_SCAN_FACE_PHOTO_MIN_SKIN",
+                             "YINZHAN_SCAN_FACE_YUNET",
+                             "YINZHAN_SCAN_FACE_YUNET_MAX_SIDE",
+                             "YINZHAN_SCAN_FACE_YUNET_SCORE")}
         os.environ["YINZHAN_SCAN_FACE_PROFILE"] = "0"
         os.environ["YINZHAN_SCAN_FACE"] = "1"
         os.environ["YINZHAN_SCAN_FACE_TILE"] = "0"      # 单位几何测试用整图单次
@@ -919,6 +922,30 @@ class TestFaceLogic(unittest.TestCase):
         self.assertEqual(len(small_hits), 1)
         self.assertGreater(big_hits[0].confidence, small_hits[0].confidence)
         self.assertGreaterEqual(small_hits[0].confidence, 0.35)
+
+    def test_yunet_model_present_and_loads(self):
+        """YuNet 已随包：模型文件存在且能创建 FaceDetectorYN（不联网）。"""
+        model = visual_targets._yunet_model_path()
+        self.assertIsNotNone(model, "YuNet 模型缺失")
+        self.assertGreater(model.stat().st_size, 100_000)
+        os.environ["YINZHAN_SCAN_FACE_YUNET"] = "1"
+        visual_targets._FACE_CASCADES_OVERRIDE = None
+        blank = np.full((600, 800, 3), 250, np.uint8)
+        self.assertEqual(visual_targets._yunet_face_pass(blank), [])
+        self.assertIsNotNone(visual_targets._yunet_detector(800, 600))
+
+    def test_yunet_disabled_by_env(self):
+        os.environ["YINZHAN_SCAN_FACE_YUNET"] = "0"
+        visual_targets._FACE_CASCADES_OVERRIDE = None
+        blank = np.full((600, 800, 3), 250, np.uint8)
+        self.assertEqual(visual_targets._yunet_face_pass(blank), [])
+
+    def test_yunet_skipped_in_fake_cascade_tests(self):
+        fake = _FakeCascade([[(100, 100, 80, 80)]])
+        visual_targets._FACE_CASCADES_OVERRIDE = [("frontal", fake, 0.92)]
+        os.environ["YINZHAN_SCAN_FACE_YUNET"] = "1"
+        blank = np.full((600, 800, 3), 250, np.uint8)
+        self.assertEqual(visual_targets._yunet_face_pass(blank), [])
 
     def test_skin_ratio_prefers_skin_color(self):
         skin = np.full((80, 80, 3), (230, 190, 170), np.uint8)

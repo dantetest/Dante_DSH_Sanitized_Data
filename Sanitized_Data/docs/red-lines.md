@@ -162,8 +162,8 @@
 | P1-A 第一波 | 聊天截图逐项（5 类 CHAT_*，仅图片、微信式布局）；招牌/门牌/路牌/铭牌 OCR 扫描（4 kind，pending）；未成年人身份证生日推断 + `/minor-strict`；时间模糊 `time_blur`；组合风险 `combination_risk` |
 | P1-B 第一波 | Office 内嵌图默认自动脱敏；隐藏对象确认（`media_confirmation_required`）；`strict_office_media` 剥离/置白；CSV/TSV 列级+多级表头、导出形状不变；PDF 文本层内嵌图（≥5%）→ `EMBEDDED_IMAGE` 整块涂黑+复检；audit `counts.office_media` |
 | P1.5 | Office/PDF 内嵌图**文字 OCR** 规则脱敏（预算+开关+自检）；6 类证件标签（工作证/居住证/港澳通行证/台胞证/外国人永居证/银行卡，银行卡不整页）；CSV/TSV 原编码/BOM/换行保留（未知回退 UTF-8+warning）；护照号 `PASSPORT`（near 护照、surrogate），规则 103→104 |
-| P0 修复 | PLY 三子格式导出后结构自检（header/数据段长度/顶点 center 平移/面逐字节），失败 ExportError 且删除成品、不再复制源文件；TIF Pillow 路径 Orientation 转正且成品无 274，rasterio 路径 warning 不转正（已知限制）、成品无 274 |
-| 已知不修 | 83 双人低头侧脸（Haar 上限，YuNet 因 WIDER FACE CC BY-NC-ND 未随包）；聊天需 OCR/微信式布局；招牌无 OCR/白底不承诺；Office 内嵌图纯文字 P1.5、strict 改变外观；PDF 内嵌图仅文本层页/≥5%、异常格式降级；PLY ASCII 行式数据段长度可变化（顶点/面完整重读）；rasterio 大图路径不转正 Orientation 像素 |
+| P0 修复 | PLY 三子格式导出后结构自检（header/数据段长度/顶点 center 平移/面逐字节），失败 ExportError 且删除成品、不再复制源文件；TIF Pillow/rasterio 两条路径均按 Orientation 转正且成品无 274 |
+| 已知不修 | 极少数被裁切边缘侧脸/极小脸/严重遮挡（YuNet 随包后真实照片主脸 12/13，不承诺 100%）；聊天需 OCR/微信式布局；招牌无 OCR/白底不承诺；Office 内嵌图纯文字 P1.5、strict 改变外观；PDF 内嵌图仅文本层页/≥5%、异常格式降级；PLY ASCII 行式数据段长度可变化（顶点/面完整重读） |
 
 ## 六、变更记录
 

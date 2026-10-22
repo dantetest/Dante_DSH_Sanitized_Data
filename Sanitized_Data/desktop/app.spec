@@ -40,6 +40,8 @@ if str(APP / "server") not in sys.path:
 datas = [
     (str(APP / "web"), "web"),                                   # 前端
     (str(APP / "server" / "yinzhan" / "rules"), "yinzhan/rules"),  # 规则包
+    # YuNet 人脸检测模型（232KB，OpenCV Zoo MIT；随包离线推理）
+    (str(APP / "server" / "yinzhan" / "models"), "yinzhan/models"),
 ]
 binaries = []
 hiddenimports = collect_submodules("yinzhan")                    # 动态加载的解析器/检测器

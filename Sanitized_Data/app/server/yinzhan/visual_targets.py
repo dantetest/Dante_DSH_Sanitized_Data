@@ -58,6 +58,7 @@ import os
 import re
 import threading
 import unicodedata
+from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -463,6 +464,116 @@ def _photo_face_pass(rgb: np.ndarray, *, fmt: str = "") -> list[tuple[Box, float
     return found
 
 
+# ── YuNet 人脸检测（P1，2026-10-22 随包；OpenCV Zoo MIT model） ──
+# 照片场景下 Haar 对强侧脸/低头/闭眼召回不足，YuNet 作为补充/主检测器：
+# 文件 232KB；只在本地推理，不联网。
+_YUNET_DIR = Path(__file__).resolve().parent / "models"
+_YUNET_MODEL = _YUNET_DIR / "face_detection_yunet_2023mar.onnx"
+_YUNET_LOCK = threading.RLock()
+_YUNET_CACHE: dict[tuple[int, int], Any] = {}
+_YUNET_CACHE_MAX = 6
+
+
+def _yunet_enabled() -> bool:
+    raw = os.environ.get("YINZHAN_SCAN_FACE_YUNET", "1")
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _yunet_model_path() -> Path | None:
+    """模型路径；PyInstaller 会把 yinzhan/models 一并收进包内。"""
+    try:
+        if _YUNET_MODEL.is_file() and _YUNET_MODEL.stat().st_size > 50_000:
+            return _YUNET_MODEL
+    except OSError:
+        pass
+    return None
+
+
+def _yunet_detector(width: int, height: int):
+    if cv2 is None or not hasattr(cv2, "FaceDetectorYN"):
+        return None
+    model = _yunet_model_path()
+    if model is None:
+        return None
+    key = (int(width), int(height))
+    with _YUNET_LOCK:
+        detector = _YUNET_CACHE.get(key)
+        if detector is not None:
+            return detector
+        try:
+            score = float(os.environ.get("YINZHAN_SCAN_FACE_YUNET_SCORE", "0.50") or 0.50)
+        except (TypeError, ValueError):
+            score = 0.50
+        try:
+            detector = cv2.FaceDetectorYN.create(
+                str(model), "", key, max(0.1, min(0.95, score)), 0.3, 5000)
+        except Exception:
+            return None
+        if len(_YUNET_CACHE) >= _YUNET_CACHE_MAX:
+            _YUNET_CACHE.clear()
+        _YUNET_CACHE[key] = detector
+        return detector
+
+
+def _yunet_face_pass(rgb: np.ndarray) -> list[tuple[Box, float, str]]:
+    """YuNet 推理，返回 ``(rect, confidence, "yunet")``。
+
+    输入限制长边（默认 1600）：既保留侧脸细节，又控制 CPU 开销；模型缺失/旧版
+    OpenCV 无 FaceDetectorYN 时返回空，调用方自动回退 Haar 照片补检。
+    """
+    if _FACE_CASCADES_OVERRIDE is not None or not _yunet_enabled():
+        return []
+    if cv2 is None:
+        return []
+    try:
+        height, width = int(rgb.shape[0]), int(rgb.shape[1])
+    except Exception:
+        return []
+    if width < 32 or height < 32:
+        return []
+    cap = _env_int("YINZHAN_SCAN_FACE_YUNET_MAX_SIDE", 1600,
+                   minimum=640, maximum=2400)
+    scale = min(1.0, cap / float(max(width, height)))
+    try:
+        small = (cv2.resize(rgb, (max(1, int(round(width * scale))),
+                                  max(1, int(round(height * scale)))),
+                            interpolation=cv2.INTER_AREA)
+                 if scale < 0.999 else rgb)
+        bgr = cv2.cvtColor(small, cv2.COLOR_RGB2BGR)
+    except Exception:
+        return []
+    detector = _yunet_detector(bgr.shape[1], bgr.shape[0])
+    if detector is None:
+        return []
+    try:
+        with _YUNET_LOCK:
+            _ok, faces = detector.detect(bgr)
+    except Exception:
+        return []
+    found: list[tuple[Box, float, str]] = []
+    try:
+        try:
+            score_min = float(os.environ.get("YINZHAN_SCAN_FACE_YUNET_SCORE", "0.50") or 0.50)
+        except (TypeError, ValueError):
+            score_min = 0.50
+        for face in faces if faces is not None else []:
+            try:
+                x, y, fw, fh = (float(v) for v in list(face)[:4])
+                score = float(face[-1])
+            except Exception:
+                continue
+            if fw <= 0 or fh <= 0 or score < score_min:
+                continue
+            rect: Box = (x / scale, y / scale, (x + fw) / scale,
+                         (y + fh) / scale)
+            # 过小的检出框在照片里多为图案误报；保留 16px 以上（原图）
+            if min(rect[2] - rect[0], rect[3] - rect[1]) < 16:
+                continue
+            found.append((rect, max(0.35, min(0.98, score)), "yunet"))
+    except Exception:
+        return []
+    return found
+
 
 def _face_tile_plan(width: int, height: int) -> tuple[str, list[tuple[int, int, int, int, float]]]:
     """人脸检测的页面分块计划。
@@ -631,9 +742,13 @@ def _detect_faces(rgb: np.ndarray, ctx: ScanContext) -> list[ScanHit]:
     if always_profile or (auto_profile and (frontal_count == 0 or photo_like_fmt)):
         _collect_pass([entry for entry in _face_cascades(include_profile=True)
                        if entry[0] == "profile"])
-    if auto_profile and photo_like_fmt:
-        # 照片场景补充高分辨率 alt2/profile（侧脸/低头/合影召回）；
-        # 只补充候选，后续仍走统一去重 + 整头外扩。
+    yunet_ready = (_yunet_model_path() is not None and _yunet_enabled()
+                   and _FACE_CASCADES_OVERRIDE is None)
+    if yunet_ready:
+        # YuNet 主检测：侧脸/低头/闭眼更稳；仍保留 Haar 命中，统一去重/整头外扩。
+        found.extend(_yunet_face_pass(rgb))
+    elif auto_profile and photo_like_fmt:
+        # 模型缺失时的无模型回退：照片场景补充高分辨率 alt2/profile（肤色校验）。
         found.extend(_photo_face_pass(rgb, fmt=fmt))
 
     if not found:
