@@ -496,6 +496,54 @@ class ImageParser(registry.Parser):
             size = 0
         return ExportResult(path=str(out_path), warnings=warnings, size=size)
 
+    def export_black_rects(self, doc: Document, entities: list[Entity],
+                           decisions: dict[str, Decision] | None = None
+                           ) -> dict[int, list[Box]] | None:
+        """返回与 human 导出完全一致的涂黑矩形（供「预览=成品」涂黑形态使用）。
+
+        图片解析器此前只有 PDF 实现该钩子，导致图片任务的「涂黑」预览回退为
+        不画黑块（v1.1.2 预览=成品特性对图片缺失）。这里复用导出同一套
+        ``_span_box_in_block`` / ``_denormalize_rect`` 几何，只返回矩形、不改像素。
+        """
+        if not doc.pages:
+            return None
+        page = doc.pages[0]
+        block_page: dict[str, int] = {}
+        for candidate in doc.pages:
+            for block in candidate.blocks:
+                block_page[block.id] = candidate.index
+        page_blocks = {block.id: block for block in page.blocks}
+        rects: list[Box] = []
+        try:
+            for entity in entities or []:
+                decision = (decisions or {}).get(entity.id) or entity.decision
+                if decision is None:
+                    continue
+                if decision.strategy == "keep" and not decision.black:
+                    continue
+                if not (decision.black or decision.strategy in ("black", "drop")):
+                    continue
+                for span in entity.spans or []:
+                    box: Box | None = None
+                    if span.block_id:
+                        page_no = block_page.get(span.block_id)
+                        if page_no is None or page_no != 0:
+                            continue
+                        block = page_blocks.get(span.block_id)
+                        if block is None:
+                            continue
+                        box = _span_box_in_block(span, block, page)
+                    elif span.rect:
+                        if span.page is not None and int(span.page) != 0:
+                            continue
+                        box = _denormalize_rect(span.rect, page)
+                    if box is None:
+                        continue
+                    rects.append(box)
+        except Exception:
+            return None
+        return {0: rects} if rects else {}
+
     def render(self, doc: Document, page: int, mode: str = "orig") -> bytes | None:
         return _render_image_bytes(doc, page, mode)
 

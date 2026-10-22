@@ -783,7 +783,10 @@ class TestFaceLogic(unittest.TestCase):
                              "YINZHAN_SCAN_FACE_MAX_SIDE", "YINZHAN_SCAN_FACE_TILE",
                              "YINZHAN_SCAN_FACE_TILE_CAP",
                              "YINZHAN_SCAN_FACE_TILE_OVERLAP",
-                             "YINZHAN_SCAN_FACE_MIN_NEIGHBORS")}
+                             "YINZHAN_SCAN_FACE_MIN_NEIGHBORS",
+                             "YINZHAN_SCAN_FACE_PHOTO",
+                             "YINZHAN_SCAN_FACE_PHOTO_MAX_SIDE",
+                             "YINZHAN_SCAN_FACE_PHOTO_MIN_SKIN")}
         os.environ["YINZHAN_SCAN_FACE_PROFILE"] = "0"
         os.environ["YINZHAN_SCAN_FACE"] = "1"
         os.environ["YINZHAN_SCAN_FACE_TILE"] = "0"      # 单位几何测试用整图单次
@@ -916,6 +919,46 @@ class TestFaceLogic(unittest.TestCase):
         self.assertEqual(len(small_hits), 1)
         self.assertGreater(big_hits[0].confidence, small_hits[0].confidence)
         self.assertGreaterEqual(small_hits[0].confidence, 0.35)
+
+    def test_skin_ratio_prefers_skin_color(self):
+        skin = np.full((80, 80, 3), (230, 190, 170), np.uint8)
+        self.assertGreater(visual_targets._face_skin_ratio(skin, (0, 0, 80, 80)), 0.8)
+        gray = np.full((80, 80, 3), 128, np.uint8)
+        self.assertLess(visual_targets._face_skin_ratio(gray, (0, 0, 80, 80)), 0.2)
+
+    def test_profile_runs_on_photo_even_with_frontal_hit(self):
+        """照片场景（fmt=image）即便已有正脸命中，也会补跑侧脸级联。"""
+        frontal = _FakeCascade([[(100, 100, 80, 80)]])
+        profile = _FakeCascade([[(400, 250, 120, 120)]])
+        visual_targets._FACE_CASCADES_OVERRIDE = [
+            ("frontal", frontal, 0.92), ("profile", profile, 0.78)]
+        os.environ["YINZHAN_SCAN_FACE_PROFILE"] = "auto"
+        ctx = _ctx(800, 600, options={"fmt": "image"})
+        hits = visual_targets._detect_faces(self._noise_image(), ctx)
+        self.assertEqual(profile.calls, 2)       # 正常 + 镜像
+        self.assertGreaterEqual(len(hits), 2)
+
+    def test_pdf_scan_keeps_old_profile_policy(self):
+        """PDF 扫描页仍只在正脸 0 命中时跑侧脸，避免逐页变慢。"""
+        frontal = _FakeCascade([[(100, 100, 80, 80)]])
+        profile = _FakeCascade([[(400, 250, 120, 120)]])
+        visual_targets._FACE_CASCADES_OVERRIDE = [
+            ("frontal", frontal, 0.92), ("profile", profile, 0.78)]
+        os.environ["YINZHAN_SCAN_FACE_PROFILE"] = "auto"
+        ctx = _ctx(800, 600, options={"fmt": "pdf"})
+        visual_targets._detect_faces(self._noise_image(), ctx)
+        self.assertEqual(profile.calls, 0)
+
+    def test_photo_face_pass_disabled_for_pdf_or_test_override(self):
+        image = self._noise_image()
+        # 测试注入假级联时不跑真实高分辨率补充，保证几何测试可预期
+        self.assertEqual(visual_targets._photo_face_pass(image, fmt="image"), [])
+        visual_targets._FACE_CASCADES_OVERRIDE = None
+        os.environ["YINZHAN_SCAN_FACE_PHOTO"] = "1"
+        # PDF 扫描页不启用，避免逐页额外开销
+        self.assertEqual(visual_targets._photo_face_pass(image, fmt="pdf"), [])
+        os.environ["YINZHAN_SCAN_FACE_PHOTO"] = "0"
+        self.assertEqual(visual_targets._photo_face_pass(image, fmt="image"), [])
 
     def test_profile_skipped_on_document_page_in_auto(self):
         frontal = _FakeCascade([[]])

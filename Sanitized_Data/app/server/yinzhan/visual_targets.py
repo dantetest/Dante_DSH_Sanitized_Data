@@ -262,6 +262,7 @@ def _pick_text_boxes(rgb: np.ndarray, ctx: ScanContext):
 
 _FACE_CASCADE_FILES = {
     "frontal": "haarcascade_frontalface_default.xml",
+    "front_alt2": "haarcascade_frontalface_alt2.xml",
     "profile": "haarcascade_profileface.xml",
 }
 
@@ -342,6 +343,125 @@ def _face_scan_side() -> int:
     cap = _env_int("YINZHAN_SCAN_FACE_MAX_SIDE", 640, minimum=320, maximum=6000)
     generic = _env_int("YINZHAN_SCAN_MAX_SIDE", 3000, minimum=320, maximum=10000)
     return min(cap, generic)
+
+
+def _face_photo_mode() -> bool:
+    """照片增强模式开关（默认开；PDF 扫描页不启用，避免逐页变慢）。"""
+    raw = os.environ.get("YINZHAN_SCAN_FACE_PHOTO", "1")
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _face_photo_skin_min() -> float:
+    try:
+        value = float(os.environ.get("YINZHAN_SCAN_FACE_PHOTO_MIN_SKIN", "0.30") or 0.30)
+    except (TypeError, ValueError):
+        value = 0.30
+    return max(0.0, min(1.0, value))
+
+
+def _face_skin_ratio(rgb: np.ndarray, box: Box) -> float:
+    """候选框内肤色比例（YCrCb + RGB 双规则），用于过滤墙面/衣物纹理误报。"""
+    if cv2 is None:
+        return 0.0
+    try:
+        h, w = int(rgb.shape[0]), int(rgb.shape[1])
+        x0 = max(0, int(box[0]))
+        y0 = max(0, int(box[1]))
+        x1 = min(w, int(box[2]))
+        y1 = min(h, int(box[3]))
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return 0.0
+        crop = rgb[y0:y1, x0:x1]
+        ycrcb = cv2.cvtColor(crop, cv2.COLOR_RGB2YCrCb)
+        _y, cr, cb = cv2.split(ycrcb)
+        r, g, b = cv2.split(crop)
+        mask = (((cr >= 133) & (cr <= 175) & (cb >= 77) & (cb <= 128))
+                | ((r > 95) & (g > 40) & (b > 20) & (r > g) & (r > b)))
+        # 去掉零星噪点（衣物花纹、灯带反光）
+        mask = cv2.morphologyEx((mask * 255).astype(np.uint8),
+                                cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        return float((mask > 0).mean())
+    except Exception:
+        return 0.0
+
+
+def _photo_face_pass(rgb: np.ndarray, *, fmt: str = "") -> list[tuple[Box, float, str]]:
+    """照片场景的补充检测（侧脸/低头/合影）。
+
+    Haar 在 640 缩放下对中等距离的侧脸/低头脸召回不足：这里对**图片/正射预览**
+    额外跑一遍 1200 长边的 alt2 + profile（正常+镜像）检测，并用肤色比例
+    （默认 ≥0.30）滤掉墙面/衣物纹理误报。PDF 扫描页不启用，保持原逐页性能。
+    仅补充候选，不改变原有 frontal/profile 的置信度与去重逻辑。
+    """
+    if _FACE_CASCADES_OVERRIDE is not None or cv2 is None:
+        return []
+    if not _face_photo_mode():
+        return []
+    if str(fmt or "").strip().lower() not in ("image", "tiff"):
+        return []
+    try:
+        height, width = int(rgb.shape[0]), int(rgb.shape[1])
+    except Exception:
+        return []
+    if max(width, height) < 900:
+        return []
+    cap = _env_int("YINZHAN_SCAN_FACE_PHOTO_MAX_SIDE", 1200,
+                   minimum=640, maximum=2400)
+    scale = min(1.0, cap / float(max(width, height)))
+    try:
+        small = (cv2.resize(rgb, (max(1, int(round(width * scale))),
+                                  max(1, int(round(height * scale)))),
+                            interpolation=cv2.INTER_AREA)
+                 if scale < 0.999 else rgb)
+        gray = cv2.equalizeHist(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY))
+    except Exception:
+        return []
+    entries = [
+        ("alt2-photo", _cascade("front_alt2"), 0.86),
+        ("profile-photo", _cascade("profile"), 0.80),
+    ]
+    min_skin = _face_photo_skin_min()
+    found: list[tuple[Box, float, str]] = []
+    for label, cascade, base in entries:
+        if cascade is None:
+            continue
+        variants = [(False, label)]
+        if label.startswith("profile"):
+            variants.append((True, label + "-flip"))
+        for flipped, label_note in variants:
+            try:
+                src = cv2.flip(gray, 1) if flipped else gray
+                dets = cascade.detectMultiScale(
+                    src, scaleFactor=1.1, minNeighbors=5, minSize=(24, 24))
+            except Exception:
+                continue
+            for det in dets if dets is not None else []:
+                try:
+                    x, y, fw, fh = (float(v) for v in list(det)[:4])
+                except Exception:
+                    continue
+                if fw <= 0 or fh <= 0:
+                    continue
+                if flipped:
+                    x = float(gray.shape[1]) - x - fw
+                rect: Box = (x / scale, y / scale,
+                             (x + fw) / scale, (y + fh) / scale)
+                bw = rect[2] - rect[0]
+                bh = rect[3] - rect[1]
+                if bw < 24 or bh < 24:
+                    continue
+                aspect = bw / max(1.0, bh)
+                if not (0.55 <= aspect <= 2.25):
+                    continue
+                if bw > 0.65 * width or bh > 0.65 * height:
+                    continue
+                if _face_skin_ratio(rgb, rect) < min_skin:
+                    continue
+                face_px = min(bw, bh)
+                found.append((rect, _face_confidence(base, face_px, label_note),
+                              label_note))
+    return found
+
 
 
 def _face_tile_plan(width: int, height: int) -> tuple[str, list[tuple[int, int, int, int, float]]]:
@@ -425,6 +545,8 @@ def _detect_faces(rgb: np.ndarray, ctx: ScanContext) -> list[ScanHit]:
     if float(preview_gray.std()) < 2.0:
         return []
     doc_like = _document_like(preview_gray)
+    fmt = str((getattr(ctx, "options", None) or {}).get("fmt") or "").strip().lower()
+    photo_like_fmt = fmt in ("image", "tiff")
 
     mode_label, plan = _face_tile_plan(width, height)
     # 只有「原图本身较大」时才提示可能漏检（小图缩到 640 检测是常态，不打扰用户）
@@ -506,9 +628,13 @@ def _detect_faces(rgb: np.ndarray, ctx: ScanContext) -> list[ScanHit]:
         return count
 
     frontal_count = _collect_pass(_face_cascades(include_profile=False))
-    if always_profile or (auto_profile and frontal_count == 0):
+    if always_profile or (auto_profile and (frontal_count == 0 or photo_like_fmt)):
         _collect_pass([entry for entry in _face_cascades(include_profile=True)
                        if entry[0] == "profile"])
+    if auto_profile and photo_like_fmt:
+        # 照片场景补充高分辨率 alt2/profile（侧脸/低头/合影召回）；
+        # 只补充候选，后续仍走统一去重 + 整头外扩。
+        found.extend(_photo_face_pass(rgb, fmt=fmt))
 
     if not found:
         return []
