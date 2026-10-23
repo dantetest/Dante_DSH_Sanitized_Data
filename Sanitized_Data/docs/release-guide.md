@@ -120,7 +120,11 @@ git push origin refs/tags/vX.Y.Z
 - 绿色版默认同目录 `data/`；换目录前把旧 `data/` 复制过去。
 - 升级后打开 `/api/health` 确认 `version` 为新版本。
 
-## 10. 自动更新（尚未实现）
+## 10. 自动更新（设计稿）
+
+详见 [update-check.md](impl/update-check.md)。当前尚未实现；更新源需要可匿名访问的静态清单（私有 Gitea 的 Release/API 未登录会 403）。
+
+## 11. 旧版自动更新边界
 
 产品当前**不联网检查更新**，符合“本机处理、不外呼”的边界。
 若以后要做自动更新，建议：
