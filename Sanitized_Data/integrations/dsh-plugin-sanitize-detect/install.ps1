@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PluginName = '@blctek/dsh-plugin-sanitize-detect'
-$PackageRoot = Split-Path -Parent $PSScriptRoot
+$PackageRoot = $PSScriptRoot
 $ProfileDir = Join-Path $DshHome "profiles\$Profile"
 $PackageJson = Join-Path $ProfileDir 'package.json'
 
@@ -48,7 +48,8 @@ if ($Uninstall) {
 
 New-Item -ItemType Directory -Force -Path $nodeModules | Out-Null
 if (Test-Path $target) { Remove-Item $target -Recurse -Force }
-Copy-Item $PackageRoot $target -Recurse -Force
+New-Item -ItemType Directory -Force -Path $target | Out-Null
+Copy-Item (Join-Path $PackageRoot '*') $target -Recurse -Force
 
 if (-not $doc.dependencies) {
   $doc | Add-Member -MemberType NoteProperty -Name dependencies -Value ([pscustomobject]@{})
