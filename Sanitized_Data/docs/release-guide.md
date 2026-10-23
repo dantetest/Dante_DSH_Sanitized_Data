@@ -122,6 +122,9 @@ git push origin refs/tags/vX.Y.Z
 
 ## 10. 自动更新（设计稿）
 
+更新资产在 CKA 的部署方式见 [ops/update-deploy.md](ops/update-deploy.md)：产品自身 /updates/ 静态路由从 data/updates/ 读取，无需改 nginx。
+
+
 详见 [update-check.md](impl/update-check.md)。当前尚未实现；更新源需要可匿名访问的静态清单（私有 Gitea 的 Release/API 未登录会 403）。
 
 ## 11. 旧版自动更新边界

@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import audit, logging_setup, registry, vault
-from .config import BUILD_ID, MAX_UPLOAD, UPLOAD_DIR, VERSION, WEB_DIR
+from .config import BUILD_ID, DATA_DIR, MAX_UPLOAD, UPLOAD_DIR, VERSION, WEB_DIR
 from .jobs import MANAGER
 from .ocr import get_ocr
 from .udm import YinzhanError
@@ -376,6 +376,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def _static(self, path: str) -> bool:
         rel = path.lstrip("/")
+        updates_dir = (DATA_DIR / "updates")
+        if rel == "updates" or rel.startswith("updates/"):
+            sub = rel[len("updates"):].lstrip("/")
+            target = (updates_dir / sub).resolve() if sub else updates_dir
+            try:
+                target.relative_to(updates_dir.resolve())
+            except ValueError:
+                self._json({"error": {"code": "forbidden", "message": "路径非法"}}, 403)
+                return True
+            if not target.is_file():
+                return False
+            ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+            if ctype.startswith("text/") or ctype == "application/json":
+                ctype += "; charset=utf-8"
+            extra = {"Cache-Control": "no-store" if sub == "latest.json" else "public, max-age=86400"}
+            self._send(200, target.read_bytes(), ctype, extra=extra)
+            return True
         if rel in self.PAGE_ALIASES:
             target = WEB_DIR / self.PAGE_ALIASES[rel]
         else:
