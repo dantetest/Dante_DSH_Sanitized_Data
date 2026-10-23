@@ -16,10 +16,10 @@
 | 失败语义（verify 失败/媒体确认/无工作台） | ✅ server 侧 | 结构化 isError；verify 失败删除成品；HTTP 不可用 `no_workbench` |
 | T1 对话内定制工具卡（自检/计数/job/按钮） | ✅ | `out/dsh_test/plugin_card_running_03_result.png`（运行中卡片）；完成态在 DSH 默认折叠过程中 |
 | T2 真实工作台（DSH 原生 browser tab） | ✅ | `native_workbench_tab.png`：DSH 右侧 browser tab 直接显示 127.0.0.1:8760 真实工作台；旧仿制面板已移除 |
-| M4 elicitation / confirm_token | 🟡 部分 | human 导出新增一次性 `confirm_token` 挑战（standard 兼容）；协议级 elicitation 仍未实现 |
+| M4 elicitation / confirm_token | ✅ 能力感知 elicitation；DSH 0.2.1-rc.2 未声明 elicitation 时走 confirm_token（测试覆盖 accept/decline/单次消费） |
 | 安装包内 `Sanitized_Data_MCP.exe` + DSH 插件 | ✅（v1.2.0 构建） | `app.spec` 双入口；`integrations/dsh-plugin-sanitize-detect` 随构建进入 `dsh-plugin/` |
 
-**一句话**：MCP L2 服务端闭环 + DSH T0/T1/T2 已打通：T2 用 **DSH 原生 browser tab 直接加载真实工作台 WebUI**（已在 web profile 开启 browser 插件后实测），旧仿制面板移除；human 导出增加 confirm_token 挑战。剩余协议级 elicitation、T3 发送前拦截未做。
+**一句话**：MCP L2 服务端闭环 + DSH T0/T1/T2 已打通：T2 用 **DSH 原生 browser tab 直接加载真实工作台 WebUI**（已在 web profile 开启 browser 插件后实测），旧仿制面板移除；human 导出增加 confirm_token 挑战。M4 elicitation（能力感知）+ confirm_token 兜底已实现；剩 T3 发送前拦截未做。
 
 > **2026-10-23 设计调整**：T2 不再复刻工作台 UI（用户反馈仿制面板观感不真实）；左下角入口直接调用 `sidebarRight.openTab('browser', { url })` 打开真实 `/console?job=...`；旧 `plugin_panel*.png` 仅保留为历史证据，真实工作台 520px 预览见 `out/dsh_test/workbench_520.png`。
 

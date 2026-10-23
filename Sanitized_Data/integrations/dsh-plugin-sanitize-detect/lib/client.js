@@ -22,6 +22,22 @@ window.__ModuleLoader__.load({
       'get_sanitize_audit', 'rehydrate_sanitize_text', 'open_sanitize_workbench',
     ];
 
+    // 工具卡完成后把最近 job 留在 footer，避免 DSH 折叠过程后看不到结果。
+    const recentState = { value: null, listeners: new Set() };
+    function setRecent(value) {
+      const next = value && value.jobId ? value : null;
+      const prev = recentState.value;
+      if (prev && next && prev.jobId === next.jobId && prev.total === next.total && prev.summary === next.summary) return;
+      recentState.value = next;
+      for (const fn of [...recentState.listeners]) {
+        try { fn(next); } catch { /* ignore listener failure */ }
+      }
+    }
+    function subscribeRecent(fn) {
+      recentState.listeners.add(fn);
+      return () => recentState.listeners.delete(fn);
+    }
+
     const COLORS = {
       ink: 'var(--dsw-alias-label-primary, #1f2328)',
       secondary: 'var(--dsw-alias-label-secondary, #59636e)',
@@ -142,6 +158,11 @@ window.__ModuleLoader__.load({
       const tone = failed ? 'error' : phase === 'result' ? 'ok' : 'info';
       const jobId = payload && payload.job_id;
       const workbench = payload && payload.workbench_url;
+      const imageRefs = phase === 'result' && block && Array.isArray(block.content)
+        ? block.content.filter((part) => part && part.type === 'image' &&
+            part.attachment && typeof part.attachment.attachmentId === 'string' &&
+            part.attachment.attachmentId)
+        : [];
 
       function openPanel() {
         if (!jobId) return;
@@ -178,6 +199,12 @@ window.__ModuleLoader__.load({
       const title = titleMap[baseName] || baseName;
       const summary = toolSummary(toolName, payload, raw, phase);
       const detailText = raw.length > 4000 ? raw.slice(0, 4000) + '\n…' : raw;
+
+      React.useEffect(() => {
+        if (phase !== 'result' || !jobId) return;
+        const total = payload && payload.counts ? payload.counts.total : null;
+        setRecent({ jobId, total, summary, url: workbench || null });
+      }, [phase, jobId, summary, workbench]);
 
       return h('div', {
         'data-tool': toolName, 'data-state': failed ? 'error' : phase === 'result' ? 'ok' : 'running',
@@ -234,6 +261,11 @@ window.__ModuleLoader__.load({
             h('div', { style: { fontSize: 10, color: COLORS.tertiary } }, '模式'),
             h('span', { style: { fontSize: 11 } }, payload.mode === 'human' ? '涂黑版' : '换名版（可还原）')),
         ),
+        imageRefs.length > 0 && props.renderSlot && props.loadImage && props.renderSlot('tool.call.images', {
+          images: imageRefs.map((part) => ({ attachment: part.attachment })),
+          loadImage: props.loadImage,
+          align: 'start',
+        }),
         h('pre', {
           style: {
             margin: 0, padding: 8, background: COLORS.subtle, borderRadius: 6,
@@ -293,22 +325,32 @@ window.__ModuleLoader__.load({
     }
 
     function PanelEntryButton() {
+      const [recent, setRecentView] = React.useState(recentState.value);
+      React.useEffect(() => subscribeRecent(setRecentView), []);
       const open = async () => {
-        const url = await latestWorkbenchUrl();
+        let url = recent && recent.url;
+        if (!url && recent && recent.jobId) {
+          url = 'http://127.0.0.1:8760/console?job=' + encodeURIComponent(recent.jobId);
+        }
+        if (!url) url = await latestWorkbenchUrl();
         if (openWorkbenchTab(url)) return;
         window.open(url, '_blank', 'noopener');
       };
+      const label = recent && Number.isInteger(recent.total) ? '数据隐站工作台 · ' + recent.total : '数据隐站工作台';
       return h('button', {
-        type: 'button', onClick: open, title: '数据隐站工作台',
+        type: 'button', onClick: open,
+        title: recent && recent.jobId ? '数据隐站工作台 · ' + recent.jobId : '数据隐站工作台',
         style: {
           appearance: 'none', border: 'none', background: 'transparent', color: 'inherit',
           cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
           padding: '4px 6px', borderRadius: 6, fontSize: 12,
         },
       }, h('span', {
-        style: { width: 18, height: 18, borderRadius: 5, background: COLORS.blueBg, color: COLORS.blue,
+        style: { width: 18, height: 18, borderRadius: 5,
+          background: recent ? COLORS.greenBg : COLORS.blueBg,
+          color: recent ? COLORS.green : COLORS.blue,
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700 },
-      }, '隐'), '数据隐站工作台');
+      }, '隐'), label);
     }
 
     const ctxRef = { get: null, sidebarRight: null };
@@ -325,6 +367,7 @@ window.__ModuleLoader__.load({
       for (const key of keys) {
         ctx.effect(() => ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
           name: 'tool.call.toolview', key,
+          children: { 'tool.call.images': { kind: 'single', scope: 'session' } },
         }, ToolCard)), `sanitize-detect: tool card ${key}`);
       }
       // T2 默认由 DSH 原生 browser tab 打开真实工作台；不再注册仿制面板。

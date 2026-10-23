@@ -164,6 +164,63 @@ def _consume_confirm_token(token: str, job_id: str) -> None:
     _CONFIRM_TOKENS.pop(str(token), None)
 
 
+# MCP 2025-06-18 elicitation：只有客户端在 initialize 声明 elicitation 能力时才使用；
+# 不支持 elicitation 的客户端回退到一次性 confirm_token 挑战。
+_CLIENT_CAPABILITIES: dict = {}
+
+
+def _client_supports_elicitation() -> bool:
+    value = _CLIENT_CAPABILITIES.get("elicitation")
+    return isinstance(value, dict)
+
+
+def _write_jsonrpc(payload: dict) -> None:
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def _elicit(message: str, schema: dict) -> dict | None:
+    """向客户端发 elicitation/create 并等待同 id 响应；不支持/断流返回 None。"""
+    if not _client_supports_elicitation():
+        return None
+    request_id = "elicit-" + secrets.token_hex(10)
+    _write_jsonrpc({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "elicitation/create",
+        "params": {"message": message, "requestedSchema": schema},
+    })
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return None
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            incoming = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(incoming, dict):
+            continue
+        if incoming.get("id") == request_id:
+            if incoming.get("error"):
+                return {"action": "cancel", "error": incoming.get("error")}
+            result = incoming.get("result")
+            return result if isinstance(result, dict) else {"action": "cancel"}
+        # 等待 elicitation 期间客户端可能发 ping/其他请求；保持协议可继续。
+        method = str(incoming.get("method") or "")
+        request_client_id = incoming.get("id")
+        if method and request_client_id is not None:
+            if method == "ping":
+                _write_jsonrpc({"jsonrpc": "2.0", "id": request_client_id, "result": {}})
+            else:
+                _write_jsonrpc({
+                    "jsonrpc": "2.0", "id": request_client_id,
+                    "error": {"code": -32601, "message": "server busy with elicitation"},
+                })
+
+
 def _error(msg: str, code: str | None = None, **extra) -> dict:
     """统一错误结果：content 里放 JSON，Agent 能拿到 code/结构化字段。"""
     payload: dict = {"ok": False, "error": str(msg)}
@@ -990,8 +1047,9 @@ TOOLS = [
                          "default": "ai"},
                 "confirm_token": {
                     "type": "string",
-                    "description": ("human 不可逆导出的一次性确认令牌；第一次不带，"
-                                    "收到 confirmation_required 后让用户确认再把令牌带回。"),
+                    "description": ("human 不可逆导出的一次性确认令牌（仅客户端不支持 "
+                                    "elicitation 时使用）；第一次不带，收到 confirmation_required "
+                                    "后让用户确认再把令牌带回。"),
                 },
                 "allow_unprocessed_media": {
                     "type": "boolean", "default": False,
@@ -1366,15 +1424,26 @@ def tool_export_sanitize_job(args: dict) -> dict:
         raise ToolError("mode 只能是 ai 或 human", "bad_request")
     if mode == "human":
         confirm_token = str(args.get("confirm_token") or "").strip()
-        if not confirm_token:
-            challenge = _issue_confirm_token(job_id)
-            raise ToolError(
-                "human 涂黑导出不可逆，需要用户确认。请先把 job_id/影响告知用户，"
-                "用户确认后，把返回的 confirm_token 原样传入再次调用。",
-                "confirmation_required", job_id=job_id,
-                confirm_token=challenge, expires_in=_CONFIRM_TTL_SEC,
+        if confirm_token:
+            _consume_confirm_token(confirm_token, job_id)
+        else:
+            decision = _elicit(
+                "确认执行 human（涂黑，不可逆）导出？请确认已了解该操作不可还原。",
+                {"type": "object", "properties": {"confirm": {"type": "boolean"}},
+                 "required": ["confirm"]},
             )
-        _consume_confirm_token(confirm_token, job_id)
+            if decision is not None:
+                if decision.get("action") != "accept":
+                    raise ToolError("用户未确认 human 导出，已取消。", "user_declined", job_id=job_id)
+            else:
+                # 客户端不支持/未完成 elicitation：降级为一次性 token 挑战。
+                challenge = _issue_confirm_token(job_id)
+                raise ToolError(
+                    "human 涂黑导出不可逆，需要用户确认。请先把 job_id/影响告知用户，"
+                    "用户确认后，把返回的 confirm_token 原样传入再次调用。",
+                    "confirmation_required", job_id=job_id,
+                    confirm_token=challenge, expires_in=_CONFIRM_TTL_SEC,
+                )
     options = {
         "allow_unprocessed_media": _as_bool(args.get("allow_unprocessed_media")),
         "keep_pdf_hidden": _as_bool(args.get("keep_pdf_hidden")),
@@ -1808,6 +1877,9 @@ def handle(msg: dict):
         params = {}
 
     if method == "initialize":
+        global _CLIENT_CAPABILITIES
+        capabilities = params.get("capabilities")
+        _CLIENT_CAPABILITIES = capabilities if isinstance(capabilities, dict) else {}
         return _ok(msg_id, _initialize_result(params))
     if method == "notifications/initialized":
         return None

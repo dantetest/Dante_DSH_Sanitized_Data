@@ -521,6 +521,23 @@ class TestJobsTools(unittest.TestCase):
             self.assertTrue(result.get("isError"))
             self.assertEqual(payload(result)["code"], "nothing_to_export")
 
+    def test_human_export_elicitation_accept_and_decline(self):
+        job_id = new_job()["job_id"]
+        with mock.patch.object(mcp_server, "_CLIENT_CAPABILITIES", {"elicitation": {}}), \
+             mock.patch.object(mcp_server, "_elicit", return_value={"action": "accept"}):
+            human = payload(tool("export_sanitize_job",
+                                 {"job_id": job_id, "mode": "human"}))
+            self.assertTrue(Path(human["out_path"]).is_file())
+            self.assertIsNone(human["mapping_id"])
+
+        job_id2 = new_job()["job_id"]
+        with mock.patch.object(mcp_server, "_CLIENT_CAPABILITIES", {"elicitation": {}}), \
+             mock.patch.object(mcp_server, "_elicit", return_value={"action": "decline"}):
+            declined = tool("export_sanitize_job",
+                            {"job_id": job_id2, "mode": "human"})
+            self.assertTrue(declined.get("isError"))
+            self.assertEqual(payload(declined)["code"], "user_declined")
+
     def test_audit_job_filter_and_chain_verify(self):
         job_id = new_job()["job_id"]
         payload(tool("export_sanitize_job", {"job_id": job_id}))

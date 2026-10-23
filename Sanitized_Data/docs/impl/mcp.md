@@ -95,7 +95,7 @@ args/cwd 留空即可。DSH 侧工具名为 `mcp__sanitized-data__<tool>`。
 | 组件 | 作用 |
 |---|---|
 | `lib/index.js` | host 代理：同源 `/sanitized-data/api/*` → `127.0.0.1:<port>/api/*`；含本地工作台 `POST /start` 自动拉起（白名单），不外呼 |
-| `lib/client.js` | 15 个工具卡（自检/计数/job/按钮）+ 侧边栏「数据隐站工作台」入口（DSH 原生 browser tab 加载真实 WebUI；不再注册仿制面板） |
+| `lib/client.js` | 15 个工具卡（自检/计数/job/按钮、image content 缩略图）+ 完成态 footer 最近 Job 徽标 + 侧边栏「数据隐站工作台」入口（DSH 原生 browser tab；不再注册仿制面板） |
 | `cordis.patch.yml` | `- insert:` 数据隐站插件 bundle |
 | `install.ps1` | 复制包内容、更新 profile bundles、自动追加 MCP client patch（`-SkipMcp` 可跳过）；`-Uninstall` 卸载插件 |
 
@@ -140,7 +140,7 @@ stage=ready，并返回深链。
 | 计划项 | 状态 |
 |---|---|
 | M2 Job 化 / M3 资源+复核工具 / M4 双协议 | ✅ server 侧已实现 |
-| M4 elicitation + confirm_token | 🟡 confirm_token 已实现（human 导出二次确认）；协议级 elicitation 未实现 |
+| M4 elicitation + confirm_token | ✅ 能力感知 elicitation（客户端声明才发 elicitation/create）；不支持时一次性 confirm_token 兜底 |
 | M1 独立 MCP EXE + 安装包 | 🟡 `app.spec` 已加双入口，需随下次 Windows 构建验证安装包 |
 | T1 对话内工具卡（verify 徽标/缩略图/按钮） | ✅ 已实现；完成态受 DSH 过程折叠影响 |
 | T2 真实工作台（DSH 原生 browser tab） | ✅ 已实现；web/desktop 均可，旧仿制面板已移除 |
