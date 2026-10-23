@@ -377,3 +377,6 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 |---|---|---|
 | `Sanitized_Data-1.2.0-win64.zip` | 4,369,176 B | `B017A43F879EB2AB731616408FA7E54D831FB72C60ED351D500DDE844D652B27` |
 | `Sanitized_Data-1.2.0-linux64.tar.gz` | 4,191,371 B | `007AD2AD993B925F30DF1F09755CED0022C302CE4006DAC9D6708FF7D6032751` |
+
+> ⚠ 2026-10-23 13:20 后插件 T2 改为 DSH 原生 browser tab，且去掉了仿制面板；
+> 本次 v1.2.0 安装包/绿色版内的 `dsh-plugin/` 仍为改版前版本，发布前需重新构建。

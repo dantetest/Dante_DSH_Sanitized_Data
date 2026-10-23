@@ -109,7 +109,7 @@
 | 源码运行（Windows / Linux / macOS） | **支持** | 需 Python 3.10+；服务器部署见 README |
 | macOS 桌面版（.app/.dmg） | **未发布** | workflow 就绪，未随 v1.1.2 构建（需 GitHub Actions 与 ad-hoc 签名） |
 | Web 服务 / 内网部署 | **支持** | 只监听 `127.0.0.1` 或反代部署；无账号体系，不要直接绑公网 |
-| MCP 接入（Claude Desktop / Cursor / DSH 等） | **支持（L2 server 侧）** | stdio 服务；旧 4 工具 + 11 个 `sanitize_*` 复核/Job 工具；resources/prompts；Web 服务运行时共享同一 Job 与深链；T1 工具卡/T2 面板插件未实现 |
+| MCP 接入（Claude Desktop / Cursor / DSH 等） | **支持（L2 server 侧）** | stdio 服务；旧 4 工具 + 11 个 `sanitize_*` 复核/Job 工具；resources/prompts；Web 服务运行时共享同一 Job 与深链；T1 工具卡已实现；T2 用 DSH 原生 browser tab 打开真实工作台（仿制面板已移除） |
 
 ---
 

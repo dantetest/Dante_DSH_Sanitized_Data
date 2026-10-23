@@ -1,6 +1,6 @@
 # MCP L2 与 DSH 联调验收（2026-10-23）
 
-> 范围：MCP L2 server 侧（M2–M4）+ DSH T0 配置级联调 + T1 工具卡 + T2 右侧面板（v1.2.0）。
+> 范围：MCP L2 server 侧（M2–M4）+ DSH T0 配置级联调 + T1 工具卡 + T2 真实工作台（DSH 原生 browser tab，v1.2.0）。
 > 计划基线：[04-MCP-L2-Agent内检测-规划](../plans/04-MCP-L2-Agent内检测-规划.md)
 > 实现说明：[docs/impl/mcp.md](../impl/mcp.md)
 
@@ -15,11 +15,13 @@
 | 同一 job 深链打开工作台 | ✅ | DSH 返回 `http://127.0.0.1:8760/console?job=j_a01399fb`，浏览器打开同 job（截图） |
 | 失败语义（verify 失败/媒体确认/无工作台） | ✅ server 侧 | 结构化 isError；verify 失败删除成品；HTTP 不可用 `no_workbench` |
 | T1 对话内定制工具卡（自检/计数/job/按钮） | ✅ | `out/dsh_test/plugin_card_running_03_result.png`（运行中卡片）；完成态在 DSH 默认折叠过程中 |
-| T2 右侧「脱敏检测」面板（概览/实体/审计/预览） | ✅ | `plugin_panel.png` / `plugin_panel_entities.png` / `plugin_panel_audit.png` / `plugin_panel_export.png` |
+| T2 真实工作台（DSH 原生 browser tab） | 🟡 代码已切换，待重启复验 | `workbench_520.png`（真实工作台 520px）；旧 `plugin_panel*.png` 为历史面板截图 |
 | M4 elicitation / confirm_token | ❌ | 当前用结构化 isError + 显式参数/工作台确认兜底 |
 | 安装包内 `Sanitized_Data_MCP.exe` + DSH 插件 | ✅（v1.2.0 构建） | `app.spec` 双入口；`integrations/dsh-plugin-sanitize-detect` 随构建进入 `dsh-plugin/` |
 
-**一句话**：MCP L2 服务端闭环 + DSH T0/T1/T2 已打通：DSH 能真实“调用工具 → 看定制卡/面板 → 建 Job → 审计/深链同一工作台”；剩余协议增强（elicitation/confirm_token）、T3 发送前拦截未做。
+**一句话**：MCP L2 服务端闭环 + DSH T0/T1 已打通；T2 已从仿制面板切换为 **DSH 原生 browser tab 直接加载真实工作台 WebUI**（左下角「数据隐站工作台」），旧面板注册移除，待重启 DSH 做最终复验。剩余协议增强（elicitation/confirm_token）、T3 发送前拦截未做。
+
+> **2026-10-23 设计调整**：T2 不再复刻工作台 UI（用户反馈仿制面板观感不真实）；左下角入口直接调用 `sidebarRight.openTab('browser', { url })` 打开真实 `/console?job=...`；旧 `plugin_panel*.png` 仅保留为历史证据，真实工作台 520px 预览见 `out/dsh_test/workbench_520.png`。
 
 
 ## 2. DSH 实测场景
@@ -78,6 +80,7 @@ dsh --profile web --patch out\dsh_mcp.patch.yml --no-open --port 60361
 | `out/dsh_test/plugin_panel_audit.png` | T2 审计页（HMAC 链/记录） |
 | `out/dsh_test/plugin_panel_export.png` | 面板“导出换名版”执行成功 |
 | `out/dsh_test/plugin_card_running_03_result.png` | T1 定制工具卡（运行中“数据隐站·建立脱敏任务”） |
+| `out/dsh_test/workbench_520.png` | T2 真实工作台在约 520px 侧栏宽度下的实际效果 |
 
 
 ## 3. 门禁结果
@@ -109,10 +112,9 @@ dsh --profile web --patch out\dsh_mcp.patch.yml --no-open --port 60361
 
 ## 4. 相对设计目标的差距（诚实评估）
 
-1. **T1/T2 已实现**：定制工具卡（运行中截图见 `plugin_card_running_03_result.png`）与
-   右侧「脱敏检测」面板（概览/实体/审计/预览/导出）均已在 DSH 0.2.1-rc.2 实机跑通；
-   DSH 默认在完成态折叠过程细节，完成后的卡可能需要点开「已完成」查看，这是宿主
-   transcript 行为，不影响工具/面板能力。
+1. **T1 已实现；T2 刚切换为真实工作台**：定制工具卡已在 DSH 0.2.1-rc.2 跑通；
+   T2 已移除仿制面板，改为 DSH 原生 browser tab 直接打开 `http://127.0.0.1:8760/console?job=...`。
+   代码路径已改完，待 DSH 重启做最终视觉验收；若 DSH 拒绝 localhost，再补同源 iframe/host 代理方案。
 2. **MCP 结果图片**：`sanitize_document`/render 支持 `image/png` content block；
    面板预览通过同源代理直接显示；工具卡当前以摘要/详情为主，未把缩略图内嵌进卡。
 3. **elicitation / confirm_token 未做**：human 导出/内嵌媒体确认通过结构化 `isError`

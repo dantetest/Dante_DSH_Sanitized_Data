@@ -110,7 +110,7 @@ Claude Desktop 的 `claude_desktop_config.json`（源码运行）：
 DSH 集成（`@deepseek-ai/dsh-mcp-client` 的 patch 写法、工具名 `mcp__sanitized-data__*`）见
 [docs/impl/mcp.md](docs/impl/mcp.md)；完整配置/验证步骤见 `/mcp` 页面。
 
-DSH 原生体验（工具卡 + 右侧「脱敏检测」面板）用随包插件：
+DSH 原生体验（工具卡 + 左下角「数据隐站工作台」真实 WebUI）用随包插件：
 
 ```powershell
 # 安装包安装后：%LOCALAPPDATA%\Programs\Sanitized_Data\dsh-plugin\install.ps1
@@ -220,7 +220,7 @@ journalctl -u sanitized-data -f               # systemd 自己的 console 日志
 详细说明：
 
 - 安装 / 卸载 / 升级 / 数据位置 / 断网 / 排障：[docs/install-guide.md](docs/install-guide.md)
-- v1.2.0 发布说明（MCP L2 产品体验：15 工具/资源/深链/DSH 工具卡与右侧检测面板；身份证校验位异常兜底）：[docs/release-notes-v1.2.0.md](docs/release-notes-v1.2.0.md)
+- v1.2.0 发布说明（MCP L2 产品体验：15 工具/资源/深链/DSH 工具卡与真实工作台 browser tab；身份证校验位异常兜底）：[docs/release-notes-v1.2.0.md](docs/release-notes-v1.2.0.md)
 - v1.1.3 发布说明（AI 换名版可读性/一致性、检测增强、YuNet 侧脸、日志/状态可观测性）：[docs/release-notes-v1.1.3.md](docs/release-notes-v1.1.3.md)
 - v1.1.2 发布说明（P2/P3：扫描件 verify 零 OCR 快检、warning 去重、整页证件收紧、异常大码框待确认、TIF rasterio Orientation 修复）：[docs/release-notes-v1.1.2.md](docs/release-notes-v1.1.2.md)
 - v1.1.0 发布说明（相对 v1.0.0 的新能力与已知限制）：[docs/release-notes-v1.1.0.md](docs/release-notes-v1.1.0.md)
