@@ -27,17 +27,20 @@ class TestDshPluginPackage(unittest.TestCase):
         self.assertIn("- insert:", text)
         self.assertIn("@blctek/dsh-plugin-sanitize-detect", text)
 
-    def test_client_registers_tool_cards_and_panel(self):
+    def test_client_registers_tool_cards_and_real_workbench_tab(self):
         text = (PLUGIN / "lib" / "client.js").read_text(encoding="utf-8")
         self.assertIn("tool.call.toolview", text)
-        self.assertIn("sidebar.right.pane.tab", text)
         self.assertIn("sidebar.footer.action", text)
         self.assertIn("mcp__sanitized-data__", text)
         self.assertIn("inject: ['slots', 'sidebarRightTabs', 'sidebarRight']", text)
         self.assertIn("sanitize_file", text)
         self.assertIn("sanitize_document", text)
-        self.assertIn("onclick", text.lower()) if False else None
-        self.assertIn("打开完整工作台", text)
+        # v1.2.0 起 T2 默认用 DSH 原生 browser tab 打开真实工作台；不再注册仿制面板
+        self.assertIn("openWorkbenchTab", text)
+        self.assertIn("openTab('browser'", text)
+        self.assertNotIn("sanitize-detect: panel body", text)
+        self.assertNotIn("sidebar.right.pane.tab", text)
+        self.assertIn("数据隐站工作台", text)
 
     def test_host_proxy_is_loopback_only(self):
         text = (PLUGIN / "lib" / "index.js").read_text(encoding="utf-8")

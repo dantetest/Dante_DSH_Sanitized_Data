@@ -166,13 +166,7 @@ window.__ModuleLoader__.load({
         const url = workbench || `http://127.0.0.1:8760/console?job=${encodeURIComponent(jobId)}`;
         // 优先使用 DSH 原生右侧浏览器 tab，直接显示真实工作台（不是仿制面板）。
         if (openWorkbenchTab(url)) return;
-        try {
-          const sr = sidebarRight();
-          if (sr && typeof sr.openTab === 'function') sr.openTab(PANEL_KIND);
-          else window.open(url, '_blank', 'noopener');
-        } catch {
-          window.open(url, '_blank', 'noopener');
-        }
+        window.open(url, '_blank', 'noopener');
       }
 
       function exportHuman() {
@@ -525,13 +519,7 @@ window.__ModuleLoader__.load({
       const open = async () => {
         const url = await latestWorkbenchUrl();
         if (openWorkbenchTab(url)) return;
-        try {
-          const sr = sidebarRight();
-          if (sr && typeof sr.openTab === 'function') sr.openTab(PANEL_KIND);
-          else window.open(url, '_blank', 'noopener');
-        } catch {
-          window.open(url, '_blank', 'noopener');
-        }
+        window.open(url, '_blank', 'noopener');
       };
       return h('button', {
         type: 'button', onClick: open, title: '数据隐站工作台',
@@ -562,13 +550,7 @@ window.__ModuleLoader__.load({
           name: 'tool.call.toolview', key,
         }, ToolCard)), `sanitize-detect: tool card ${key}`);
       }
-      // 右侧面板类型 + body
-      ctx.effect(() => ctx.sidebarRightTabs.register({
-        id: PANEL_ID, kind: PANEL_KIND, title: () => '脱敏检测', keepMounted: true,
-      }), 'sanitize-detect: panel type');
-      ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-        name: 'sidebar.right.pane.tab', key: PANEL_ID,
-      }, DetectPanel)), 'sanitize-detect: panel body');
+      // T2 默认由 DSH 原生 browser tab 打开真实工作台；不再注册仿制面板。
       // 侧边栏底部入口
       ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
         name: 'sidebar.footer.action', id: 'blctek-sanitize-detect-entry',
