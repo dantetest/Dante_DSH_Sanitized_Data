@@ -15,7 +15,7 @@
 
 ## 现状
 
-- v1.2.0 Windows/Linux 已发布；Windows 安装包/绿色版/源码包已挂 Gitea Release。
+- v1.2.0 与 v1.2.1 Windows/Linux 已发布；Windows 安装包/绿色版/源码包已挂 Gitea Release。
 - macOS 仍为 v1.1.2 DMG（arm64 / Intel，ad-hoc 签名，未公证）：
   `Sanitized_Data-1.1.2-arm64.dmg` / `Sanitized_Data-1.1.2-x64.dmg`。
 - macOS 没有 v1.2.x 的 MCP L2、DSH 插件、身份证校验位兜底、native browser tab 等更新。

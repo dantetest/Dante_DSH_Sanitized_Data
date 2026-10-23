@@ -404,3 +404,6 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 |---|---|---|
 | `Sanitized_Data-1.2.1-win64.zip` | 4,376,355 B | `3BE3D4CF36D09551580D24ADB62156CF425AC37954D8DB072C5F9C309ACF1A0E` |
 | `Sanitized_Data-1.2.1-linux64.tar.gz` | 4,197,419 B | `A9410E3C5354DFBECE4C9D9ED346A372A30B603A2910426CD97938FA923BD5B6` |
+
+> 发布：2026-10-23 已创建 Gitea Release v1.2.1（Windows/Linux；macOS 因无构建环境未发布）：
+> https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.2.1
