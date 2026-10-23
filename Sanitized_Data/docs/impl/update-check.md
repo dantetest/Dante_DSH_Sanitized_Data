@@ -194,3 +194,15 @@ build → tests → tag/Gitea Release → 上传安装包/绿色版/SHA256SUMS
   但当前不需要额外基础设施，优先 B。
 - **默认策略：首次启动询问一次，默认关闭自动检查；`稍后` 24 小时，不强制。**
 - 若 B 的匿名访问无法开通，再切 A；客户端只依赖配置的清单 URL，不绑死 Gitea。
+
+## 11. 2026-10-23 实测：update 仓库匿名访问仍被登录墙拦截
+
+- 仓库 `baoluo/sanitized-data-updates` 已存在且 `private=false`；
+- 未登录访问：
+  - `/api/v1/repos/baoluo/sanitized-data-updates` → **403**
+    `{"message":"Only signed in user is allowed to call APIs."}`
+  - `/api/v1/.../releases` → **403**
+  - 网页 `/sanitized-data-updates/releases` → **302 /user/login**
+- 原因：Gitea 实例级 `REQUIRE_SIGNIN_VIEW`（未登录不能浏览），不是仓库本身私有。
+- 解锁 B 需要管理员把 `REQUIRE_SIGNIN_VIEW=false`，或给该公开仓库做匿名只读白名单；
+  否则只能走 A（CKA/静态 HTTPS 清单）。
