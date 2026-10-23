@@ -206,3 +206,14 @@ build → tests → tag/Gitea Release → 上传安装包/绿色版/SHA256SUMS
 - 原因：Gitea 实例级 `REQUIRE_SIGNIN_VIEW`（未登录不能浏览），不是仓库本身私有。
 - 解锁 B 需要管理员把 `REQUIRE_SIGNIN_VIEW=false`，或给该公开仓库做匿名只读白名单；
   否则只能走 A（CKA/静态 HTTPS 清单）。
+
+## 12. 2026-10-23 复查：CKA 服务器可用，但还没有静态更新目录
+
+- `https://cka.blctek.com:8443/`：200，nginx，TLS 正常（verify=True 也通过）；
+- `/api/health`：200，当前部署产品版本 `1.2.1`；
+- `/download`：200，但下载按钮仍指向 Gitea Release（未登录会进登录页）；
+- `/updates/latest.json`、`/downloads/`：404；
+- 结论：**A（CKA 静态更新源）方向可行**，但需要在 CKA 上有一个可写入的静态目录
+  （例如 `/sanitized-data-updates/`）或提供部署/上传方式；
+  否则无法放 `latest.json` 和安装包，客户端仍没有可用更新源。
+- B（Gitea 公开仓库）仍被实例级“必须登录”拦截，暂不作为首选。
