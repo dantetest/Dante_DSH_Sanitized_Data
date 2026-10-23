@@ -17,3 +17,7 @@ Thumbs.db
 /dist_installer/
 desktop/redist/
 *.spec.bak
+
+# 本地构建的源码包/下载页资源（发布时上传 Gitea Release，不进 git）
+/app/web/downloads/
+
