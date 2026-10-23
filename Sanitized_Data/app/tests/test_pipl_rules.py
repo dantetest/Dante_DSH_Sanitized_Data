@@ -16,12 +16,18 @@
 4. XLSX 纯数值：利润表（标题行+多列表头）金额识别、合计=分项、导出写数字、
    公式保留 + fullCalcOnLoad、number_format 保留、verify residual 0；
 5. 数值账号/日期：账号按字符串写回；日期默认 keep 不变；百分比列不处理；
-6. 工资表/流水数值列：同一文档同一缩放因子、流水勾稽（期初+发生=期末）。
+6. 工资表/流水数值列：同一文档同一缩放因子、流水勾稽（期初+发生=期末）；
+7. 身份证校验位策略（2026-10-23，隐私优先）：校验位合法仍 accepted；校验位/
+   日期不合法但形状像身份证的 18 位串被 cn.idcard_shape 兜住 → ID_CARD、
+   pending、surrogate 替换（human 涂黑 / AI 换名）；非身份证形 18 位不误报；
+   与银行卡 Luhn 规则重叠时同值只保留一个实体；无上下文的裸号同样兜住。
+   策略与评估见 docs/qa/idcard-checksum-policy-20261023.md。
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import re
 import sys
@@ -61,13 +67,24 @@ def _pipl_rules() -> list:
     return [rule for rule in _packs().get("pipl-cn", []) if rule.pack == "pipl-cn"]
 
 
-def _detect_text(path: Path):
+def _detect_text(path: Path, strictness: str = "standard"):
     doc = _TP.parse(path, _CTX)
     rules = rules_mod.compile_rules(_packs(), "text")
-    det = pipeline.detect(doc, rules, "standard")
+    det = pipeline.detect(doc, rules, strictness)
     session = pipeline.Session()
     pipeline.decide(det.entities, det.rules, session)
     return doc, det, session
+
+
+def _write_text_case(name: str, text: str) -> Path:
+    """写一个临时 txt 用例，返回路径（只写系统临时目录）。"""
+    path = _TMP / name
+    path.write_text(text, "utf-8")
+    return path
+
+
+def _id_cards(det) -> list:
+    return [entity for entity in det.entities if entity.etype == "ID_CARD"]
 
 
 def _entity_set(entities) -> set[tuple[str, str]]:
@@ -461,6 +478,205 @@ def test_numeric_flow_reconciliation():
         "流水勾稽（期初+发生=期末）失败")
     # 0 保持 0，不能被"必须变"逻辑改成 1
     assert _num(by_value["0"]) == Decimal(0), f"零金额被改写：{by_value['0']}"
+
+
+# ────────────────────────── 6. 身份证校验位策略（2026-10-23） ──────────────────────────
+# 背景：docs/qa/idcard-checksum-policy-20261023.md
+#   * 合法校验位：cn.idcard（priority 120、validate cn_id_checksum、conf 0.99）
+#     → accepted，保持既有行为；
+#   * 校验位/日期不合法但形状像身份证：cn.idcard_shape（同 regex、
+#     unless_validate cn_id_checksum、conf 0.66）→ ID_CARD、pending；
+#   * 校验位只作为置信度信号，形状仍遮（human 涂黑 / AI 换假号 / redact_text 换号）。
+
+# 既有样例里的合法身份证（GB 11643 校验位通过）
+ID_VALID = "310104198703124510"
+# 工单样例：北京 110101、1990-01-01、顺序码 123，校验位错误
+ID_BAD_CHECKSUM = "110101199001011234"
+# 形状通过正则但出生日期非法（1990-02-30）
+ID_BAD_DATE = "110101199002301234"
+# 形状通过正则但出生日期在未来（2099-01-01，cn_id_checksum 日期上限=今天）
+ID_FUTURE_DATE = "110101209901011234"
+# 构造值：身份证形状 + Luhn 合法 + 身份证校验位不合法（与 cn.bankcard 重叠）
+ID_LUHN_SHAPE = "110101199001011233"
+
+
+def test_idcard_shape_rule_contract():
+    """规则契约：形状兜底必须复用同一条 regex，且只在身份证校验不通过时命中。"""
+    common = [rule for rule in _packs()["common"] if rule.pack == "common"]
+    by_id = {rule.id: rule for rule in common}
+    assert "cn.idcard" in by_id, "缺少 cn.idcard 高置信规则"
+    assert "cn.idcard_shape" in by_id, "缺少 cn.idcard_shape 形状兜底规则"
+
+    valid_rule = by_id["cn.idcard"]
+    shape_rule = by_id["cn.idcard_shape"]
+    valid_spec = valid_rule.detect[0]
+    shape_spec = shape_rule.detect[0]
+
+    assert shape_rule.entity == "ID_CARD" and shape_rule.level == "L3"
+    assert shape_rule.replace.get("strategy") == "surrogate", (
+        "形状兜底必须仍走 surrogate（human 涂黑 / AI 换名）")
+    assert str(shape_spec.get("pattern")) == str(valid_spec.get("pattern")), (
+        "兜底规则必须复用 cn.idcard 的同一条 regex")
+    assert shape_spec.get("type") == "regex"
+    # 无硬校验（validate 缺省为 none），改用反向校验排除合法身份证，
+    # 避免同一值被两条规则各出一个实体、也避免合法身份证被降成 pending。
+    assert str(shape_spec.get("validate") or "none").lower() == "none", (
+        "兜底规则不能设置硬 validate")
+    assert str(shape_spec.get("unless_validate") or "").lower() == "cn_id_checksum", (
+        "兜底规则必须 unless_validate: cn_id_checksum")
+    confidence = float(shape_spec.get("confidence", 0.99))
+    assert 0.60 <= confidence < 0.80, (
+        f"confidence={confidence} 必须在 [0.60, 0.80) 才能 standard 档 pending")
+    assert shape_rule.priority < valid_rule.priority, (
+        "合法值优先走高置信 cn.idcard；兜底规则 priority 必须更低")
+
+
+def test_idcard_valid_checksum_still_accepted():
+    """合法身份证：仍 accepted，走高置信规则，且只产生一个实体。"""
+    path = _write_text_case(
+        "idcard_valid.txt",
+        f"姓名：张伟，身份证号：{ID_VALID}，手机号：13812345678。")
+    _doc, det, _session = _detect_text(path)
+    cards = _id_cards(det)
+    assert len(cards) == 1, f"合法身份证实体数异常：{[e.to_dict() for e in cards]}"
+    entity = cards[0]
+    assert entity.value == ID_VALID
+    assert entity.status == "accepted", f"合法身份证不应 pending：{entity.status}"
+    assert entity.confidence >= 0.99
+    assert det.rules[entity.id].id == "cn.idcard", (
+        f"合法身份证必须命中 cn.idcard：{det.rules[entity.id].id}")
+    assert entity.decision is not None
+    assert entity.decision.strategy == "surrogate", (
+        "身份证替换策略必须是 surrogate（human 导出时 JobManager 统一改 black）")
+    assert entity.decision.replacement != ID_VALID
+    assert _VALIDATORS["cn_id_checksum"](entity.decision.replacement), (
+        "换名后的假身份证必须自身校验位合法")
+
+
+def test_idcard_bad_checksum_shape_pending_and_redacted():
+    """工单复现串：校验位错误 → ID_CARD、pending、surrogate，MCP redact_text 实测替换。"""
+    text = f"张伟，手机号13812345678，身份证号{ID_BAD_CHECKSUM}"
+    path = _write_text_case("idcard_bad_checksum.txt", text)
+    doc, det, _session = _detect_text(path)
+    cards = [entity for entity in _id_cards(det) if entity.value == ID_BAD_CHECKSUM]
+    assert len(cards) == 1, f"校验位错误的形状串未被唯一识别：{_id_cards(det)}"
+    entity = cards[0]
+    assert entity.status == "pending", f"低置信兜底应 pending：{entity.status}"
+    assert 0.60 <= entity.confidence < 0.80, f"兜底置信度异常：{entity.confidence}"
+    assert det.rules[entity.id].id == "cn.idcard_shape", (
+        f"应命中 cn.idcard_shape：{det.rules[entity.id].id}")
+    assert entity.decision is not None and entity.decision.strategy == "surrogate"
+    assert entity.decision.replacement != ID_BAD_CHECKSUM
+    assert _VALIDATORS["cn_id_checksum"](entity.decision.replacement)
+
+    # 走真实 MCP redact_text 工具路径（DSH/Claude 使用同一入口）
+    import mcp_server  # noqa: E402 - 延迟导入：只在需要实测工具路径时加载
+
+    result = mcp_server.HANDLERS["redact_text"](
+        {"text": text, "strictness": "standard"})
+    payload = json.loads(result["content"][0]["text"])
+    assert ID_BAD_CHECKSUM not in payload["redacted"], (
+        f"redact_text 未遮住校验位错误的身份证号：{payload['redacted']}")
+    assert payload["by_type"].get("身份证号") == 1, (
+        f"redact_text 身份证号实体数异常：{payload['by_type']}")
+    assert payload["entities"] >= 2, f"redact_text 实体数异常：{payload['entities']}"
+
+    # human 涂黑版：JobManager 导出时会把 decision 统一改成 black，
+    # 这里用同一规则模拟文本导出，确认原文被黑块整段覆盖（不是只靠换名）。
+    from yinzhan.udm import Decision  # noqa: E402
+
+    human_ents = [item for item in det.entities if item.status != "rejected"]
+    human_decisions = {item.id: Decision(strategy="black", black=True,
+                                         replacement=None) for item in human_ents}
+    human_out = _TMP / "idcard_bad_checksum_human.txt"
+    _TP.export(doc, human_ents, human_decisions, human_out, {"mode": "human"})
+    human_text = human_out.read_text("utf-8")
+    assert ID_BAD_CHECKSUM not in human_text, "human 涂黑版仍残留原身份证号"
+    assert "█" * len(ID_BAD_CHECKSUM) in human_text, "human 涂黑版未按原长度盖黑块"
+
+
+def test_idcard_shape_invalid_date_and_x_suffix_pending():
+    """非法出生日期 / X 结尾但校验位错误：同样兜住为 pending。"""
+    for value in (ID_BAD_CHECKSUM, ID_BAD_DATE, ID_FUTURE_DATE,
+                  "11010119900101123X"):
+        path = _write_text_case(
+            f"idcard_shape_{value}.txt", f"身份证号：{value}。")
+        _doc, det, _session = _detect_text(path)
+        cards = [entity for entity in _id_cards(det) if entity.value == value]
+        assert len(cards) == 1, f"{value} 形状串未被兜住：{_id_cards(det)}"
+        assert cards[0].status == "pending", f"{value} 状态应为 pending"
+        assert cards[0].decision.strategy == "surrogate"
+        assert cards[0].decision.replacement != value
+
+
+def test_idcard_shape_bare_number_no_context_pending():
+    """全形状方案：无「身份证」上下文的裸号也必须兜住（隐私优先，不做 near 限定）。"""
+    cases = (
+        f"{ID_BAD_CHECKSUM} 是一串没有上下文提示的裸号码。",
+        f"证件号 {ID_BAD_CHECKSUM}，请核对。",       # 弱上下文
+        f"身份证号：{ID_BAD_CHECKSUM}。",             # 强上下文
+    )
+    for index, text in enumerate(cases):
+        path = _write_text_case(f"idcard_bare_{index}.txt", text)
+        _doc, det, _session = _detect_text(path)
+        cards = [entity for entity in _id_cards(det) if entity.value == ID_BAD_CHECKSUM]
+        assert len(cards) == 1, f"上下文案例 {index} 漏识别：{_id_cards(det)}"
+        assert cards[0].status == "pending", (
+            f"上下文案例 {index} 状态异常：{cards[0].status}")
+
+
+def test_idcard_non_shape_random_no_false_positive():
+    """非身份证形号码不误报：订单号/随机 18 位/19 位银行卡/USCC 均不产生 ID_CARD。"""
+    cases = (
+        "订单号 202610231234567890，金额 5000 元。",     # 前 10 位是时间戳，年份位不合法
+        "随机 18 位 987654321012345678 不是身份证。",
+        "银行卡 6222021122334456789 请勿外传。",          # 19 位（越界）
+        "统一社会信用代码 91310115MA1K4X8L2T 请核对。",   # 含字母
+    )
+    for index, text in enumerate(cases):
+        path = _write_text_case(f"idcard_negative_{index}.txt", text)
+        _doc, det, _session = _detect_text(path)
+        cards = _id_cards(det)
+        assert not cards, f"非身份证形号码误报：{text} -> {[e.value for e in cards]}"
+
+
+def test_idcard_overlap_bankcard_single_entity():
+    """与 cn.bankcard 重叠：同值只保留一个实体，ID_CARD 形状优先、不重复。"""
+    assert _VALIDATORS["luhn"](ID_LUHN_SHAPE), "构造值应通过 Luhn"
+    assert not _VALIDATORS["cn_id_checksum"](ID_LUHN_SHAPE), "构造值身份证校验位应不合法"
+    path = _write_text_case(
+        "idcard_overlap_bank.txt", f"卡号：{ID_LUHN_SHAPE}，请核对。")
+    _doc, det, _session = _detect_text(path)
+    hits = [entity for entity in det.entities if entity.value == ID_LUHN_SHAPE]
+    assert len(hits) == 1, (
+        f"同值被多条规则重复命中：{[(e.etype, e.status) for e in hits]}")
+    assert hits[0].etype == "ID_CARD", f"重叠时实体类型异常：{hits[0].etype}"
+    assert hits[0].status == "pending"
+    assert det.rules[hits[0].id].id == "cn.idcard_shape"
+    assert not [entity for entity in det.entities
+                if entity.etype == "BANK" and entity.value.strip() == ID_LUHN_SHAPE], (
+        "重叠值不应再产生 BANK 实体")
+
+
+def test_idcard_shape_strictness_matrix():
+    """档位矩阵：standard/strict 进 pending；loose 按 min_conf=0.80 丢弃（已知取舍）。
+
+    loose 档的产品语义是「少打扰」；0.66 的兜底会被丢弃，这是策略已知取舍，
+    见 docs/qa/idcard-checksum-policy-20261023.md「档位矩阵」。默认档（Web/MCP
+    均为 standard）已覆盖；若把本行为改动，必须同步更新本断言与 QA 文档。
+    """
+    text = f"身份证号：{ID_BAD_CHECKSUM}。"
+    path = _write_text_case("idcard_strictness.txt", text)
+    expected = {"standard": "pending", "strict": "pending", "loose": None}
+    for strictness, status in expected.items():
+        _doc, det, _session = _detect_text(path, strictness)
+        cards = _id_cards(det)
+        if status is None:
+            assert not cards, (
+                f"loose 档预期丢弃 0.66 兜底（已知取舍），实际：{cards}")
+        else:
+            assert len(cards) == 1 and cards[0].status == status, (
+                f"{strictness} 档状态异常：{[(e.status, e.confidence) for e in cards]}")
 
 
 # ────────────────────────── 入口 ──────────────────────────

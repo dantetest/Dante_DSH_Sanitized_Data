@@ -41,6 +41,31 @@ rules:
         validate: cn_id_checksum
     replace: {strategy: surrogate}
 
+  # 身份证形状兜底（2026-10-23，隐私优先的校验位策略）：
+  # GB 11643 校验位/出生日期不合法时 cn.idcard 会整串丢弃（validate 语义见
+  # docs/qa/idcard-checksum-policy-20261023.md），OCR 误识、手工录错、伪造号、
+  # 日期越界都会因此漏遮。这里用同一条 shape 正则兜一层：只在 cn_id_checksum
+  # 不通过时命中（校验通过的仍走上一条规则，高置信 accepted，不会重复实体），
+  # 置信度压到 0.66 —— standard/strict 档进入「待确认」人工复核，不静默丢弃；
+  # human 导出照常涂黑、AI 导出照常换成合法假号（pending 实体在 decide 阶段
+  # 已拿到 surrogate 决策，导出链路与 accepted 一致）。
+  # 刻意不限定 near 上下文：脱敏场景里表格单元格、日志、聊天记录、OCR 断行
+  # 里的裸号正是最危险的泄漏面，不能要求一定出现「身份证」标签。
+  - id: cn.idcard_shape
+    entity: ID_CARD
+    label: 身份证号
+    level: L3
+    scope: [pdf, docx, xlsx, text, image, tiff, mesh]
+    priority: 118
+    detect:
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![0-9A-Za-z])'
+        # 校验位合法的值由 cn.idcard 以 0.99 accepted；这里只兜「形状像但校验不通过」，
+        # 避免同一值被两条规则各出一个实体、也避免把合法身份证降成 pending。
+        unless_validate: cn_id_checksum
+        confidence: 0.66
+    replace: {strategy: surrogate}
+
   - id: cn.bankcard
     entity: BANK
     label: 银行卡号

@@ -1,0 +1,3 @@
+- insert:
+    - id: blctek-sanitize-detect
+      name: "@blctek/dsh-plugin-sanitize-detect"

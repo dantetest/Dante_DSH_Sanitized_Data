@@ -1,4 +1,4 @@
-﻿# 数据隐站 · Windows 打包脚本
+# 数据隐站 · Windows 打包脚本
 #   powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 #
 # 产物：
@@ -33,6 +33,14 @@ if ($LASTEXITCODE -ne 0) { throw 'PyInstaller 失败' }
 
 Write-Host "`n[4/6] 补 VC++ 运行库 DLL（免装 VC++ 也能跑）" -ForegroundColor Cyan
 $dist = Join-Path $Root 'dist\Sanitized_Data'
+# DSH 检测插件（工具卡 + 右侧面板）随绿色版/安装包分发；用户用 dsh-plugin\install.ps1 安装。
+$pluginSrc = Join-Path $Root 'integrations\dsh-plugin-sanitize-detect'
+if (Test-Path $pluginSrc) {
+    $pluginDst = Join-Path $dist 'dsh-plugin'
+    Remove-Item $pluginDst -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item $pluginSrc $pluginDst -Recurse -Force
+    "  + dsh-plugin\ (DSH 脱敏检测插件 $(Get-ChildItem $pluginDst -Recurse -File | Measure-Object).Count 个文件)"
+}
 foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
     $src = Join-Path $env:SystemRoot "System32\$dll"
     if (Test-Path $src) {

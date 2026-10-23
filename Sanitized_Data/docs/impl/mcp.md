@@ -1,6 +1,7 @@
 # MCP L2 · Agent 内脱敏检测（实现说明）
 
-> 状态：**M2–M4 server 侧 + DSH T0 配置级已实现**（2026-10-23）；T1 工具卡 / T2 右侧面板插件尚未实现。
+> 状态：**M2–M4 server 侧 + DSH T0 + T1 工具卡 + T2 右侧检测面板已实现**（2026-10-23，v1.2.0；
+> M4 elicitation/confirm_token 仍为结构化 isError 兜底）。
 > 计划基线：[04-MCP-L2-Agent内检测-规划](../plans/04-MCP-L2-Agent内检测-规划.md)
 > 验收记录：[mcp-l2-dsh-acceptance-20261023](../qa/mcp-l2-dsh-acceptance-20261023.md)
 
@@ -86,7 +87,31 @@ DSH 0.2.1-rc.2 用 `@deepseek-ai/dsh-mcp-client`；在 profile patch 中用 **`i
 args/cwd 留空即可。DSH 侧工具名为 `mcp__sanitized-data__<tool>`。
 
 > 说明：本机验证时用 `dsh --profile web --patch <patch.yml>` 启动独立 Web 实例，
-> 不改用户默认 profile；正式安装建议把 patch 写入 `~/.dsh/profiles/<profile>/cordis.patch.yml`。
+> 不改用户默认 profile；正式安装把 patch 写入 `~/.dsh/profiles/<profile>/cordis.patch.yml`。
+
+### 5.1 T1/T2 本地插件（v1.2.0）
+
+`integrations/dsh-plugin-sanitize-detect/` 是随安装包/源码交付的 DSH 插件：
+
+| 组件 | 作用 |
+|---|---|
+| `lib/index.js` | host 代理：在 DSH 同源注册 `/sanitized-data/api/*` → `127.0.0.1:<runtime端口>/api/*`，不新增外呼 |
+| `lib/client.js` | 15 个工具卡（自检/计数/job/按钮）+ 右侧「脱敏检测」面板（概览/实体/审计/预览）+ 侧边栏入口 |
+| `cordis.patch.yml` | `- insert:` 数据隐站插件 bundle |
+| `install.ps1` | 复制到指定 DSH profile、更新 `dsh.profile.bundles`；`-Uninstall` 卸载 |
+
+安装（用户本机，先关闭/重启 DSH；数据隐站需已启动）：
+
+```powershell
+# 安装包安装后：{app}\dsh-plugin\install.ps1
+# 源码运行：
+powershell -ExecutionPolicy Bypass -File integrations\dsh-plugin-sanitize-detect\install.ps1 -Profile desktop
+# 卸载：
+powershell -ExecutionPolicy Bypass -File integrations\dsh-plugin-sanitize-detect\install.ps1 -Profile desktop -Uninstall
+```
+
+重启 DSH 后：侧边栏底部出现「脱敏检测」，MCP 工具调用显示数据隐站定制卡。
+Windows 安装包内含 `{app}\dsh-plugin\`；源码运行时插件不自动安装，需要执行上面的脚本。
 
 ## 6. 安全边界
 
@@ -99,6 +124,7 @@ args/cwd 留空即可。DSH 侧工具名为 `mcp__sanitized-data__<tool>`。
 
 ```powershell
 python -X utf8 app/tests/test_mcp_v2.py        # MCP 协议/工具/资源/Job/HTTP 后端
+python -X utf8 app/tests/test_dsh_plugin.py    # DSH 插件包/工具卡/面板/回环边界静态契约
 python -X utf8 app/tests/test_ai_export_naming.py
 python -X utf8 app/tests/regression.py         # 含 MCP 段
 python -X utf8 app/tests/run_all.py            # 全套

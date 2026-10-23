@@ -107,6 +107,8 @@ def _specs() -> list[dict]:
          "label": "Batch2 AI 视图视觉/待确认策略"},
         {"key": "mcpv2", "file": TESTS / "test_mcp_v2.py", "timeout": 600,
          "label": "MCP L2（Job/资源/复核工具/双协议/HTTP 后端）"},
+        {"key": "dshplugin", "file": TESTS / "test_dsh_plugin.py", "timeout": 120,
+         "label": "DSH 脱敏检测插件（工具卡/面板/本地代理静态契约）"},
         {"key": "logging", "file": TESTS / "test_logging.py", "timeout": 120,
          "label": "本地文件日志（按日期翻转/保留/请求脱敏）"},
     ]
