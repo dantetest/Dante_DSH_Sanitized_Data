@@ -8,7 +8,7 @@ from . import paths
 
 APP_NAME = "数据隐站"
 APP_NAME_EN = paths.APP_NAME_EN
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 # 仅用于「部署后确认是不是新包」：/api/health 原样返回；不参与业务逻辑。
 BUILD_ID = "20261022-ai-view"
 

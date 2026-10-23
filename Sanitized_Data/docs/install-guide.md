@@ -1,8 +1,8 @@
-# 安装与卸载指南（v1.2.0）
+# 安装与卸载指南（v1.2.1）
 
-> 适用版本：**v1.2.0**（Windows 10/11 x64 桌面版；macOS arm64 / Intel DMG；Linux 走源码运行）
+> 适用版本：**v1.2.1**（Windows 10/11 x64 桌面版；macOS arm64 / Intel DMG；Linux 走源码运行）
 > 更新日期：2026-10-22
-> 相关：[v1.2.0 发布说明](release-notes-v1.2.0.md) · [格式与能力口径表](support-matrix.md) · [构建文档](desktop-build.md) · [项目 README](../README.md)
+> 相关：[v1.2.1 发布说明](release-notes-v1.2.1.md) · [格式与能力口径表](support-matrix.md) · [构建文档](desktop-build.md) · [项目 README](../README.md)
 
 数据隐站是**本机处理**工具：引擎只监听 `127.0.0.1`，不发起任何外呼。除源码方式首次安装 Python 依赖外，安装完成后的全部功能**断网可用**。
 
@@ -32,7 +32,7 @@
 
 ### 1.2 步骤
 
-1. 从发布页下载 `Sanitized_Data_Setup_1.2.0_x64.exe`，建议先核对发布页给出的 SHA-256（校验命令见 [发布说明](release-notes-v1.2.0.md) 的「校验值」章节）。
+1. 从发布页下载 `Sanitized_Data_Setup_1.2.1_x64.exe`，建议先核对发布页给出的 SHA-256（校验命令见 [发布说明](release-notes-v1.2.1.md) 的「校验值」章节）。
 2. 双击运行。安装向导会先弹出一页「环境检查」，列出 WebView2 / VC++ 的检测结果与安装位置。
 3. 点「安装」：程序文件释放到 `%LOCALAPPDATA%\Programs\Sanitized_Data`，同时创建开始菜单快捷方式（桌面快捷方式为可选勾选，默认不创建）。
 4. 缺 WebView2 / VC++ 时安装包会自动静默安装；**装不上不阻断安装**，程序会改用默认浏览器打开界面，功能不变。
@@ -40,23 +40,23 @@
 
 ### 1.3 验证安装成功
 
-- 界面底部显示 `数据隐站 · v1.2.0`；
-- 或浏览器访问 `http://127.0.0.1:8760/api/health`（端口被占时见 `runtime.json`），返回 JSON 中 `"version": "1.2.0"`、`"engine.ocr": true`；
+- 界面底部显示 `数据隐站 · v1.2.1`；
+- 或浏览器访问 `http://127.0.0.1:8760/api/health`（端口被占时见 `runtime.json`），返回 JSON 中 `"version": "1.2.1"`、`"engine.ocr": true`；
 - 控制台可正常拖入 `samples/` 里的虚构样例并导出。
 
 ### 1.4 静默安装（IT / 脚本）
 
 ```powershell
-Sanitized_Data_Setup_1.2.0_x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER
+Sanitized_Data_Setup_1.2.1_x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER
 # 指定目录：
-Sanitized_Data_Setup_1.2.0_x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER /DIR="D:\Apps\Sanitized_Data"
+Sanitized_Data_Setup_1.2.1_x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER /DIR="D:\Apps\Sanitized_Data"
 ```
 
 ---
 
 ## 2. 安装（Windows 绿色版）
 
-1. 下载 `Sanitized_Data-1.2.0-win64-portable.zip`，解压到**可写目录**（不要直接放在压缩包里运行）。
+1. 下载 `Sanitized_Data-1.2.1-win64-portable.zip`，解压到**可写目录**（不要直接放在压缩包里运行）。
 2. 运行目录内的 `Sanitized_Data.exe`。
 3. 数据仍然落在 `%LOCALAPPDATA%\Sanitized_Data`（与安装版共用），所以绿色版可以整体移动/复制而不丢数据；卸载 = 直接删除解压目录（数据目录按 §5 处理）。
 
@@ -107,7 +107,7 @@ pip install -r app/server/requirements.txt
 | 服务日志 | `<数据目录>\logs\server.log`（按日期翻转为 `server-YYYY-MM-DD.log`，默认保留最近 30 个、约 30 天） |
 | 诊断文件 | `<数据目录>\diagnose.txt`（运行 `--diagnose` 后生成） |
 
-- macOS 桌面版（v1.1.2 起提供 arm64 / Intel DMG；v1.2.0 未重建 macOS，继续使用 v1.1.2 DMG）对应 `~/Library/Application Support/Sanitized_Data`。
+- macOS 桌面版（v1.1.2 起提供 arm64 / Intel DMG；v1.2.1 未重建 macOS，继续使用 v1.1.2 DMG）对应 `~/Library/Application Support/Sanitized_Data`。
 - 数据目录可覆盖：设置环境变量 `YINZHAN_DATA_DIR`；导出目录可单独用 `YINZHAN_OUTPUT_DIR` 覆盖。
 - 服务日志默认在 `<数据目录>\logs\`，每天 0 点后按日期翻转（由当日首条日志触发）；服务器端排查见 [README「日志与状态监控」](../README.md#日志与状态监控)。
 - 安装版/绿色版**程序目录与数据目录分离**，替换程序不影响数据。
@@ -157,15 +157,15 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Sanitized_Data"
 
 ---
 
-## 6. 升级（旧版 → v1.2.0）
+## 6. 升级（旧版 → v1.2.1）
 
 1. 退出正在运行的程序。
 2. 建议备份数据目录（复制一份 `%LOCALAPPDATA%\Sanitized_Data`）。
-3. 运行 v1.2.0 安装包覆盖安装（同一 AppId，会升级到原来的程序目录）；绿色版解压新版到任意目录运行即可。
+3. 运行 v1.2.1 安装包覆盖安装（同一 AppId，会升级到原来的程序目录）；绿色版解压新版到任意目录运行即可。
 4. 启动后核对版本（§1.3）。
 5. **数据目录结构不变**：加密映射库（换名还原）、密钥、审计链均沿用，旧版导出的成品仍在 `out/`。
 
-> 说明：v1.2.0 与 v1.0.0 使用同一数据目录与库结构；升级前备份是保险动作，不是必需步骤。
+> 说明：v1.2.1 与 v1.0.0 使用同一数据目录与库结构；升级前备份是保险动作，不是必需步骤。
 
 ---
 
@@ -182,7 +182,7 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Sanitized_Data"
 
 | 现象 | 可能原因 | 处理 |
 |---|---|---|
-| SmartScreen 提示「Windows 已保护你的电脑」/「未知发布者」 | v1.2.0 **未做代码签名** | 点「更多信息」→「仍要运行」；先核对发布页 SHA-256。正式签名在后续版本 |
+| SmartScreen 提示「Windows 已保护你的电脑」/「未知发布者」 | v1.2.1 **未做代码签名** | 点「更多信息」→「仍要运行」；先核对发布页 SHA-256。正式签名在后续版本 |
 | 杀软报毒/拦截 | PyInstaller 打包程序常见误报 | 添加信任/白名单；核对 SHA-256；必要时提交误报申诉 |
 | 双击安装包没反应 | 安装包不完整 / 被拦截 | 核对 SHA-256 后重新下载；看 Windows 事件/杀软记录 |
 | 启动后没有独立窗口，开了浏览器 | WebView2 缺失或安装失败 | 属预期兜底，功能完全一样；想要独立窗口可手动安装 [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/)。此模式下没有主窗口，退出需在任务管理器结束 `Sanitized_Data.exe`（或先补装 WebView2） |
@@ -190,7 +190,7 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Sanitized_Data"
 | 提示「已经在运行」 | 单实例机制：再次双击会激活已有实例 | 找已打开的窗口/浏览器标签页；无响应则结束进程后重试 |
 | 浏览器显示「本机服务未连接」 | OCR 首次加载中 / 服务未起 | 等 2–5 秒刷新；仍不行看 `<数据目录>\logs\server.log`，或源码运行 `python app/server/status.py` |
 | 端口被占 | 8760 起被占用 | 自动顺延（8760–8839），实际端口看 `<数据目录>\runtime.json`；也可设 `YINZHAN_PORT` |
-| 界面显示版本不是 v1.2.0 | 运行的是旧程序 / 覆盖安装未完成 | 确认启动的是新安装目录的 exe；重装 v1.2.0 |
+| 界面显示版本不是 v1.2.1 | 运行的是旧程序 / 覆盖安装未完成 | 确认启动的是新安装目录的 exe；重装 v1.2.1 |
 | 数据目录不可写 / 启动即崩 | 企业受限环境 AppData 权限 | 程序会自动降级到程序目录或临时目录；也可显式指定 `YINZHAN_DATA_DIR` 到可写目录 |
 | 中文路径下异常 | 路径编码/杀软干扰 | 支持中文路径；如遇异常可先换短英文路径排查 |
 | 卸载后数据还在 | **预期行为**：数据目录不随卸载删除 | 确认不需要历史映射/成品后，手动删除 `%LOCALAPPDATA%\Sanitized_Data` |
@@ -225,15 +225,15 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Sanitized_Data"
 
 | 产物 | 位置 |
 |---|---|
-| 安装包 `Sanitized_Data_Setup_1.2.0_x64.exe` | 发布页（Gitea Release）/ 构建机 `dist_installer/` |
-| 绿色版 `Sanitized_Data-1.2.0-win64-portable.zip` | 发布页 / 构建机 `out/desktop/` |
+| 安装包 `Sanitized_Data_Setup_1.2.1_x64.exe` | 发布页（Gitea Release）/ 构建机 `dist_installer/` |
+| 绿色版 `Sanitized_Data-1.2.1-win64-portable.zip` | 发布页 / 构建机 `out/desktop/` |
 | 源码包 `Sanitized_Data-1.1.3-win64.zip` / `-linux64.tar.gz` | 已从站点 `/download` 下架；内部仓库 / Release 历史附件可获取 |
 | macOS `Sanitized_Data-1.1.2-arm64.dmg` / `-x64.dmg` | 发布页（Gitea Release）/ 构建产物 out/desktop/macos/ |
 
 校验（PowerShell）：
 
 ```powershell
-Get-FileHash .\Sanitized_Data_Setup_1.2.0_x64.exe -Algorithm SHA256
+Get-FileHash .\Sanitized_Data_Setup_1.2.1_x64.exe -Algorithm SHA256
 ```
 
-体积与 SHA-256 以 [v1.2.0 发布说明](release-notes-v1.2.0.md) 的「校验值」章节 为准。
+体积与 SHA-256 以 [v1.2.1 发布说明](release-notes-v1.2.1.md) 的「校验值」章节 为准。

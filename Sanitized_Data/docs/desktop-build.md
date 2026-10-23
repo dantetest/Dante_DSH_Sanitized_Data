@@ -380,3 +380,27 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 
 > 最终构建 2026-10-23 19:58（Asia/Shanghai）：已含 T2 原生 browser tab、自动拉起工作台、
 > 去仿制面板、install.ps1 自动 MCP client 配置；安装/卸载 smoke（工作区外）通过。
+
+---
+
+## 八、v1.2.1 构建记录（2026-10-23）
+
+> P1 补丁：能力感知 MCP elicitation（human 导出）、一次性 confirm_token 兜底、
+> 工具卡图片缩略图/最近 Job footer、install.ps1 自动 MCP 配置、工作台自动拉起。
+> macOS 本环境无法构建（无 Mac/无 GH_TOKEN），仅 Windows/Linux 产物。
+
+| 项 | 结果 |
+|---|---|
+| 版本 | `1.2.1` |
+| 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
+| 构建自检 | `/api/health` version=1.2.1、OCR=True、7 解析器、扫描器齐全 |
+| 安装包 | **187,706,160 B（179.0 MiB）** / SHA-256 `CDAD54068520099216D76742AE8ACF0E9CEC573FC5482EA1DF82E64BDBE45B4A` |
+| 绿色版 | **211,194,458 B（201.4 MiB）** / SHA-256 `B1B8A5B602CD448D4FB9682DAF2A069BA5D9E4074D1063988C5F4601DEEF9DA1` |
+| 插件 | 含原生 browser tab、自动拉起、footer 最近 job、工具卡缩略图、install 自动 MCP |
+
+### 8.1 源码包
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `Sanitized_Data-1.2.1-win64.zip` | 4,376,355 B | `3BE3D4CF36D09551580D24ADB62156CF425AC37954D8DB072C5F9C309ACF1A0E` |
+| `Sanitized_Data-1.2.1-linux64.tar.gz` | 4,197,419 B | `A9410E3C5354DFBECE4C9D9ED346A372A30B603A2910426CD97938FA923BD5B6` |
