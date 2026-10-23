@@ -362,9 +362,18 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 | 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
 | 构建自检 | `/api/health` version=1.2.0、OCR=True、7 解析器、扫描器齐全 |
 | 绿色版目录 | `dist\Sanitized_Data\`（含 `Sanitized_Data.exe`、`Sanitized_Data_MCP.exe`、`dsh-plugin/`） |
-| 安装包 | **187,537,171 B（178.8 MiB）** / SHA-256 `E5783C69BB9D053C2061A38AAA359C3984ADCD15F6E1A40F0DA16F6B79357608` |
-| 绿色版 | **211,046,097 B（201.3 MiB）** / SHA-256 `F03E21123FD27A5385D61FF813811C0D3780303967469CD4DB5548105067642B` |
+| 安装包 | **187,527,385 B（178.8 MiB）** / SHA-256 `4A79E669544A48955B00D159ECC4A2716274CD79166DD403C2398CE988516D9C` |
+| 绿色版 | **211,047,951 B（201.3 MiB）** / SHA-256 `94A96FB8485DB37F7A4631A996228550CD9528A80FD3DDAFFEE5F7BE7B4FD570` |
 
-> 说明：v1.2.0 尚未发布到 Gitea（构建复验通过后再决定发版）；
-> 安装包沿用 v1.1.0 的安装/卸载验收结论（安装器仅版本号与内容变化）；
+> 说明：v1.2.0 尚未发布到 Gitea（构建复验通过后再决定发版）。
+> 安装验收（2026-10-23，从工作区外临时目录静默安装）：exit 0 → 启动 health
+> version=1.2.0/OCR=True/扫描器齐全 → 卸载 exit 0、程序目录删除；
+> 安装包内确认含 `dsh-plugin/` 与 `Sanitized_Data_MCP.exe`。
 > DSH 插件需用户运行 `{app}\dsh-plugin\install.ps1 -Profile desktop` 并重启 DSH。
+
+### 7.1 源码包（本地构建产物，未上传 Gitea）
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `Sanitized_Data-1.2.0-win64.zip` | 4,368,931 B | `5EC84E4C2765F1D3A0CD8052E4C9D79358650B19F9D4E9946BC42EDEF3B21FDA` |
+| `Sanitized_Data-1.2.0-linux64.tar.gz` | 4,191,042 B | `F0EA68C913C73BACA060215CECFED1B1B2FA01E6373E63AD75509BC6611803AB` |

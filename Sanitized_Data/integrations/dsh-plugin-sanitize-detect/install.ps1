@@ -40,7 +40,8 @@ if ($Uninstall) {
   if ($doc.dependencies -and $doc.dependencies.PSObject.Properties.Name -contains $PluginName) {
     $doc.dependencies.PSObject.Properties.Remove($PluginName)
   }
-  $doc | ConvertTo-Json -Depth 20 | Set-Content -Path $PackageJson -Encoding UTF8
+  $json = $doc | ConvertTo-Json -Depth 20
+  [System.IO.File]::WriteAllText($PackageJson, $json, (New-Object System.Text.UTF8Encoding($false)))
   Write-Host "已卸载 $PluginName（重启 DSH 生效）。" -ForegroundColor Green
   exit 0
 }
@@ -56,7 +57,8 @@ $doc.dependencies | Add-Member -MemberType NoteProperty -Name $PluginName -Value
 if ($bundles -notcontains $PluginName) {
   $doc.dsh.profile.bundles = @($bundles + $PluginName)
 }
-$doc | ConvertTo-Json -Depth 20 | Set-Content -Path $PackageJson -Encoding UTF8
+$json = $doc | ConvertTo-Json -Depth 20
+  [System.IO.File]::WriteAllText($PackageJson, $json, (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host "已安装 $PluginName" -ForegroundColor Green
 Write-Host "  profile: $ProfileDir"
