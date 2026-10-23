@@ -77,7 +77,8 @@
 
 ## 五、产物与校验
 
-> 构建完成（2026-10-23）；尺寸/SHA-256 见下表。
+> 构建完成并发布（2026-10-23）；Gitea Release：https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.2.0
+> 尺寸/SHA-256 见下表。
 
 | 文件 | 大小 | SHA-256 |
 |---|---|---|

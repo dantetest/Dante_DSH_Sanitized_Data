@@ -365,13 +365,13 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 | 安装包 | **187,709,481 B（179.0 MiB）** / SHA-256 `94F3F83D935987090C93EF35964A312F18FF8927CA7D12F42C518908C7305481` |
 | 绿色版 | **211,184,187 B（201.4 MiB）** / SHA-256 `A53BD79DE306E5A3BC985ACF3FA14EB23748C1BE3BE83CD9ACC08ECEB9E7813D` |
 
-> 说明：v1.2.0 尚未发布到 Gitea（构建复验通过后再决定发版）。
+> 发布：2026-10-23 已创建 Gitea Release v1.2.0（https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.2.0），安装包/绿色版/源码包/SHA256SUMS 已上传。
 > 安装验收（2026-10-23，从工作区外临时目录静默安装）：exit 0 → 启动 health
 > version=1.2.0/OCR=True/扫描器齐全 → 卸载 exit 0、程序目录删除；
 > 安装包内确认含 `dsh-plugin/` 与 `Sanitized_Data_MCP.exe`。
 > DSH 插件需用户运行 `{app}\dsh-plugin\install.ps1 -Profile desktop` 并重启 DSH。
 
-### 7.1 源码包（本地构建产物，未上传 Gitea）
+### 7.1 源码包（随 v1.2.0 Release 上传）
 
 | 文件 | 大小 | SHA-256 |
 |---|---|---|
