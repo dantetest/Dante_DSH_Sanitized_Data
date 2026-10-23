@@ -181,3 +181,16 @@ build → tests → tag/Gitea Release → 上传安装包/绿色版/SHA256SUMS
 4. **安装包未签名**：Windows SmartScreen 仍可能提示；更新安装也会遇到，是否后续补代码签名？
 
 确认后按 v1.3.0 实现：后端 manifest/下载/校验、前端提示与设置、安装 helper、测试。
+
+## 10. 决策记录（2026-10-23）
+
+- **更新源选择：B — 公司 Gitea 的独立公开 release-only 仓库。**
+  - 不公开源码仓库；只建一个公开仓库（例如 `sanitized-data-updates`），
+    仅放 Release 资产/更新清单，避免把源码暴露给客户。
+  - 客户端检查该仓库的 `releases/latest`（匿名 GET）。
+  - 若公司 Gitea 全局要求登录（当前 `REQUIRE_SIGNIN_VIEW` 导致 302/403），
+    需要管理员允许匿名读取该公开仓库/Release，或改用 A 的静态 HTTPS 更新源。
+- **A（CKA 静态服务器/CDN）**：技术上也完全可行，前提是能给客户提供稳定 HTTPS；
+  但当前不需要额外基础设施，优先 B。
+- **默认策略：首次启动询问一次，默认关闭自动检查；`稍后` 24 小时，不强制。**
+- 若 B 的匿名访问无法开通，再切 A；客户端只依赖配置的清单 URL，不绑死 Gitea。
