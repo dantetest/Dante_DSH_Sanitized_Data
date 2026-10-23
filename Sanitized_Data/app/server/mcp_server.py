@@ -37,7 +37,9 @@ import functools
 import json
 import os
 import re
+import secrets
 import sys
+import time
 import time
 import traceback
 import urllib.error
@@ -135,6 +137,31 @@ def _text_block(payload) -> dict:
 
 def _text_result(payload) -> dict:
     return {"content": [_text_block(payload)], "isError": False}
+
+
+# human 导出的一次性确认令牌：MCP 客户端不支持 elicitation 时，第一轮只发挑战，
+# 用户确认后把令牌带回才真正执行不可逆的涂黑导出。令牌只存内存、5 分钟过期。
+_CONFIRM_TOKENS: dict[str, dict] = {}
+_CONFIRM_TTL_SEC = 300
+
+
+def _issue_confirm_token(job_id: str) -> str:
+    now = time.time()
+    for token in [k for k, v in _CONFIRM_TOKENS.items() if v.get("expires_at", 0) < now]:
+        _CONFIRM_TOKENS.pop(token, None)
+    token = secrets.token_urlsafe(24)
+    _CONFIRM_TOKENS[token] = {"job_id": str(job_id), "expires_at": now + _CONFIRM_TTL_SEC}
+    return token
+
+
+def _consume_confirm_token(token: str, job_id: str) -> None:
+    record = _CONFIRM_TOKENS.get(str(token))
+    if not record or record.get("job_id") != str(job_id) or record.get("expires_at", 0) < time.time():
+        raise ToolError(
+            "human 导出确认令牌无效或已过期；请重新调用一次（不带 confirm_token）获取新令牌。",
+            "confirmation_required", job_id=str(job_id),
+        )
+    _CONFIRM_TOKENS.pop(str(token), None)
 
 
 def _error(msg: str, code: str | None = None, **extra) -> dict:
@@ -961,6 +988,11 @@ TOOLS = [
                 "job_id": {"type": "string"},
                 "mode": {"type": "string", "enum": ["ai", "human"],
                          "default": "ai"},
+                "confirm_token": {
+                    "type": "string",
+                    "description": ("human 不可逆导出的一次性确认令牌；第一次不带，"
+                                    "收到 confirmation_required 后让用户确认再把令牌带回。"),
+                },
                 "allow_unprocessed_media": {
                     "type": "boolean", "default": False,
                     "description": "用户已确认可保留未脱敏内嵌媒体（默认 false，不静默放行）"},
@@ -1332,6 +1364,17 @@ def tool_export_sanitize_job(args: dict) -> dict:
     mode = str(args.get("mode") or "ai")
     if mode not in ("ai", "human"):
         raise ToolError("mode 只能是 ai 或 human", "bad_request")
+    if mode == "human":
+        confirm_token = str(args.get("confirm_token") or "").strip()
+        if not confirm_token:
+            challenge = _issue_confirm_token(job_id)
+            raise ToolError(
+                "human 涂黑导出不可逆，需要用户确认。请先把 job_id/影响告知用户，"
+                "用户确认后，把返回的 confirm_token 原样传入再次调用。",
+                "confirmation_required", job_id=job_id,
+                confirm_token=challenge, expires_in=_CONFIRM_TTL_SEC,
+            )
+        _consume_confirm_token(confirm_token, job_id)
     options = {
         "allow_unprocessed_media": _as_bool(args.get("allow_unprocessed_media")),
         "keep_pdf_hidden": _as_bool(args.get("keep_pdf_hidden")),

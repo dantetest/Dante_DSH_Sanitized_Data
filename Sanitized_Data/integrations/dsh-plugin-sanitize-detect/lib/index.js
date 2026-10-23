@@ -8,6 +8,8 @@
  * 只解析本机 runtime.json / YINZHAN_HOME，不访问任何外网；不落盘、不改数据。
  */
 import { readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +17,60 @@ export const name = 'blctek-sanitize-detect-host';
 export const inject = ['webServer'];
 
 const PREFIX = '/sanitized-data/api';
+const LOCAL = /^http:\/\/127\.0\.0\.1:\d+$/;
+
+function candidateHomes() {
+  return [...new Set([
+    process.env.YINZHAN_HOME,
+    'D:\\DSH_DESKTOP_WORKSPACE\\Sanitized_Data',
+    join(homedir(), 'AppData', 'Local', 'Programs', 'Sanitized_Data'),
+  ].filter(Boolean))];
+}
+
+async function healthy(base) {
+  try {
+    const response = await fetch(base + '/api/health', { signal: AbortSignal.timeout(1500) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitHealthy(base, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await healthy(base)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
+async function ensureWorkbench() {
+  const base = resolveBase();
+  if (await healthy(base)) return { ok: true, started: false, base };
+  const candidates = [];
+  for (const home of candidateHomes()) {
+    const exe = join(home, 'Sanitized_Data.exe');
+    if (existsSync(exe)) candidates.push({ kind: 'exe', file: exe, cwd: home });
+    const script = join(home, 'app', 'server', 'run.py');
+    if (existsSync(script)) candidates.push({ kind: 'python', file: 'pythonw', args: ['-X', 'utf8', script, '--no-browser'], cwd: home });
+  }
+  for (const candidate of candidates) {
+    try {
+      const child = spawn(candidate.file, candidate.args || [], {
+        cwd: candidate.cwd, detached: true, stdio: 'ignore', windowsHide: true,
+      });
+      child.unref();
+      if (await waitHealthy(base)) {
+        return { ok: true, started: true, base, via: candidate.kind };
+      }
+    } catch {
+      // 继续尝试下一个候选；最终返回明确失败。
+    }
+  }
+  return { ok: false, started: false, base, error: 'workbench_start_failed' };
+}
+
 
 function candidateRuntimeFiles() {
   const out = [];
@@ -56,6 +112,12 @@ async function readRequestBody(req) {
 
 function proxyHandler(req, res) {
   (async () => {
+    if (req.method === 'POST' && req.url === PREFIX + '/start') {
+      const result = await ensureWorkbench();
+      res.writeHead(result.ok ? 200 : 503, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(result));
+      return;
+    }
     if (req.method === 'GET' && req.url === PREFIX) {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ ok: true, proxy: PREFIX, target: resolveBase() }));

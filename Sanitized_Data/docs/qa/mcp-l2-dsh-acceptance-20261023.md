@@ -15,11 +15,11 @@
 | 同一 job 深链打开工作台 | ✅ | DSH 返回 `http://127.0.0.1:8760/console?job=j_a01399fb`，浏览器打开同 job（截图） |
 | 失败语义（verify 失败/媒体确认/无工作台） | ✅ server 侧 | 结构化 isError；verify 失败删除成品；HTTP 不可用 `no_workbench` |
 | T1 对话内定制工具卡（自检/计数/job/按钮） | ✅ | `out/dsh_test/plugin_card_running_03_result.png`（运行中卡片）；完成态在 DSH 默认折叠过程中 |
-| T2 真实工作台（DSH 原生 browser tab） | 🟡 代码已切换，待重启复验 | `workbench_520.png`（真实工作台 520px）；旧 `plugin_panel*.png` 为历史面板截图 |
-| M4 elicitation / confirm_token | ❌ | 当前用结构化 isError + 显式参数/工作台确认兜底 |
+| T2 真实工作台（DSH 原生 browser tab） | ✅ | `native_workbench_tab.png`：DSH 右侧 browser tab 直接显示 127.0.0.1:8760 真实工作台；旧仿制面板已移除 |
+| M4 elicitation / confirm_token | 🟡 部分 | human 导出新增一次性 `confirm_token` 挑战（standard 兼容）；协议级 elicitation 仍未实现 |
 | 安装包内 `Sanitized_Data_MCP.exe` + DSH 插件 | ✅（v1.2.0 构建） | `app.spec` 双入口；`integrations/dsh-plugin-sanitize-detect` 随构建进入 `dsh-plugin/` |
 
-**一句话**：MCP L2 服务端闭环 + DSH T0/T1 已打通；T2 已从仿制面板切换为 **DSH 原生 browser tab 直接加载真实工作台 WebUI**（左下角「数据隐站工作台」），旧面板注册移除，待重启 DSH 做最终复验。剩余协议增强（elicitation/confirm_token）、T3 发送前拦截未做。
+**一句话**：MCP L2 服务端闭环 + DSH T0/T1/T2 已打通：T2 用 **DSH 原生 browser tab 直接加载真实工作台 WebUI**（已在 web profile 开启 browser 插件后实测），旧仿制面板移除；human 导出增加 confirm_token 挑战。剩余协议级 elicitation、T3 发送前拦截未做。
 
 > **2026-10-23 设计调整**：T2 不再复刻工作台 UI（用户反馈仿制面板观感不真实）；左下角入口直接调用 `sidebarRight.openTab('browser', { url })` 打开真实 `/console?job=...`；旧 `plugin_panel*.png` 仅保留为历史证据，真实工作台 520px 预览见 `out/dsh_test/workbench_520.png`。
 
@@ -90,7 +90,7 @@ dsh --profile web --patch out\dsh_mcp.patch.yml --no-open --port 60361
 | 测试 | 结果 |
 |---|---|
 | `test_mcp_v2.py` | **36/36 通过**（协议/旧工具/11 新工具/resources/prompts/Job/HTTP mock/失败语义） |
-| `test_dsh_plugin.py` | **6/6 通过**（插件包结构/工具卡/面板/本地代理回环边界/Node 语法） |
+| `test_dsh_plugin.py` | **6/6 通过**（插件包结构/工具卡/真实工作台 tab/本地代理回环边界/Node 语法） |
 | `test_pipl_rules.py` | **19/19 通过**（含身份证校验位异常兜底） |
 | `test_ai_export_naming.py` | **29/29 通过**（MCP 段改为 MANAGER 带 seal 命名，成品落 data/out） |
 | `test_visual.py` | **68/68 通过** |
@@ -100,7 +100,7 @@ dsh --profile web --patch out\dsh_mcp.patch.yml --no-open --port 60361
 ### 3.1 最终全量门禁
 
 - `app/tests/run_all.py`：**31/31 套件通过**（320.26s；新增 `mcpv2`/`dshplugin` 套件）。
-- `app/tests/regression.py`：**250 项硬检查全绿**（新增 ID shape 规则；待 Lead 重录 baseline）。
+- `app/tests/regression.py`：**249 项硬检查全绿**（新增 ID shape 规则；待 Lead 重录 baseline）。
 - `app/tests/e2e.py`：**5/5**、残留 0（`run_all` 内含）。
 - `test_mcp_v2.py`：36/36；`test_dsh_plugin.py`：6/6；`test_pipl_rules.py`：19/19；
   `test_ai_export_naming.py`：29/29；`test_visual.py`：68/68。
@@ -112,15 +112,14 @@ dsh --profile web --patch out\dsh_mcp.patch.yml --no-open --port 60361
 
 ## 4. 相对设计目标的差距（诚实评估）
 
-1. **T1 已实现；T2 刚切换为真实工作台**：定制工具卡已在 DSH 0.2.1-rc.2 跑通；
-   T2 已移除仿制面板，改为 DSH 原生 browser tab 直接打开 `http://127.0.0.1:8760/console?job=...`。
-   代码路径已改完，待 DSH 重启做最终视觉验收；若 DSH 拒绝 localhost，再补同源 iframe/host 代理方案。
+1. **T1/T2 均已实现**：定制工具卡已在 DSH 0.2.1-rc.2 跑通；T2 移除仿制面板，
+   改为 DSH 原生 browser tab 直接打开 `http://127.0.0.1:8760/console?job=...`；
+   Web profile 需显式启用 `ui-sidebar-browser`（Desktop 默认启用），已在 1440x1100 实测。
+   工作台不可用时宿主会自动尝试拉起（白名单本地路径），失败则保留启动引导。
 2. **MCP 结果图片**：`sanitize_document`/render 支持 `image/png` content block；
    面板预览通过同源代理直接显示；工具卡当前以摘要/详情为主，未把缩略图内嵌进卡。
-3. **elicitation / confirm_token 未做**：human 导出/内嵌媒体确认通过结构化 `isError`
-   + 显式参数/工作台兜底；对不支持 elicitation 的客户端安全，但交互不如设计顺滑。
-4. **T3 发送前自动拦截未做**：仍是“Agent 主动调用工具”模式；没有在附件/粘贴文本
-   进入模型前自动 hook。
+3. **elicitation 未做，confirm_token 已做**：human 导出新增一次性确认令牌；协议级 elicitation 仍未实现，内嵌媒体确认仍用结构化 isError + 显式参数/工作台兜底。
+4. **T3 发送前自动拦截未做**：仍是“Agent 主动调用工具”模式；DSH 0.2.1-rc.2 无通用 beforeSend hook，评估见 [t3-pre-send-hook-eval.md](../impl/t3-pre-send-hook-eval.md)。
 5. **规则缺口已修复**：新增 `cn.idcard_shape` 兜底校验位异常号（pending 复核）；
    详见 `docs/qa/idcard-checksum-policy-20261023.md`。loose 档位会丢弃 pending
    （默认 standard 覆盖），作为已知限制。

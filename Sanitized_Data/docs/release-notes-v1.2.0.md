@@ -20,7 +20,8 @@
   `http://127.0.0.1:<runtime端口>/console?job=<当前job>`；
 - **不再注册/显示仿制「脱敏检测」面板**（早期版本的概览卡片已移除），避免界面与工作台行为漂移；
 - 工具卡「打开工作台」同样打开真实工作台；原生 browser tab 不可用时回退外部浏览器，不回退仿制面板；
-- 工作台未启动/不可达时，插件给出启动引导（桌面「数据隐站工作台」快捷方式 / `启动.bat`）。
+- 工作台未启动/不可达时，宿主插件会尝试用白名单本地路径自动拉起（源码 `pythonw app/server/run.py --no-browser` 或安装版 `Sanitized_Data.exe`）；失败再给出启动引导（桌面「数据隐站工作台」快捷方式 / `启动.bat`）。
+- `install.ps1` 现在同时自动写入 desktop/web profile 的 `mcp-sanitized-data` client 配置；`-SkipMcp` 可跳过。
 
 ### 3. 同 Job 深链
 
@@ -38,6 +39,12 @@
 > DSH 0.2.1-rc.2 联调：真实对话调用 MCP 工具、创建 `j_*`、面板/审计/深链均通过；
 > T1/T2 为本地客户端插件，不改变 MCP 协议与其他客户端兼容性；T2 用 DSH 原生 browser tab 复用真实工作台，不复制 UI。
 
+### 5. human 导出确认令牌（M4 兜底）
+
+- `export_sanitize_job(mode=human)` 第一次调用返回 `confirmation_required` + 一次性 `confirm_token`（5 分钟、绑定 job）；
+- 用户确认后把 token 原样带回才执行不可逆涂黑导出；令牌单次消费，避免模型自行连调绕过；
+- 这不是协议级 elicitation；支持 elicitation 的客户端仍可直接走标准交互（后续补）。
+
 ## 二、身份证校验位异常兜底（QA）
 
 - 新增 `cn.idcard_shape` 规则：18 位身份证**形状**匹配但 GB11643 校验位/日期/省份码异常时，
@@ -53,7 +60,7 @@
 - `test_mcp_v2.py` 36/36；`test_dsh_plugin.py` 6/6；`test_pipl_rules.py` 19/19；
   `test_visual.py` 68/68；`test_ai_export_naming.py` 29/29；
 - `regression.py` 硬检查全绿；`run_all.py` 全绿；`e2e.py` 5/5；
-- DSH 实测：工具卡/面板实体/面板审计/导出/同 Job 深链截图见
+- DSH 实测：工具卡/真实工作台实体/面板审计/导出/同 Job 深链截图见
   `docs/qa/mcp-l2-dsh-acceptance-20261023.md`；
 - PyInstaller 双入口：`Sanitized_Data.exe`（GUI）+ `Sanitized_Data_MCP.exe`（stdio）均构建验证。
 
@@ -74,9 +81,9 @@
 
 | 文件 | 大小 | SHA-256 |
 |---|---|---|
-| `Sanitized_Data_Setup_1.2.0_x64.exe`（安装包） | 187,703,688 B（179.0 MiB） | `53E109FA07EFAEAA872DCAE2144339333A834612E45F824D2C0A01BC38C3DA71` |
-| `Sanitized_Data-1.2.0-win64-portable.zip`（绿色版） | 211,185,636 B（201.4 MiB） | `A3704EE0B85519D783E38C18C3DD0E8F7AC3289A694CD286D122BE01A33F940C` |
+| `Sanitized_Data_Setup_1.2.0_x64.exe`（安装包） | 187,709,481 B（179.0 MiB） | `94F3F83D935987090C93EF35964A312F18FF8927CA7D12F42C518908C7305481` |
+| `Sanitized_Data-1.2.0-win64-portable.zip`（绿色版） | 211,184,187 B（201.4 MiB） | `A53BD79DE306E5A3BC985ACF3FA14EB23748C1BE3BE83CD9ACC08ECEB9E7813D` |
 
-安装包/绿色版含 `Sanitized_Data_MCP.exe` 与 `dsh-plugin/`（DSH 工具卡/面板插件）。
+安装包/绿色版含 `Sanitized_Data_MCP.exe` 与 `dsh-plugin/`（DSH 工具卡/真实工作台）。
 macOS v1.2.0 未重建，继续使用 v1.1.2 DMG。
 

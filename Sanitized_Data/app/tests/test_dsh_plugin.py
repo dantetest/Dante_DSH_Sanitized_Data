@@ -41,12 +41,16 @@ class TestDshPluginPackage(unittest.TestCase):
         self.assertNotIn("sanitize-detect: panel body", text)
         self.assertNotIn("sidebar.right.pane.tab", text)
         self.assertIn("数据隐站工作台", text)
+        self.assertIn("latestWorkbenchUrl", text)
+        self.assertIn("PREFIX + '/start'", text)
 
     def test_host_proxy_is_loopback_only(self):
         text = (PLUGIN / "lib" / "index.js").read_text(encoding="utf-8")
         self.assertIn("/sanitized-data/api", text)
         self.assertIn("127.0.0.1", text)
         self.assertIn("kind: 'prefix'", text)
+        self.assertIn("/start", text)
+        self.assertIn("ensureWorkbench", text)
         # 不允许出现公网 URL 字面量
         urls = re.findall(r"https?://[^\s'\"<>]+", text)
         for url in urls:
@@ -56,7 +60,10 @@ class TestDshPluginPackage(unittest.TestCase):
             )
 
     def test_install_script_present(self):
-        self.assertTrue((PLUGIN / "install.ps1").is_file())
+        script = (PLUGIN / "install.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("mcp-sanitized-data", script)
+        self.assertIn("SkipMcp", script)
+        self.assertIn("Sanitized_Data_MCP.exe", script)
 
     def test_bundles_syntax_if_node_available(self):
         node = subprocess.run(["node", "--version"], capture_output=True, text=True)

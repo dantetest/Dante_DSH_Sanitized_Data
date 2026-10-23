@@ -15,29 +15,12 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
     const PREFIX = '/sanitized-data/api';
-    const PANEL_ID = '@blctek/dsh-plugin-sanitize-detect';
-    const PANEL_KIND = 'sanitize-detect';
     const TOOL_KEYS = [
       'sanitize_document', 'redact_text', 'sanitize_file', 'get_sanitize_job',
       'list_sanitize_jobs', 'get_sanitize_entities', 'update_sanitize_entity',
       'mark_sanitize_region', 'accept_all_sanitize_entities', 'export_sanitize_job',
       'get_sanitize_audit', 'rehydrate_sanitize_text', 'open_sanitize_workbench',
     ];
-
-    // 工具卡与面板共享“当前 job”——同一会话内点击工具卡后，右侧面板直接打开它。
-    const uiState = { jobId: null, listeners: new Set() };
-    function setCurrentJob(jobId) {
-      const value = jobId ? String(jobId) : null;
-      if (uiState.jobId === value) return;
-      uiState.jobId = value;
-      for (const fn of [...uiState.listeners]) {
-        try { fn(value); } catch { /* 单个订阅者失败不影响其他 */ }
-      }
-    }
-    function subscribeJob(fn) {
-      uiState.listeners.add(fn);
-      return () => uiState.listeners.delete(fn);
-    }
 
     const COLORS = {
       ink: 'var(--dsw-alias-label-primary, #1f2328)',
@@ -162,7 +145,6 @@ window.__ModuleLoader__.load({
 
       function openPanel() {
         if (!jobId) return;
-        setCurrentJob(jobId);
         const url = workbench || `http://127.0.0.1:8760/console?job=${encodeURIComponent(jobId)}`;
         // 优先使用 DSH 原生右侧浏览器 tab，直接显示真实工作台（不是仿制面板）。
         if (openWorkbenchTab(url)) return;
@@ -267,222 +249,6 @@ window.__ModuleLoader__.load({
       );
     }
 
-    async function apiJson(path, options = {}) {
-      const response = await fetch(PREFIX + path, {
-        ...options,
-        headers: { accept: 'application/json', ...(options.headers || {}) },
-      });
-      const text = await response.text();
-      let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch { data = null; }
-      if (!response.ok) {
-        const message = data?.error?.message || data?.error?.code || `HTTP ${response.status}`;
-        throw new Error(message);
-      }
-      return data;
-    }
-
-    function Metric({ label, value, tone }) {
-      return h('div', {
-        style: {
-          flex: 1, minWidth: 70, padding: '8px 9px', borderRadius: 8,
-          background: COLORS.subtle, border: `1px solid ${COLORS.border}`,
-        },
-        title: label,
-      },
-      h('div', { style: { fontSize: 17, fontWeight: 650, color: tone || COLORS.ink, lineHeight: '22px' } }, value),
-      h('div', { style: { fontSize: 10, color: COLORS.tertiary, marginTop: 2 } }, label));
-    }
-
-    function DetectPanel() {
-      const [jobId, setJobId] = React.useState(uiState.jobId);
-      const [job, setJob] = React.useState(null);
-      const [entities, setEntities] = React.useState([]);
-      const [audit, setAudit] = React.useState(null);
-      const [tab, setTab] = React.useState('overview');
-      const [error, setError] = React.useState('');
-      const [busy, setBusy] = React.useState(false);
-      const [notice, setNotice] = React.useState('');
-
-      React.useEffect(() => subscribeJob(setJobId), []);
-
-      const load = React.useCallback(async (targetId) => {
-        setError('');
-        try {
-          let id = targetId;
-          if (!id) {
-            const list = await apiJson('/jobs');
-            const jobs = Array.isArray(list?.jobs) ? list.jobs : [];
-            const pick = jobs.find((item) => item.origin === 'mcp') || jobs[0] || null;
-            id = pick && pick.id ? pick.id : null;
-          }
-          if (!id) {
-            setJob(null); setEntities([]); setAudit(null); setJobId(null);
-            return;
-          }
-          const [snapshot, ents, auditData] = await Promise.all([
-            apiJson('/jobs/' + encodeURIComponent(id)),
-            apiJson('/jobs/' + encodeURIComponent(id) + '/entities'),
-            apiJson('/audit?limit=20').catch(() => null),
-          ]);
-          setJobId(id);
-          setJob(snapshot || null);
-          setEntities(Array.isArray(ents?.entities) ? ents.entities : []);
-          setAudit(auditData);
-        } catch (loadError) {
-          setError(loadError?.message || String(loadError));
-        }
-      }, []);
-
-      React.useEffect(() => { load(jobId); }, [jobId, load]);
-
-      const refresh = () => load(jobId);
-      const counts = job?.counts || {};
-      const pending = counts.pending ?? entities.filter((e) => e.status === 'pending').length;
-      const total = counts.total ?? entities.length;
-      const byType = counts.by_type || {};
-      const auditOk = audit && Array.isArray(audit.records)
-        ? audit.records.every((record) => Number.isInteger(record.bad) ? record.bad === 0 : true) : null;
-      const workbench = jobId ? `http://127.0.0.1:${job?.runtime_port || 8760}/console?job=${encodeURIComponent(jobId)}` : null;
-
-      async function post(path, body) {
-        if (busy) return;
-        setBusy(true); setNotice('');
-        try {
-          await apiJson(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
-          await refresh();
-          setNotice('已完成');
-        } catch (actionError) {
-          setNotice(actionError?.message || String(actionError));
-        } finally {
-          setBusy(false);
-        }
-      }
-
-      const tabButton = (id, label) => h('button', {
-        type: 'button', onClick: () => setTab(id),
-        style: {
-          appearance: 'none', border: 'none', background: tab === id ? COLORS.blueBg : 'transparent',
-          color: tab === id ? COLORS.blue : COLORS.secondary, borderRadius: 6,
-          padding: '4px 9px', fontSize: 12, cursor: 'pointer',
-        },
-      }, label);
-
-      return h('div', {
-        style: {
-          display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,
-          background: COLORS.bg, color: COLORS.ink,
-          fontFamily: 'var(--dsh-font-ui, system-ui, sans-serif)',
-        },
-      },
-      h('div', { style: { padding: '10px 12px 8px', borderBottom: `1px solid ${COLORS.border}` } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-          h('span', { style: { fontSize: 13, fontWeight: 650 } }, '脱敏检测'),
-          job?.origin === 'mcp' && pill('MCP', 'info'),
-          job?.stage && pill(job.stage === 'ready' ? '已就绪' : job.stage, job.stage === 'error' ? 'error' : 'ok'),
-          h('span', { style: { flex: 1 } }),
-          button(error ? '重试' : '刷新', refresh),
-        ),
-        h('div', { style: { fontSize: 12, color: COLORS.secondary, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
-          job ? (job.name || job.id) : '尚未选择任务'),
-        error && h('div', { style: { marginTop: 7, color: COLORS.red, fontSize: 12, lineHeight: 1.5 } },
-          error,
-          h('div', { style: { marginTop: 3, color: COLORS.secondary } },
-            '启动数据隐站工作台（桌面“数据隐站工作台”快捷方式或 启动.bat）后，点右上角“重试”。')),
-      ),
-      h('div', { style: { display: 'flex', gap: 4, padding: '6px 10px', borderBottom: `1px solid ${COLORS.border}` } },
-        tabButton('overview', '概览'), tabButton('entities', '实体'), tabButton('audit', '审计')),
-      h('div', { style: { flex: 1, minHeight: 0, overflow: 'auto', padding: 10 } },
-        !job && !error && h('div', { style: { color: COLORS.tertiary, fontSize: 12, lineHeight: 1.8 } },
-          '还没有 MCP 脱敏任务。',
-          h('br'),
-          '在 DSH 对话里让 Agent 调用 sanitize_file / sanitize_document，或先用工作台建任务。'),
-        job && tab === 'overview' && h('div', null,
-          h('div', { style: { display: 'flex', gap: 6 } },
-            h(Metric, { label: '已隐去', value: total, tone: COLORS.ink }),
-            h(Metric, { label: '待确认', value: pending, tone: pending ? COLORS.amber : COLORS.green }),
-            h(Metric, { label: '自检', value: job.exports?.ai?.verify?.verified === false ? '失败' : '待导出', tone: COLORS.green })),
-          h('div', { style: { marginTop: 10, fontSize: 12, lineHeight: 1.8, color: COLORS.secondary } },
-            h('div', null, '类型分布：', Object.keys(byType).length
-              ? Object.entries(byType).map(([key, value]) => key + ' ×' + value).join('、') : '—'),
-            job.warnings && job.warnings.length
-              ? h('div', { style: { marginTop: 5, color: COLORS.amber } }, '提示：' + job.warnings.slice(0, 2).join(' / ')) : null,
-            h('div', { style: { marginTop: 5 } }, '来源：', job.origin === 'mcp' ? 'MCP / Agent 调用' : '工作台'),
-          ),
-          jobId && h('div', { style: { marginTop: 10, borderRadius: 8, overflow: 'hidden', border: `1px solid ${COLORS.border}` } },
-            h('img', {
-              src: `${PREFIX}/jobs/${encodeURIComponent(jobId)}/render/0?mode=out`,
-              alt: '可外发版预览', style: { display: 'block', width: '100%', height: 'auto' },
-            })),
-          h('div', { style: { display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' } },
-            jobId && button('全部接受', () => post(`/jobs/${encodeURIComponent(jobId)}/accept-all`, {}), { disabled: busy }),
-            jobId && button('导出换名版', () => post(`/jobs/${encodeURIComponent(jobId)}/export`, { mode: 'ai' }), { primary: true, disabled: busy }),
-            jobId && button('导出涂黑版', () => post(`/jobs/${encodeURIComponent(jobId)}/export`, { mode: 'human' }), { disabled: busy }),
-          ),
-          notice && h('div', { style: { marginTop: 8, fontSize: 12, color: notice === '已完成' ? COLORS.green : COLORS.red } }, notice),
-          h('div', { style: { marginTop: 10, fontSize: 11, color: COLORS.tertiary, lineHeight: 1.6 } },
-            '预览/操作由本机数据隐站工作台提供；出口自检不通过时成品会被删除。'),
-        ),
-        job && tab === 'entities' && h('div', null,
-          entities.length === 0 && h('div', { style: { color: COLORS.tertiary, fontSize: 12 } }, '没有实体。'),
-          entities.map((entity) => h('div', {
-            key: entity.id,
-            style: {
-              border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '7px 9px',
-              marginBottom: 6, background: entity.status === 'pending' ? COLORS.amberBg : COLORS.bg,
-            },
-          },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-            h('span', { style: { fontSize: 12, fontWeight: 600 } }, entity.label || entity.etype || '实体'),
-            pill(entity.status || 'accepted', entity.status === 'pending' ? 'warn' : 'ok'),
-            h('span', { style: { flex: 1 } }),
-            h('code', { style: { fontSize: 10, color: COLORS.tertiary } }, shortId(entity.id))),
-          h('div', { style: { marginTop: 3, fontSize: 12, color: COLORS.secondary, wordBreak: 'break-all' } },
-            entity.value !== undefined ? `${entity.value}` : '(值不返回给模型)'),
-          h('div', { style: { display: 'flex', gap: 6, marginTop: 5, flexWrap: 'wrap' } },
-            jobId && button('接受', () => post(`/jobs/${encodeURIComponent(jobId)}/entities/${encodeURIComponent(entity.id)}`, { action: 'accept' }), { disabled: busy }),
-            jobId && button('拒绝', () => post(`/jobs/${encodeURIComponent(jobId)}/entities/${encodeURIComponent(entity.id)}`, { action: 'reject' }), { disabled: busy }),
-            jobId && button('替换', () => {
-              const replacement = window.prompt('替换成（假名/假号）：');
-              if (replacement) post(`/jobs/${encodeURIComponent(jobId)}/entities/${encodeURIComponent(entity.id)}`, { action: 'replace', replacement });
-            }, { disabled: busy })),
-          )),
-        ),
-        job && tab === 'audit' && h('div', null,
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 } },
-            h('span', { style: { fontSize: 12, fontWeight: 600 } }, '审计链'),
-            audit?.stats && h('span', { style: { fontSize: 11, color: COLORS.tertiary } }, `共 ${audit.stats.records ?? '—'} 条`),
-            h('span', { style: { flex: 1 } }),
-            h('span', { style: { fontSize: 11, color: auditOk === false ? COLORS.red : COLORS.green } },
-              auditOk === false ? '校验失败' : auditOk === true ? 'HMAC 链校验通过' : '仅本机')),
-          (audit?.records || []).slice(0, 20).map((record) => h('div', {
-            key: record.seq || record.id,
-            style: { borderBottom: `1px solid ${COLORS.border}`, padding: '6px 0', fontSize: 11, color: COLORS.secondary },
-          },
-          h('div', { style: { display: 'flex', gap: 6, alignItems: 'center' } },
-            h('span', { style: { color: COLORS.tertiary } }, '#' + (record.seq ?? '?')),
-            h('span', { style: { color: COLORS.ink } }, record.out_name || record.doc_name || '记录'),
-            h('span', { style: { flex: 1 } }),
-            h('span', { style: { color: COLORS.tertiary } }, String(record.ts || '').slice(0, 19).replace('T', ' '))),
-          h('div', { style: { marginTop: 2, color: COLORS.tertiary, wordBreak: 'break-all' } },
-            (record.mode === 'human' ? '涂黑' : '换名') + ' · ' +
-            (record.counts?.total ?? '—') + ' 实体 · seal ' + (record.seal_no || record.out_name || '—')),
-          )),
-          !audit?.records?.length && h('div', { style: { color: COLORS.tertiary, fontSize: 12 } }, '还没有审计记录（导出后生成）。'),
-        ),
-      ),
-      jobId && h('div', { style: { borderTop: `1px solid ${COLORS.border}`, padding: '7px 10px', display: 'flex', gap: 6, flexWrap: 'wrap' } },
-        h('a', {
-          href: `http://127.0.0.1:${job?.runtime_port || 8760}/console?job=${encodeURIComponent(jobId)}`,
-          target: '_blank', rel: 'noopener',
-          style: { fontSize: 12, color: COLORS.blue, textDecoration: 'none', alignSelf: 'center' },
-        }, '打开完整工作台 ↗'),
-        h('span', { style: { flex: 1 } }),
-        h('span', { style: { fontSize: 10, color: COLORS.tertiary, alignSelf: 'center' } }, '本机处理 · 不联网'),
-      ),
-      );
-    }
-
     function sidebarRight() {
       return (typeof ctxRef.get === 'function' && ctxRef.get('sidebarRight')) || ctxRef.sidebarRight;
     }
@@ -506,6 +272,17 @@ window.__ModuleLoader__.load({
       try {
         const info = await fetch(PREFIX, { headers: { accept: 'application/json' } }).then((r) => r.json());
         if (info && typeof info.target === 'string') base = info.target;
+        let healthOk = false;
+        try {
+          const health = await fetch(PREFIX + '/health', { headers: { accept: 'application/json' } });
+          healthOk = health.ok;
+        } catch {
+          healthOk = false;
+        }
+        if (!healthOk) {
+          // 宿主插件尝试在本机拉起工作台（白名单路径，仅 127.0.0.1）。
+          try { await fetch(PREFIX + '/start', { method: 'POST' }); } catch { /* 启动失败由用户手工启动 */ }
+        }
         const list = await fetch(PREFIX + '/jobs', { headers: { accept: 'application/json' } }).then((r) => r.json());
         const jobs = Array.isArray(list && list.jobs) ? list.jobs : [];
         const pick = jobs.find((item) => item && item.origin === 'mcp') || jobs[0] || null;

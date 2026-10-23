@@ -492,8 +492,16 @@ class TestJobsTools(unittest.TestCase):
         self.assertEqual(out.parent.resolve(),
                          Path(os.environ["YINZHAN_OUTPUT_DIR"]).resolve())
 
-        human = payload(tool("export_sanitize_job",
-                             {"job_id": job_id, "mode": "human"}))
+        challenge = tool("export_sanitize_job",
+                         {"job_id": job_id, "mode": "human"})
+        self.assertTrue(challenge.get("isError"))
+        challenge_payload = payload(challenge)
+        self.assertEqual(challenge_payload["code"], "confirmation_required")
+        self.assertTrue(challenge_payload["confirm_token"])
+        human = payload(tool("export_sanitize_job", {
+            "job_id": job_id, "mode": "human",
+            "confirm_token": challenge_payload["confirm_token"],
+        }))
         self.assertTrue(Path(human["out_path"]).is_file())
         self.assertIsNone(human["mapping_id"])
 

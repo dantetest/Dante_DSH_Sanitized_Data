@@ -362,8 +362,8 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 | 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
 | 构建自检 | `/api/health` version=1.2.0、OCR=True、7 解析器、扫描器齐全 |
 | 绿色版目录 | `dist\Sanitized_Data\`（含 `Sanitized_Data.exe`、`Sanitized_Data_MCP.exe`、`dsh-plugin/`） |
-| 安装包 | **187,703,688 B（179.0 MiB）** / SHA-256 `53E109FA07EFAEAA872DCAE2144339333A834612E45F824D2C0A01BC38C3DA71` |
-| 绿色版 | **211,185,636 B（201.4 MiB）** / SHA-256 `A3704EE0B85519D783E38C18C3DD0E8F7AC3289A694CD286D122BE01A33F940C` |
+| 安装包 | **187,709,481 B（179.0 MiB）** / SHA-256 `94F3F83D935987090C93EF35964A312F18FF8927CA7D12F42C518908C7305481` |
+| 绿色版 | **211,184,187 B（201.4 MiB）** / SHA-256 `A53BD79DE306E5A3BC985ACF3FA14EB23748C1BE3BE83CD9ACC08ECEB9E7813D` |
 
 > 说明：v1.2.0 尚未发布到 Gitea（构建复验通过后再决定发版）。
 > 安装验收（2026-10-23，从工作区外临时目录静默安装）：exit 0 → 启动 health
@@ -378,5 +378,5 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 | `Sanitized_Data-1.2.0-win64.zip` | 4,369,176 B | `B017A43F879EB2AB731616408FA7E54D831FB72C60ED351D500DDE844D652B27` |
 | `Sanitized_Data-1.2.0-linux64.tar.gz` | 4,191,371 B | `007AD2AD993B925F30DF1F09755CED0022C302CE4006DAC9D6708FF7D6032751` |
 
-> ⚠ 2026-10-23 13:20 后插件 T2 改为 DSH 原生 browser tab，且去掉了仿制面板；
-> 本次 v1.2.0 安装包/绿色版内的 `dsh-plugin/` 仍为改版前版本，发布前需重新构建。
+> 最终构建 2026-10-23 19:58（Asia/Shanghai）：已含 T2 原生 browser tab、自动拉起工作台、
+> 去仿制面板、install.ps1 自动 MCP client 配置；安装/卸载 smoke（工作区外）通过。
