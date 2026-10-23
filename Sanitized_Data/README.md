@@ -3,7 +3,7 @@
 > 把敏感抹掉，让文件放行。
 
 > 当前版本 **v1.2.1**（2026-10-23）· Windows 桌面安装包 / 绿色版 / 源码运行 ·
-> 优先看：[安装与卸载指南](docs/install-guide.md) · [v1.2.1 发布说明](docs/release-notes-v1.2.1.md)
+> 优先看：[安装与卸载指南](docs/install-guide.md) · [v1.2.1 发布说明](docs/release-notes-v1.2.1.md) · [发布与推送指南](docs/release-guide.md)
 
 律师、医生、财务要把文件喂给豆包 / Kimi / WorkBuddy，但文件里有当事人姓名、身份证号、病历号、客户账号。
 **数据隐站**在本机把这些内容换掉或涂黑，只把处理过的版本交出去。

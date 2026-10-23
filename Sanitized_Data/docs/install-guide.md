@@ -2,7 +2,7 @@
 
 > 适用版本：**v1.2.1**（Windows 10/11 x64 桌面版；macOS arm64 / Intel DMG；Linux 走源码运行）
 > 更新日期：2026-10-22
-> 相关：[v1.2.1 发布说明](release-notes-v1.2.1.md) · [格式与能力口径表](support-matrix.md) · [构建文档](desktop-build.md) · [项目 README](../README.md)
+> 相关：[v1.2.1 发布说明](release-notes-v1.2.1.md) · [发布与推送指南](release-guide.md) · [格式与能力口径表](support-matrix.md) · [构建文档](desktop-build.md) · [项目 README](../README.md)
 
 数据隐站是**本机处理**工具：引擎只监听 `127.0.0.1`，不发起任何外呼。除源码方式首次安装 Python 依赖外，安装完成后的全部功能**断网可用**。
 
