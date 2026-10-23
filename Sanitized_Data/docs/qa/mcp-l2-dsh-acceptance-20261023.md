@@ -89,7 +89,7 @@ dsh --profile web --patch out\dsh_mcp.patch.yml --no-open --port 60361
 
 | 测试 | 结果 |
 |---|---|
-| `test_mcp_v2.py` | **36/36 通过**（协议/旧工具/11 新工具/resources/prompts/Job/HTTP mock/失败语义） |
+| `test_mcp_v2.py` | **37/37 通过**（协议/旧工具/11 新工具/resources/prompts/Job/HTTP mock/失败语义） |
 | `test_dsh_plugin.py` | **6/6 通过**（插件包结构/工具卡/真实工作台 tab/本地代理回环边界/Node 语法） |
 | `test_pipl_rules.py` | **19/19 通过**（含身份证校验位异常兜底） |
 | `test_ai_export_naming.py` | **29/29 通过**（MCP 段改为 MANAGER 带 seal 命名，成品落 data/out） |
@@ -136,3 +136,5 @@ dsh --profile web --patch out\dsh_mcp.patch.yml --no-open --port 60361
   `YINZHAN_DATA_DIR`（正常安装/源码满足）。
 - human 导出、内嵌媒体、未成年人严格模式仍需人确认；MCP 不代点。
 - 审计链与工作台同源；verify 失败会删成品并返回 isError。
+
+> macOS v1.2.x 未构建：本机无 macOS/GitHub Token，详见 [macos-v1.2.x-status.md](macos-v1.2.x-status.md)。
