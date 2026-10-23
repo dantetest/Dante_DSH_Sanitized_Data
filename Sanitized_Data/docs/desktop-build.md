@@ -347,3 +347,24 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 
 > 本版构建沿用 v1.1.0 的安装/卸载验收结论（安装器仅版本号变化，未改安装逻辑）；
 > 正式分发仍从 Release 下载到普通目录双击安装。
+
+---
+
+## 七、v1.2.0 构建记录（2026-10-23）
+
+> 构建内容：MCP L2 产品体验（15 工具/资源/深链/DSH 工具卡/右侧检测面板）、
+> `Sanitized_Data_MCP.exe` 双入口、`dsh-plugin/` 插件、身份证校验位异常兜底；
+> 版本 `1.2.0`（`config.py` / `app.spec` / `installer.iss` / Web 页面统一）。
+
+| 项 | 结果 |
+|---|---|
+| 版本 | `1.2.0` |
+| 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
+| 构建自检 | `/api/health` version=1.2.0、OCR=True、7 解析器、扫描器齐全 |
+| 绿色版目录 | `dist\Sanitized_Data\`（含 `Sanitized_Data.exe`、`Sanitized_Data_MCP.exe`、`dsh-plugin/`） |
+| 安装包 | **187,537,171 B（178.8 MiB）** / SHA-256 `E5783C69BB9D053C2061A38AAA359C3984ADCD15F6E1A40F0DA16F6B79357608` |
+| 绿色版 | **211,046,097 B（201.3 MiB）** / SHA-256 `F03E21123FD27A5385D61FF813811C0D3780303967469CD4DB5548105067642B` |
+
+> 说明：v1.2.0 尚未发布到 Gitea（构建复验通过后再决定发版）；
+> 安装包沿用 v1.1.0 的安装/卸载验收结论（安装器仅版本号与内容变化）；
+> DSH 插件需用户运行 `{app}\dsh-plugin\install.ps1 -Profile desktop` 并重启 DSH。

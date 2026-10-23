@@ -1,4 +1,4 @@
-# 数据隐站 · Windows 打包脚本
+﻿# 数据隐站 · Windows 打包脚本
 #   powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 #
 # 产物：

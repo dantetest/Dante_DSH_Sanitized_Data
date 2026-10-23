@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   把「数据隐站 · DSH 脱敏检测」插件安装到指定 DSH profile。
 

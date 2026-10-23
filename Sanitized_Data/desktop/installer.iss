@@ -1,4 +1,4 @@
-; 数据隐站 · Windows 安装包（Inno Setup 6）
+﻿; 数据隐站 · Windows 安装包（Inno Setup 6）
 ; 编译：iscc desktop\installer.iss
 ;
 ; 设计要点（面向非技术用户）：

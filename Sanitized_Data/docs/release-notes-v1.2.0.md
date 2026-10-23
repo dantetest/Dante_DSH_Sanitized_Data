@@ -73,6 +73,13 @@
 
 ## 五、产物与校验
 
-> 构建完成后回填。
+> 构建完成（2026-10-23）；尺寸/SHA-256 见下表。
 
-<!--FILL_AFTER_BUILD-->
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `Sanitized_Data_Setup_1.2.0_x64.exe`（安装包） | 187,537,171 B（178.8 MiB） | `E5783C69BB9D053C2061A38AAA359C3984ADCD15F6E1A40F0DA16F6B79357608` |
+| `Sanitized_Data-1.2.0-win64-portable.zip`（绿色版） | 211,046,097 B（201.3 MiB） | `F03E21123FD27A5385D61FF813811C0D3780303967469CD4DB5548105067642B` |
+
+安装包/绿色版含 `Sanitized_Data_MCP.exe` 与 `dsh-plugin/`（DSH 工具卡/面板插件）。
+macOS v1.2.0 未重建，继续使用 v1.1.2 DMG。
+
