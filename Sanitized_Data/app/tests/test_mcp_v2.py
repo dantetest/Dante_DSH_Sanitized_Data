@@ -498,12 +498,17 @@ class TestJobsTools(unittest.TestCase):
         challenge_payload = payload(challenge)
         self.assertEqual(challenge_payload["code"], "confirmation_required")
         self.assertTrue(challenge_payload["confirm_token"])
+        token = challenge_payload["confirm_token"]
         human = payload(tool("export_sanitize_job", {
-            "job_id": job_id, "mode": "human",
-            "confirm_token": challenge_payload["confirm_token"],
+            "job_id": job_id, "mode": "human", "confirm_token": token,
         }))
         self.assertTrue(Path(human["out_path"]).is_file())
         self.assertIsNone(human["mapping_id"])
+        replay = tool("export_sanitize_job", {
+            "job_id": job_id, "mode": "human", "confirm_token": token,
+        })
+        self.assertTrue(replay.get("isError"))
+        self.assertEqual(payload(replay)["code"], "confirmation_required")
 
     def test_export_invalid_job_and_nothing_to_export(self):
         invalid = tool("export_sanitize_job", {"job_id": "j_not_exists"})
