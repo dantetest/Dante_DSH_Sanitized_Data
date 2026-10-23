@@ -163,13 +163,15 @@ window.__ModuleLoader__.load({
       function openPanel() {
         if (!jobId) return;
         setCurrentJob(jobId);
+        const url = workbench || `http://127.0.0.1:8760/console?job=${encodeURIComponent(jobId)}`;
+        // 优先使用 DSH 原生右侧浏览器 tab，直接显示真实工作台（不是仿制面板）。
+        if (openWorkbenchTab(url)) return;
         try {
-          const sr = (typeof ctxRef.get === 'function' && ctxRef.get('sidebarRight')) || ctxRef.sidebarRight;
+          const sr = sidebarRight();
           if (sr && typeof sr.openTab === 'function') sr.openTab(PANEL_KIND);
-          else if (workbench) window.open(workbench, '_blank', 'noopener');
-          else window.open(`/console?job=${encodeURIComponent(jobId)}`, '_blank', 'noopener');
+          else window.open(url, '_blank', 'noopener');
         } catch {
-          if (workbench) window.open(workbench, '_blank', 'noopener');
+          window.open(url, '_blank', 'noopener');
         }
       }
 
@@ -264,8 +266,7 @@ window.__ModuleLoader__.load({
           },
         }, detailText || '(无详情)'),
         h('div', { style: { display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' } },
-          jobId && button('在检测面板复核', openPanel, { primary: true }),
-          workbench && button('打开工作台', () => window.open(workbench, '_blank', 'noopener')),
+          jobId && button('打开工作台', openPanel, { primary: true }),
           jobId && button(busy ? '导出中…' : '导出涂黑版', exportHuman, { disabled: busy }),
         ),
       ),
@@ -488,15 +489,52 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function sidebarRight() {
+      return (typeof ctxRef.get === 'function' && ctxRef.get('sidebarRight')) || ctxRef.sidebarRight;
+    }
+
+    function openWorkbenchTab(url) {
+      if (!url) return false;
+      try {
+        const sr = sidebarRight();
+        if (!sr || typeof sr.openTab !== 'function') return false;
+        const tabs = typeof ctxRef.get === 'function' && ctxRef.get('sidebarRightTabs');
+        if (tabs && typeof tabs.get === 'function' && !tabs.get('browser')) return false;
+        sr.openTab('browser', { params: { url } });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    async function latestWorkbenchUrl() {
+      let base = 'http://127.0.0.1:8760';
+      try {
+        const info = await fetch(PREFIX, { headers: { accept: 'application/json' } }).then((r) => r.json());
+        if (info && typeof info.target === 'string') base = info.target;
+        const list = await fetch(PREFIX + '/jobs', { headers: { accept: 'application/json' } }).then((r) => r.json());
+        const jobs = Array.isArray(list && list.jobs) ? list.jobs : [];
+        const pick = jobs.find((item) => item && item.origin === 'mcp') || jobs[0] || null;
+        return base + '/console' + (pick && pick.id ? '?job=' + encodeURIComponent(pick.id) : '');
+      } catch {
+        return base + '/console';
+      }
+    }
+
     function PanelEntryButton() {
-      const open = () => {
+      const open = async () => {
+        const url = await latestWorkbenchUrl();
+        if (openWorkbenchTab(url)) return;
         try {
-          const sr = (typeof ctxRef.get === 'function' && ctxRef.get('sidebarRight')) || ctxRef.sidebarRight;
+          const sr = sidebarRight();
           if (sr && typeof sr.openTab === 'function') sr.openTab(PANEL_KIND);
-        } catch { /* 没有右侧栏时静默；工具卡里仍可打开工作台 */ }
+          else window.open(url, '_blank', 'noopener');
+        } catch {
+          window.open(url, '_blank', 'noopener');
+        }
       };
       return h('button', {
-        type: 'button', onClick: open, title: '脱敏检测',
+        type: 'button', onClick: open, title: '数据隐站工作台',
         style: {
           appearance: 'none', border: 'none', background: 'transparent', color: 'inherit',
           cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -505,7 +543,7 @@ window.__ModuleLoader__.load({
       }, h('span', {
         style: { width: 18, height: 18, borderRadius: 5, background: COLORS.blueBg, color: COLORS.blue,
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700 },
-      }, '隐'), '脱敏检测');
+      }, '隐'), '数据隐站工作台');
     }
 
     const ctxRef = { get: null, sidebarRight: null };
