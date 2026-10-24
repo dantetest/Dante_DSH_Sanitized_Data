@@ -434,3 +434,20 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 |---|---|---|
 | `Sanitized_Data_Setup_1.2.1_x64.exe` | 195,380,774 B（186.3 MiB） | `A4075560236491288AC6897180880FDAC2B48DB06EC07D5625D45A1169C2B457` |
 | `Sanitized_Data-1.2.1-win64-portable.zip` | 219,758,517 B（209.6 MiB） | `40E6AC29DD2402C5E0CE941AC811D4620627C5B58E80F61C1A29B846E0537979` |
+
+### 8.4 v1.2.2 GTM 热修构建（2026-10-24）
+
+> 目标：冻结 v1.2.1，发布 v1.2.2；补 CKA/GitHub 公开下载、DSH 工作台预热、macOS 重建。
+> Windows 构建自检：`version=1.2.2`、OCR=True、7 解析器、扫描器齐全、`plugin_errors=0`。
+> macOS：GitHub Actions `macos-15` / `macos-15-intel` 双架构，均通过 DMG 挂载→启动→health 冒烟。
+> 两个安装包均未做代码签名/Apple 公证；证书采购下周确认。
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `Sanitized_Data_Setup_1.2.2_x64.exe` | 195,382,606 B（186.3 MiB） | `422D82DECC5840357513B0010982243839AF6DB76D63CBF755CB26D57507E0FF` |
+| `Sanitized_Data-1.2.2-win64-portable.zip` | 219,756,788 B（209.6 MiB） | `7D782B95E0DE1559ED1CA191C4F928FDC2E274BEBC0E670ECD55C66116E323E7` |
+| `Sanitized_Data-1.2.2-arm64.dmg` | 221,090,149 B（210.8 MiB） | `95A54BE9E02A73542718C408A9E870376F3571F77D60278686B81666B32C81BC` |
+| `Sanitized_Data-1.2.2-x64.dmg` | 210,413,754 B（200.7 MiB） | `AC3F4ACFAFCB311E53C361EE6CFFE7F143B20153DA791382DE5A875332E39559` |
+
+> 发布：Gitea Release v1.2.2 与 GitHub Release v1.2.2 均已上传；CKA 运维执行
+> `deploy/publish_update.py --tag v1.2.2` 后 `/download` 才显示本版。

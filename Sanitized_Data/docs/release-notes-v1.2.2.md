@@ -32,10 +32,10 @@
 
 | 文件 | 大小 | SHA-256 |
 |---|---|---|
-| `Sanitized_Data_Setup_1.2.2_x64.exe` | 待回填 | 待回填 |
-| `Sanitized_Data-1.2.2-win64-portable.zip` | 待回填 | 待回填 |
-| `Sanitized_Data-1.2.2-arm64.dmg` | 待回填 | 待回填 |
-| `Sanitized_Data-1.2.2-x64.dmg` | 待回填 | 待回填 |
+| `Sanitized_Data_Setup_1.2.2_x64.exe` | 195,382,606 B（186.3 MiB） | `422D82DECC5840357513B0010982243839AF6DB76D63CBF755CB26D57507E0FF` |
+| `Sanitized_Data-1.2.2-win64-portable.zip` | 219,756,788 B（209.6 MiB） | `7D782B95E0DE1559ED1CA191C4F928FDC2E274BEBC0E670ECD55C66116E323E7` |
+| `Sanitized_Data-1.2.2-arm64.dmg` | 221,090,149 B（210.8 MiB） | `95A54BE9E02A73542718C408A9E870376F3571F77D60278686B81666B32C81BC` |
+| `Sanitized_Data-1.2.2-x64.dmg` | 210,413,754 B（200.7 MiB） | `AC3F4ACFAFCB311E53C361EE6CFFE7F143B20153DA791382DE5A875332E39559` |
 
 ## 四、升级说明
 

@@ -40,3 +40,11 @@
 - 首个打开仍会被 Gatekeeper 拦截：右键 → 打开，或
   `xattr -dr com.apple.quarantine /Applications/Sanitized_Data.app`。
 - 正式对外分发前的 Apple 签名/公证仍未做（需要开发者账号），目前是测试包。
+
+## v1.2.2 补构建（2026-10-24）
+
+- v1.2.2 macOS 双架构已重建，包含 DSH 工作台预热修复；
+- arm64：221,090,149 B / 95A54BE9E02A73542718C408A9E870376F3571F77D60278686B81666B32C81BC
+- x64：210,413,754 B / AC3F4ACFAFCB311E53C361EE6CFFE7F143B20153DA791382DE5A875332E39559
+- Gitea/GitHub Release 已上传；CKA 待运维 publish v1.2.2；
+- 仍为 ad-hoc 签名、未 Apple 公证。
