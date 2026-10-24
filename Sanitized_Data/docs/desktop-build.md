@@ -394,9 +394,9 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 | 版本 | `1.2.1` |
 | 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
 | 构建自检 | `/api/health` version=1.2.1、OCR=True、7 解析器、扫描器齐全 |
-| 安装包 | **195,380,567 B（186.3 MiB）** / SHA-256 `D5058B92C421888A6D4429871DB2A8F672345616835A61F779389F57BCC2BB82`（2026-10-24 重建） |
-| 绿色版 | **219,757,415 B（209.6 MiB）** / SHA-256 `8707B8C3C810BEC37CB7F36CC149810680456C8D37A2667F64B6C6FC8BC08A6D`（2026-10-24 重建） |
-| 插件 | 含原生 browser tab、自动拉起、footer 最近 job、工具卡缩略图、install 自动 MCP；2026-10-24 修复左下角入口默认空白工作台 |
+| 安装包 | **195,380,774 B（186.3 MiB）** / SHA-256 `A4075560236491288AC6897180880FDAC2B48DB06EC07D5625D45A1169C2B457`（2026-10-24 重建） |
+| 绿色版 | **219,758,517 B（209.6 MiB）** / SHA-256 `40E6AC29DD2402C5E0CE941AC811D4620627C5B58E80F61C1A29B846E0537979`（2026-10-24 重建） |
+| 插件 | 含原生 browser tab、启动预热/自动拉起、footer 最近 job、工具卡缩略图、install 自动 MCP；2026-10-24 修复左下角入口默认空白工作台 |
 
 ### 8.1 源码包
 
@@ -426,11 +426,11 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 
 ### 8.3 Windows v1.2.1 重建（2026-10-24）
 
-> 触发：P2/P3 检测收口与 DSH 左下角工作台默认空白页修复需要进入 Windows 安装包。
+> 触发：P2/P3 检测收口与 DSH 左下角工作台默认空白页/启动预热修复需要进入 Windows 安装包。
 > 构建自检通过：`version=1.2.1`、OCR=True、7 解析器、扫描器 `barcode,visual_targets,sign_targets`、`plugin_errors=0`。
 > 新安装包/绿色版已替换 Gitea Release v1.2.1 中的旧 Windows 资产。
 
 | 文件 | 大小 | SHA-256 |
 |---|---|---|
-| `Sanitized_Data_Setup_1.2.1_x64.exe` | 195,380,567 B（186.3 MiB） | `D5058B92C421888A6D4429871DB2A8F672345616835A61F779389F57BCC2BB82` |
-| `Sanitized_Data-1.2.1-win64-portable.zip` | 219,757,415 B（209.6 MiB） | `8707B8C3C810BEC37CB7F36CC149810680456C8D37A2667F64B6C6FC8BC08A6D` |
+| `Sanitized_Data_Setup_1.2.1_x64.exe` | 195,380,774 B（186.3 MiB） | `A4075560236491288AC6897180880FDAC2B48DB06EC07D5625D45A1169C2B457` |
+| `Sanitized_Data-1.2.1-win64-portable.zip` | 219,758,517 B（209.6 MiB） | `40E6AC29DD2402C5E0CE941AC811D4620627C5B58E80F61C1A29B846E0537979` |

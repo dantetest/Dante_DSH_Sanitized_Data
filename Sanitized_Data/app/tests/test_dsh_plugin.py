@@ -53,6 +53,7 @@ class TestDshPluginPackage(unittest.TestCase):
         self.assertIn("kind: 'prefix'", text)
         self.assertIn("/start", text)
         self.assertIn("ensureWorkbench", text)
+        self.assertIn("warmupWorkbench", text)
         # 不允许出现公网 URL 字面量
         urls = re.findall(r"https?://[^\s'\"<>]+", text)
         for url in urls:

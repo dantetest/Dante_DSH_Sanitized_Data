@@ -332,7 +332,13 @@ window.__ModuleLoader__.load({
         if (!url && recent && recent.jobId) {
           url = 'http://127.0.0.1:8760/console?job=' + encodeURIComponent(recent.jobId);
         }
-        if (!url) url = await latestWorkbenchUrl();
+        if (!url) {
+          url = await latestWorkbenchUrl();
+        } else {
+          // 有 recent 深链时也要先确保本机工作台已启动，否则重启后
+          // 浏览器仍会撞上 8760 未监听（ERR_CONNECTION_REFUSED）。
+          await latestWorkbenchUrl();
+        }
         if (openWorkbenchTab(url)) return;
         window.open(url, '_blank', 'noopener');
       };

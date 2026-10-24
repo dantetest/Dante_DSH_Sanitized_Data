@@ -180,7 +180,20 @@ function proxyHandler(req, res) {
   });
 }
 
+let warmupPromise = null;
+
+function warmupWorkbench() {
+  if (process.env.YINZHAN_NO_WARMUP === '1') return null;
+  if (!warmupPromise) {
+    // DSH 启动后在后台拉起/确认工作台，避免重启后第一次点左下角时
+    // 浏览器先打开一个 127.0.0.1:8760，服务却还没开始监听（ERR_CONNECTION_REFUSED）。
+    warmupPromise = ensureWorkbench().catch(() => null);
+  }
+  return warmupPromise;
+}
+
 export function apply(ctx) {
+  void warmupWorkbench();
   return ctx.effect(
     () => ctx.webServer.register({
       kind: 'prefix',
