@@ -89,8 +89,8 @@
 
 | 文件 | 大小 | SHA-256 |
 |---|---|---|
-| `Sanitized_Data_Setup_1.2.1_x64.exe`（安装包） | 187,706,160 B（179.0 MiB） | `CDAD54068520099216D76742AE8ACF0E9CEC573FC5482EA1DF82E64BDBE45B4A` |
-| `Sanitized_Data-1.2.1-win64-portable.zip`（绿色版） | 211,194,458 B（201.4 MiB） | `B1B8A5B602CD448D4FB9682DAF2A069BA5D9E4074D1063988C5F4601DEEF9DA1` |
+| `Sanitized_Data_Setup_1.2.1_x64.exe`（安装包，2026-10-24 重建） | 195,380,567 B（186.3 MiB） | `D5058B92C421888A6D4429871DB2A8F672345616835A61F779389F57BCC2BB82` |
+| `Sanitized_Data-1.2.1-win64-portable.zip`（绿色版，2026-10-24 重建） | 219,757,415 B（209.6 MiB） | `8707B8C3C810BEC37CB7F36CC149810680456C8D37A2667F64B6C6FC8BC08A6D` |
 
 安装包/绿色版含 `Sanitized_Data_MCP.exe` 与 `dsh-plugin/`（DSH 工具卡/真实工作台）。
 
@@ -107,4 +107,16 @@ macOS v1.2.1 双架构测试包已由 GitHub Actions 重建并通过冒烟，包
   `xattr -dr com.apple.quarantine /Applications/Sanitized_Data.app`。
 - Gitea Release 已上传 DMG 与 `SHA256SUMS-macos-1.2.1.txt`；CKA 清单待运维执行
   `deploy/publish_update.py --tag v1.2.1` 后包含 macOS 资产。
+
+## 七、Windows 重建（2026-10-24）
+
+Windows 安装包/绿色版已按最新 `main`（P2/P3 检测收口 + DSH 左下角工作台默认空白页修复）重建，并替换 v1.2.1 Release 中的旧 Windows 资产：
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `Sanitized_Data_Setup_1.2.1_x64.exe` | 195,380,567 B（186.3 MiB） | `D5058B92C421888A6D4429871DB2A8F672345616835A61F779389F57BCC2BB82` |
+| `Sanitized_Data-1.2.1-win64-portable.zip` | 219,757,415 B（209.6 MiB） | `8707B8C3C810BEC37CB7F36CC149810680456C8D37A2667F64B6C6FC8BC08A6D` |
+
+- 安装包包含 `dsh-plugin/lib/client.js` 的最新修复：左下角入口打开空白工作台，不再自动挑最近一个（可能是样例）job。
+- CKA 更新清单仍需运维执行 `deploy/publish_update.py --tag v1.2.1`。
 

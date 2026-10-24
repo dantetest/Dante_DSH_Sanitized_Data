@@ -315,10 +315,10 @@ window.__ModuleLoader__.load({
           // 宿主插件尝试在本机拉起工作台（白名单路径，仅 127.0.0.1）。
           try { await fetch(PREFIX + '/start', { method: 'POST' }); } catch { /* 启动失败由用户手工启动 */ }
         }
-        const list = await fetch(PREFIX + '/jobs', { headers: { accept: 'application/json' } }).then((r) => r.json());
-        const jobs = Array.isArray(list && list.jobs) ? list.jobs : [];
-        const pick = jobs.find((item) => item && item.origin === 'mcp') || jobs[0] || null;
-        return base + '/console' + (pick && pick.id ? '?job=' + encodeURIComponent(pick.id) : '');
+        // 左下角入口默认打开空白工作台；不要自动挑「最近一个 job」，
+        // 否则会把上一次测试/样例任务（含虚构数据）当成用户工作台展示。
+        // 真实工具结果仍通过 recent.url / recent.jobId 打开对应深链。
+        return base + '/console';
       } catch {
         return base + '/console';
       }

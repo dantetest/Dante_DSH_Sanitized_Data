@@ -394,9 +394,9 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 | 版本 | `1.2.1` |
 | 构建命令 | `powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1` |
 | 构建自检 | `/api/health` version=1.2.1、OCR=True、7 解析器、扫描器齐全 |
-| 安装包 | **187,706,160 B（179.0 MiB）** / SHA-256 `CDAD54068520099216D76742AE8ACF0E9CEC573FC5482EA1DF82E64BDBE45B4A` |
-| 绿色版 | **211,194,458 B（201.4 MiB）** / SHA-256 `B1B8A5B602CD448D4FB9682DAF2A069BA5D9E4074D1063988C5F4601DEEF9DA1` |
-| 插件 | 含原生 browser tab、自动拉起、footer 最近 job、工具卡缩略图、install 自动 MCP |
+| 安装包 | **195,380,567 B（186.3 MiB）** / SHA-256 `D5058B92C421888A6D4429871DB2A8F672345616835A61F779389F57BCC2BB82`（2026-10-24 重建） |
+| 绿色版 | **219,757,415 B（209.6 MiB）** / SHA-256 `8707B8C3C810BEC37CB7F36CC149810680456C8D37A2667F64B6C6FC8BC08A6D`（2026-10-24 重建） |
+| 插件 | 含原生 browser tab、自动拉起、footer 最近 job、工具卡缩略图、install 自动 MCP；2026-10-24 修复左下角入口默认空白工作台 |
 
 ### 8.1 源码包
 
@@ -423,3 +423,14 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 | 冒烟 | 双架构均通过：挂载 DMG → 启动 .app → `/api/health` |
 | 服务器 | 已上传 Gitea Release v1.2.1：两个 DMG + `SHA256SUMS-macos-1.2.1.txt` |
 | CKA | 待运维 `git pull` 后执行 `deploy/publish_update.py --tag v1.2.1`，清单会含 macOS 资产 |
+
+### 8.3 Windows v1.2.1 重建（2026-10-24）
+
+> 触发：P2/P3 检测收口与 DSH 左下角工作台默认空白页修复需要进入 Windows 安装包。
+> 构建自检通过：`version=1.2.1`、OCR=True、7 解析器、扫描器 `barcode,visual_targets,sign_targets`、`plugin_errors=0`。
+> 新安装包/绿色版已替换 Gitea Release v1.2.1 中的旧 Windows 资产。
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `Sanitized_Data_Setup_1.2.1_x64.exe` | 195,380,567 B（186.3 MiB） | `D5058B92C421888A6D4429871DB2A8F672345616835A61F779389F57BCC2BB82` |
+| `Sanitized_Data-1.2.1-win64-portable.zip` | 219,757,415 B（209.6 MiB） | `8707B8C3C810BEC37CB7F36CC149810680456C8D37A2667F64B6C6FC8BC08A6D` |

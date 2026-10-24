@@ -42,6 +42,8 @@ class TestDshPluginPackage(unittest.TestCase):
         self.assertNotIn("sidebar.right.pane.tab", text)
         self.assertIn("数据隐站工作台", text)
         self.assertIn("latestWorkbenchUrl", text)
+        self.assertNotIn("jobs.find", text)
+        self.assertIn("return base + '/console'", text)
         self.assertIn("PREFIX + '/start'", text)
 
     def test_host_proxy_is_loopback_only(self):
