@@ -32,15 +32,17 @@
   <section class="dl-hero" style="border-bottom:0;padding-bottom:0">
     <div class="eyebrow">MCP · MODEL CONTEXT PROTOCOL</div>
     <h1 style="font-size:clamp(26px,3.4vw,36px)">让你的 Agent 自动脱敏</h1>
-    <p class="lead" style="max-width:760px">
+    <p class="lead" style="max-width:780px">
       MCP 是 Agent 调用外部工具的通用协议。装好这个服务之后，
-      Claude Desktop、Cursor 等支持 MCP 的客户端在把本地文件交给模型之前，
-      会先调用本机的脱敏工具 —— 模型拿到的永远是处理过的那一份。
+      <b>WorkBuddy、Codex、Claude Desktop、Cursor</b> 等支持本地 MCP 的客户端，
+      在把文件交给模型之前会先调用本机的脱敏工具 —— 模型拿到的永远是处理过的那一份。
+      <br><span class="muted">2026-10-23 实测：WorkBuddy 5.8.4 与 Codex 已跑通「发现 15 工具 → 真实脱敏 → 导出」。</span>
     </p>
     <div class="chips">
       <span class="chip">stdio 本地进程</span>
       <span class="chip">不经网络</span>
       <span class="chip">15 个工具 + 资源</span>
+      <span class="chip">WorkBuddy / Codex 已实测</span>
       <span class="chip">无需账号</span>
     </div>
     <div class="btns">
@@ -124,26 +126,106 @@ get_sanitize_audit { "job_id": "..." }</pre>
     </div>
   </section>
 
+
+  <section>
+    <h2>谁可以接？先看你用的是哪类客户端</h2>
+    <p class="muted" style="max-width:860px;margin-bottom:22px">
+      数据隐站的 MCP 是<b>本机 stdio 服务</b>：只能接「能启动本地程序」的桌面 / CLI / IDE Agent。
+      网页版、手机 App、云端 Agent（豆包、Kimi 网页版等）没有本机进程通道，请走「手动档」。
+    </p>
+    <div class="grid g2">
+      <div class="card">
+        <div class="ico">自动档</div>
+        <h3>本机 Agent（MCP 直连）</h3>
+        <p>WorkBuddy、Codex、Claude Desktop、Claude Code、Cursor、VS Code Copilot、Kimi Code CLI、Qwen Code、TRAE、Cherry Studio、Chatbox、DSH 等。</p>
+        <p class="muted">Agent 在把文件交给模型前自动调用本机脱敏，原文不出本机。</p>
+      </div>
+      <div class="card">
+        <div class="ico">手动档</div>
+        <h3>网页版 / 手机 App / 云端</h3>
+        <p>豆包、Kimi 网页版、ChatGPT 网页、腾讯元宝等：先用「数据隐站」脱敏，再导出换名版上传/发送。</p>
+        <p class="muted">这类产品当前不开放本地进程入口，不是配置问题。</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:30px">兼容性一览（2026-10-23）</h3>
+    <table class="spec">
+      <tr><th>WorkBuddy 5.8.4（Windows）</th><td><b>✅ 已真机实测</b>：配置在 <code>~/.workbuddy-ai/mcp.json</code>，首次接入需在 MCP 页面点「信任」；15 个工具全部发现，<code>list_rules</code> / <code>sanitize_file</code> / <code>export_sanitize_job</code> 真实调用通过。</td></tr>
+      <tr><th>Codex（CLI / Desktop）</th><td><b>✅ 已实测（含模型驱动）</b>：配置在 <code>~/.codex/config.toml</code>；Codex 自带 MCP 客户端发现 15 工具，<code>codex exec</code> 模型真实调用 <code>list_rules</code> 成功；默认超时 10s/60s，建议调 120/600；<b>非交互调用需放行审批</b>（否则报「MCP tool call requires approval」）。</td></tr>
+      <tr><th>Claude Desktop / Claude Code</th><td><b>✅ 官方支持本地 stdio</b>：<code>claude_desktop_config.json</code> / <code>.mcp.json</code>（<code>claude mcp add</code>）。</td></tr>
+      <tr><th>Cursor / Kimi Code CLI / Qwen Code / TRAE / Cherry Studio / Chatbox</th><td><b>✅ 官方文档支持本地 stdio</b>（本次未逐台真机验证；各客户端版本差异以对应官方文档为准）。</td></tr>
+      <tr><th>VS Code（GitHub Copilot Chat 1.141+）</th><td><b>✅ 可配置（文档 + 本地 bundle 证据）</b>：命令面板 <code>MCP: Add Server → Command (stdio)</code>，或工作区 <code>.vscode/mcp.json</code>（根键是 <code>servers</code>）；需已登录 Copilot Chat。</td></tr>
+      <tr><th>豆包 / Kimi 网页版 / ChatGPT 网页 / 元宝</th><td><b>❌ 当前未开放用户可配置的本地 stdio 入口</b>（截至 2026-10-23）。豆包 2.21.10 客户端 bundle 中已出现本地 MCP 组件痕迹（<code>transport_type=STDIO</code>、暂存更新含 <code>mcp-helper.exe</code>），但尚无用户入口，未证实可接；现阶段请用「手动档」（工作台脱敏后导出再上传）。</td></tr>
+      <tr><th>DSH（DeepSeek Harness）</th><td><b>✅ 原生集成</b>：随包插件提供工具卡与真实工作台深链；实测 MCP 工具链路 <b>4–427 ms</b>（小工具 4–93ms、list_rules 427ms），源码版冷启动 1–5s（生产建议安装版 exe），工具超时 600s。</td></tr>
+    </table>
+    <div class="note" style="margin-top:18px">
+      <b>一句话：</b>能装本地客户端就选「自动档」，只有网页/手机入口就选「手动档」。不确定时，先在客户端里问一句「列出 sanitized-data 的工具」，能看到 15 个工具就说明接入成功。
+    </div>
+  </section>
   <section id="config">
     <h2>配置（复制即用）</h2>
     <p class="muted" style="margin-bottom:8px">
-      把下面的 JSON 合并进客户端的配置文件，重启客户端即可。
-      <b style="color:var(--seal);font-weight:400">路径要改成你自己的绝对路径。</b>
+      安装版<b>不需要 Python</b>：<code>command</code> 指向 <code>Sanitized_Data_MCP.exe</code>，<code>args</code> 留空。
+      把 JSON 合并进对应客户端的配置文件后，<b>完全重启客户端</b>。
+      <b style="color:var(--seal);font-weight:400">路径要改成你自己的绝对路径（反斜杠写两个）。</b>
     </p>
 
-    <h3 style="margin-top:30px">Claude Desktop</h3>
+    <h3 style="margin-top:30px">WorkBuddy（腾讯）· 已实测 5.8.4</h3>
     <p class="muted" style="margin-bottom:10px">
-      Windows：<code>%APPDATA%\Claude\claude_desktop_config.json</code> ·
-      macOS：<code>~/Library/Application Support/Claude/claude_desktop_config.json</code>
+      配置文件：<code>~/.workbuddy-ai/mcp.json</code>（Windows：<code>C:\Users\&lt;你&gt;\.workbuddy-ai\mcp.json</code>）
+    </p>
+    <div class="codewrap">
+      <pre id="cfg-workbuddy">{
+  "mcpServers": {
+    "sanitized-data": {
+      "type": "stdio",
+      "command": "C:\\Users\\<你>\\AppData\\Local\\Programs\\Sanitized_Data\\Sanitized_Data_MCP.exe",
+      "args": [],
+      "timeout": 60000
+    }
+  }
+}</pre>
+      <button class="btn copy" data-target="cfg-workbuddy">复制</button>
+    </div>
+    <div class="note" style="margin-top:16px">
+      <b>① 从哪进（5.8.4 实测路径）：</b>左侧「Experts · Skills · Connectors」→ 顶部「Connectors」→ 右上角「Custom connectors」→「MCP Server Management」。
+      「+ Add MCP」打开的就是 <code>C:\Users\&lt;你&gt;\.workbuddy-ai\mcp.json</code>（页面会显式显示该路径），粘贴 JSON 后保存。
+      <br><b>② 怎么算成功：</b>列表里 <code>sanitized-data</code> 显示<b>绿点 + 15/15 tools enabled + 开关打开</b>；没有绿点就是没启动，先查 exe 路径/权限（首次接入需信任/启用，未信任时 WorkBuddy 会静默不启动）。
+      <br><b>③ 路径注意：</b>5.8.4 实际读取 <code>~/.workbuddy-ai/mcp.json</code>；旧文档里的 <code>~/.workbuddy/mcp.json</code> 在该版本不生效。
+      <br><b>实测（2026-10-23）：</b>15 个工具全部发现，<code>list_rules</code>、<code>sanitize_file</code>（Job + 6 实体）、<code>export_sanitize_job</code>（成品 + 审计）真实跑通。
+    </div>
+
+    <h3 style="margin-top:30px">Codex（OpenAI）· 已实测</h3>
+    <p class="muted" style="margin-bottom:10px">
+      配置文件：<code>~/.codex/config.toml</code>（追加；Windows 用 TOML 单引号，反斜杠不用转义）
+    </p>
+    <div class="codewrap">
+      <pre id="cfg-codex">[mcp_servers.sanitized-data]
+command = 'C:\Users\<你>\AppData\Local\Programs\Sanitized_Data\Sanitized_Data_MCP.exe'
+args = []
+startup_timeout_sec = 120
+tool_timeout_sec = 600
+required = true</pre>
+      <button class="btn copy" data-target="cfg-codex">复制</button>
+    </div>
+    <div class="note" style="margin-top:16px">
+      Codex 默认 <code>startup_timeout_sec=10</code>、<code>tool_timeout_sec=60</code>；数据隐站大文件可能超过 60s，建议如上调到 120 / 600。
+      Codex 目前把 MCP 当工具集使用：<b>prompts 没有产品入口、图片预览不保证显示</b>；核心脱敏结论以文本 JSON 为准。
+      <br><b>非交互调用注意：</b>在 <code>codex exec</code> / 自动化里调用 MCP 工具会被审批策略拦住（报 <code>MCP tool call requires approval</code>），需要显式放行审批或使用允许模式；交互式客户端首次调用会弹审批。
+    </div>
+
+    <h3 style="margin-top:30px">Claude Desktop / Claude Code</h3>
+    <p class="muted" style="margin-bottom:10px">
+      Claude Desktop：<code>%APPDATA%\Claude\claude_desktop_config.json</code>
+      · macOS：<code>~/Library/Application Support/Claude/claude_desktop_config.json</code>
+      · Claude Code：<code>claude mcp add --transport stdio sanitized-data -- "C:\...\Sanitized_Data_MCP.exe"</code>
     </p>
     <div class="codewrap">
       <pre id="cfg-claude">{
   "mcpServers": {
     "sanitized-data": {
-      "command": "python",
-      "args": [
-        "D:\\Sanitized_Data\\app\\server\\mcp_server.py"
-      ]
+      "command": "C:\\Users\\<你>\\AppData\\Local\\Programs\\Sanitized_Data\\Sanitized_Data_MCP.exe",
+      "args": []
     }
   }
 }</pre>
@@ -152,38 +234,81 @@ get_sanitize_audit { "job_id": "..." }</pre>
 
     <h3 style="margin-top:30px">Cursor</h3>
     <p class="muted" style="margin-bottom:10px">
-      项目内 <code>.cursor/mcp.json</code> 或全局 <code>~/.cursor/mcp.json</code>
+      配置文件：<code>~/.cursor/mcp.json</code>（或项目 <code>.cursor/mcp.json</code>）
     </p>
     <div class="codewrap">
       <pre id="cfg-cursor">{
   "mcpServers": {
     "sanitized-data": {
-      "command": "python",
-      "args": ["D:\\Sanitized_Data\\app\\server\\mcp_server.py"],
-      "env": {}
+      "type": "stdio",
+      "command": "C:\\Users\\<你>\\AppData\\Local\\Programs\\Sanitized_Data\\Sanitized_Data_MCP.exe",
+      "args": []
     }
   }
 }</pre>
       <button class="btn copy" data-target="cfg-cursor">复制</button>
     </div>
 
-    <h3 style="margin-top:30px">其他 MCP 客户端（通用 stdio）</h3>
+    <h3 style="margin-top:30px">VS Code（GitHub Copilot Chat 1.141+）</h3>
+    <p class="muted" style="margin-bottom:10px">
+      工作区 <code>.vscode/mcp.json</code>：注意根键是 <code>servers</code>（不是 <code>mcpServers</code>）；
+      或命令面板执行 <code>MCP: Add Server → Command (stdio)</code>。需已安装并登录 Copilot Chat。
+    </p>
     <div class="codewrap">
-      <pre id="cfg-generic"><span class="c"># 启动命令（stdio，JSON-RPC 2.0）</span>
-python D:\Sanitized_Data\app\server\mcp_server.py
+      <pre id="cfg-vscode">{
+  "servers": {
+    "sanitized-data": {
+      "type": "stdio",
+      "command": "C:\\Users\\<你>\\AppData\\Local\\Programs\\Sanitized_Data\\Sanitized_Data_MCP.exe",
+      "args": []
+    }
+  }
+}</pre>
+      <button class="btn copy" data-target="cfg-vscode">复制</button>
+    </div>
 
-<span class="c"># Linux / macOS</span>
-python3 /opt/sanitized-data/app/server/mcp_server.py</pre>
-      <button class="btn copy" data-target="cfg-generic">复制</button>
+    <h3 style="margin-top:30px">Kimi Code CLI</h3>
+    <p class="muted" style="margin-bottom:10px">
+      配置文件：<code>~/.kimi-code/mcp.json</code>（Kimi 网页/App 不支持本地 stdio，仅 Kimi Code CLI 可接）
+    </p>
+    <div class="codewrap">
+      <pre id="cfg-kimi">{
+  "mcpServers": {
+    "sanitized-data": {
+      "command": "C:\\Users\\<你>\\AppData\\Local\\Programs\\Sanitized_Data\\Sanitized_Data_MCP.exe",
+      "args": [],
+      "startupTimeoutMs": 30000,
+      "toolTimeoutMs": 600000
+    }
+  }
+}</pre>
+      <button class="btn copy" data-target="cfg-kimi">复制</button>
+    </div>
+
+    <h3 style="margin-top:30px">源码运行（开发者）</h3>
+    <div class="codewrap">
+      <pre id="cfg-source"><span class="c"># 需要 Python 3.10+ 与 pip install -r app/server/requirements.txt</span>
+python -X utf8 app\server\mcp_server.py</pre>
+      <button class="btn copy" data-target="cfg-source">复制</button>
     </div>
 
     <div class="note" style="margin-top:26px">
-      <b>路径怎么写：</b>Windows 的 JSON 里反斜杠要写两个 <code>\\</code>；
-      如果 <code>python</code> 不在 PATH 里，把 <code>command</code> 换成 Python 的绝对路径，
-      例如 <code>C:\\Python312\\python.exe</code>。
-      安装版可直接用 <code>C:\\Users\\&lt;你&gt;\\AppData\\Local\\Programs\\Sanitized_Data\\Sanitized_Data_MCP.exe</code>
-      （<code>args</code> 留空），无需 Python。
+      <b>大文件必须先 job 轮询（2026-10-24 实测）：</b>
+      单次 <code>sanitize_document</code> 实测 <b>30 页/1113 实体≈37s、40 页/1477≈66s、50 页/1840≈113s</b>；
+      <b>超过 30 页或 1000 个待脱敏信息，单次调用就会撞客户端超时</b>，请改用
+      <code>sanitize_file</code>（≤15s 返回 job_id）→ <code>get_sanitize_job</code> 每 2–5 秒轮询 → <code>export_sanitize_job</code>。
+      <br><b>阈值建议：</b>≤20–25 页 / ≤700–800 实体可用单次；&gt;30 页或 &gt;1000 实体必须 job 轮询；<b>&gt;150 页或 &gt;5000 实体</b>当前桌面版后处理可能超过 10 分钟（实测 150 页停在 detecting 95%），建议按章节/每 20–30 页拆分，或改用本机工作台。
+      <br><b>常见问题：</b>① 配置保存后没反应 → 检查路径、WorkBuddy 的「信任」、并完全重启客户端；② 图片：<code>sanitize_document</code> 会返回一张 PNG 预览（服务端已回），但 WorkBuddy 5.8.4 聊天内不显示、<code>export_sanitize_job</code> 不返回图片 → 请打开 <code>out_path</code> 或本机工作台看；③ 找不到日志 → stdout 只走 JSON-RPC，日志在 stderr，客户端 MCP 日志里可见。
     </div>
+
+    <div class="note" style="margin-top:26px">
+      <b>不同客户端的复核能力不一样（2026-10-23 实测）：</b>
+      <br>• <b>WorkBuddy 5.8.4</b>：MCP prompts 不会变成斜杠命令；resources 能列出但读取在本次环境报 <code>Service error</code>；复核请直接用工具（<code>get_sanitize_entities</code> → <code>update_sanitize_entity</code> → <code>export_sanitize_job</code>）。
+      <br>• <b>图片/预览</b>：当前 <code>export_sanitize_job</code> 主要返回文本 + 文件路径；图片请看 <code>out_path</code> 或 <code>open_sanitize_workbench</code> 打开的工作台，不要把「聊天里看到缩略图」当成成功判据。
+      <br>• <b>human 涂黑不可逆</b>：客户端不会自动弹确认框；服务端会返回 <code>confirmation_required</code> + <code>confirm_token</code>（300s），需要你在对话里明确确认后再让 Agent 带 token 重试。先看实体清单与影响面再确认。
+      <br>• <b>DSH</b>：MCP 工具链路实测 4–427ms（小工具 4–93ms），`toolCallTimeoutMs=600000`（600 秒）；工具卡/插件代理属 DSH 插件层，与 MCP 链路分开计。<br>• <b>工作台深链前提</b>：数据隐站 Web 服务在运行，且 MCP 与 Web 共享同一数据目录（安装版同目录；源码/dev 请把 <code>YINZHAN_DATA_DIR</code> 指向 Web 的 data 目录）；否则返回 <code>workbench_available=false</code> 并给启动引导。
+    </div>
+
   </section>
 
   <section>
@@ -191,27 +316,39 @@ python3 /opt/sanitized-data/app/server/mcp_server.py</pre>
     <div class="steps">
       <div class="step">
         <div>
-          <h3>先在终端里试跑一次</h3>
-          <pre>python app/server/mcp_server.py
-<span class="c"># 看到这行就说明服务本身没问题：</span>
-[sanitized-data] MCP 服务已启动（stdio），工具：sanitize_document, redact_text, ...</pre>
+          <h3>先确认服务本身能启动</h3>
+          <pre><span class="c"># 安装版：直接运行（会等待 JSON-RPC 输入，Ctrl+C 退出）</span>
+"C:\Users\&lt;你&gt;\AppData\Local\Programs\Sanitized_Data\Sanitized_Data_MCP.exe"
+
+<span class="c"># 源码版：</span>
+python -X utf8 app/server/mcp_server.py
+<span class="c"># 看到启动日志即说明服务正常（日志走 stderr，不污染协议）</span></pre>
         </div>
       </div>
       <div class="step">
         <div>
-          <h3>在客户端里提问</h3>
+          <h3>在客户端里问一句</h3>
           <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
-            重启客户端后，让它调用工具：<code>帮我把 D:\合同.pdf 脱敏后总结要点</code>。
-            Agent 会先调 <code>sanitize_document</code> 拿到脱敏副本，再基于副本回答。
+            重启客户端后，向 Agent 提问：<code>列出 sanitized-data 这个 MCP 提供的所有工具</code>。
+            期望看到 <b>15 个工具</b>（sanitize_document、redact_text、sanitize_file、export_sanitize_job 等）。
           </p>
         </div>
       </div>
       <div class="step">
         <div>
-          <h3>确认客户端认到了服务</h3>
+          <h3>再跑一次真实脱敏</h3>
           <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
-            在客户端的 MCP / 工具列表里应该能看到 <code>sanitized-data</code>，
-            以及它下面的 15 个工具与资源。
+            说：<code>用 sanitize_file 把 D:\合同.pdf 脱敏（mode=ai），再 export_sanitize_job，告诉我 job_id 和输出路径</code>。
+            成功会返回 <code>job_id</code>、输出文件路径、实体数量与审计结果；可再用 <code>open_sanitize_workbench</code> 打开同一 Job 的工作台复核。
+          </p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>按客户端的检查入口排障</h3>
+          <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
+            WorkBuddy：插件 → MCP 服务器（状态灯 + 信任）；Codex：<code>codex mcp list</code> / <code>codex mcp get sanitized-data</code>；
+            Claude Desktop：Developer → MCP 日志；Cursor：Output → MCP Logs。改了配置后记得<b>完全重启</b>客户端。
           </p>
         </div>
       </div>
@@ -243,7 +380,7 @@ python3 /opt/sanitized-data/app/server/mcp_server.py</pre>
 
 <footer>
   <div class="wrap inner">
-    <span>数据隐站 · Sanitized_Data v1.2.1</span>
+    <span>数据隐站 · Sanitized_Data v1.2.2</span>
     <span>·</span>
     <span>本机处理 · 不联网 · 不留存</span>
     <span style="margin-left:auto">

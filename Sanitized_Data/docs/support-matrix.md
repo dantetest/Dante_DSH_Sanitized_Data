@@ -1,6 +1,6 @@
-# 支持矩阵与能力口径（v1.2.1）
+# 支持矩阵与能力口径（v1.2.2）
 
-> 口径基准：**v1.2.1**（代码基线 v1.2.1 发布提交（tag `v1.2.1`）；2026-10-23）
+> 口径基准：**v1.2.2**（代码基线 v1.2.2 发布提交（tag `v1.2.2`）；2026-10-23）
 > 用途：对内施工/QA、对外文档/销售的统一口径。**与代码不一致时以代码和门禁测试为准**，并回头修本表。
 > 判定三档：
 
@@ -109,7 +109,7 @@
 | 源码运行（Windows / Linux / macOS） | **支持** | 需 Python 3.10+；服务器部署见 README |
 | macOS 桌面版（.app/.dmg） | **未发布** | workflow 就绪，未随 v1.1.2 构建（需 GitHub Actions 与 ad-hoc 签名） |
 | Web 服务 / 内网部署 | **支持** | 只监听 `127.0.0.1` 或反代部署；无账号体系，不要直接绑公网 |
-| MCP 接入（Claude Desktop / Cursor / DSH 等） | **支持（L2 server 侧）** | stdio 服务；旧 4 工具 + 11 个 `sanitize_*` 复核/Job 工具；resources/prompts；Web 服务运行时共享同一 Job 与深链；T1 工具卡已实现；T2 用 DSH 原生 browser tab 打开真实工作台（仿制面板已移除） |
+| MCP 接入（WorkBuddy 5.8.4 / Codex 已真机实测；Codex 含模型驱动 `codex exec` 已实测（非交互需放行审批）；Claude Desktop / Claude Code / Cursor / VS Code Copilot（`servers` 格式，需登录 Copilot Chat）/ Kimi Code CLI / Qwen Code / TRAE / Cherry Studio / Chatbox 官方支持 stdio；豆包 / Kimi 网页版暂未开放本地 stdio 入口（豆包客户端已有本地 MCP 组件痕迹，未证实）） | **支持（L2 server 侧）** | stdio 服务；15 工具 + resources/prompts；Web 服务运行时共享同一 Job 与深链；**WorkBuddy 实际配置路径 `~/.workbuddy-ai/mcp.json` + 需 MCP 页面「信任」**；Codex 需调大 `tool_timeout_sec`；大文件建议 job 轮询（`sanitize_file`→`get_sanitize_job`→`export_sanitize_job`）；DSH 原生工具卡/工作台已实现 |
 
 ---
 

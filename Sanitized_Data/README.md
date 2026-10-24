@@ -2,8 +2,8 @@
 
 > 把敏感抹掉，让文件放行。
 
-> 当前版本 **v1.2.1**（2026-10-23）· Windows 桌面安装包 / 绿色版 / 源码运行 ·
-> 优先看：[安装与卸载指南](docs/install-guide.md) · [v1.2.1 发布说明](docs/release-notes-v1.2.1.md) · [发布与推送指南](docs/release-guide.md)
+> 当前版本 **v1.2.2**（2026-10-24）· Windows 桌面安装包 / 绿色版 / 源码运行 ·
+> 优先看：[安装与卸载指南](docs/install-guide.md) · [v1.2.2 发布说明](docs/release-notes-v1.2.2.md) · [发布与推送指南](docs/release-guide.md)
 
 律师、医生、财务要把文件喂给豆包 / Kimi / WorkBuddy，但文件里有当事人姓名、身份证号、病历号、客户账号。
 **数据隐站**在本机把这些内容换掉或涂黑，只把处理过的版本交出去。
@@ -45,7 +45,7 @@ chmod +x start.sh && ./start.sh
 
 浏览器会自动打开 `http://127.0.0.1:8760`（端口被占会顺延到 8840）。
 
-> **Windows 用户不想装 Python？** 直接用桌面安装包 `Sanitized_Data_Setup_1.2.1_x64.exe`
+> **Windows 用户不想装 Python？** 直接用桌面安装包 `Sanitized_Data_Setup_1.2.2_x64.exe`
 > 或绿色版，双击即用；安装/卸载/升级见 [docs/install-guide.md](docs/install-guide.md)。
 
 **用法**：首页 →「打开控制台」→ 把文件拖进纸堆 → 等识别 → 左右对照 → 漏了的用「框选补漏」→ 交付。
@@ -76,39 +76,40 @@ BIND_HOST=0.0.0.0 ./start.sh          # 也可用环境变量
 
 ## MCP 接入
 
-`app/server/mcp_server.py`（安装版为 `Sanitized_Data_MCP.exe`）是一个 stdio 的 MCP 服务，
-让支持 MCP 的 Agent 在把文件交给模型之前先调用本机脱敏。
+`Sanitized_Data_MCP.exe`（源码版为 `app/server/mcp_server.py`）是一个 **stdio** MCP 服务：
+让支持本地 MCP 的 Agent 在把文件交给模型之前，先调用本机脱敏。
 
-| 工具 | 作用 |
-|---|---|
-| `sanitize_document` | 脱敏一个本地文件，返回可外发副本路径（旧契约冻结，新增 job_id/origin/workbench_url） |
-| `redact_text` | 就地脱敏一段文本（适合发日志/报错前过一遍） |
-| `check_support` / `list_rules` | 检查格式 / 列出规则包 |
-| `sanitize_file` + `get_sanitize_job` + `get_sanitize_entities` | Job 化：建任务、轮询、查实体（默认不回原值） |
-| `update_sanitize_entity` / `mark_sanitize_region` / `accept_all_sanitize_entities` | 复核：接受/拒绝/替换/框选补漏 |
-| `export_sanitize_job` / `get_sanitize_audit` / `rehydrate_sanitize_text` | 导出、审计链校验、本机还原 |
-| `open_sanitize_workbench` | 返回 `http://127.0.0.1:<端口>/console?job=<id>` 深链，打开同一 Job |
+**已支持 / 已实测的客户端**（2026-10-23）：
 
-另提供 `sanitize://jobs/...` resources 与 `review-before-export` / `workbench-fallback` prompts。
-MCP 优先通过本机 Web 服务共享 Job（同一审计/成品/深链），Web 未启动时回退本地 JobManager。
+| 客户端 | 本地 stdio | 配置位置 | 实测/备注 |
+|---|---|---|---|
+| **WorkBuddy 5.8.4** | ✅ | `~/.workbuddy-ai/mcp.json` | **已真机实测**：15 工具、`list_rules`/`sanitize_file`/`export_sanitize_job` 跑通；首次接入需在 MCP 页面点「信任」；注意 5.8.4 不读 `~/.workbuddy/mcp.json` |
+| **Codex（CLI/Desktop）** | ✅ | `~/.codex/config.toml` | **已实测（含模型驱动 `codex exec` 真实调用 `list_rules`）**；默认 `startup/tool` 超时 10/60s，建议 120/600；非交互调用需放行审批 |
+| Claude Desktop / Claude Code | ✅ | `claude_desktop_config.json` / `claude mcp add` | 官方支持 stdio |
+| Cursor / Kimi Code CLI / Qwen Code / TRAE / Cherry Studio / Chatbox | ✅ | 各自 `mcp.json` / 设置页 | 官方文档支持本地 stdio（未逐台真机验证） |
+| VS Code（GitHub Copilot Chat 1.141+） | ✅ | `.vscode/mcp.json`（根键 `servers`）或命令面板 `MCP: Add Server → Command (stdio)` | 需登录 Copilot Chat；bundle 证据已确认 stdio 支持（未做模型调用） |
+| DSH（DeepSeek Harness） | ✅ | profile patch `cordis.patch.yml` 的 `@deepseek-ai/dsh-mcp-client`（非 `mcpServers` JSON） | 已集成；MCP 工具链路实测 4–427 ms，源码版冷启动 1–5s（生产建议安装版 exe），工具超时 600s |
+| 豆包 / Kimi 网页版 / 云端 Agent | ❌/未证实 | — | 当前未开放用户可配置的本地 stdio 入口；豆包 2.21.10 bundle 已有本地 MCP 组件痕迹（`transport_type=STDIO`、`mcp-helper.exe`），但无用户入口、未证实可接——官网不写死「永远不支持」 |
 
-Claude Desktop 的 `claude_desktop_config.json`（源码运行）：
+安装版配置（Windows，`args` 留空、无需 Python）：
 
 ```json
 {
   "mcpServers": {
     "sanitized-data": {
-      "command": "python",
-      "args": ["D:\\Sanitized_Data\\app\\server\\mcp_server.py"]
+      "command": "C:\\Users\\<你>\\AppData\\Local\\Programs\\Sanitized_Data\\Sanitized_Data_MCP.exe",
+      "args": []
     }
   }
 }
 ```
 
-安装版可直接把 `command` 指向
-`%LOCALAPPDATA%\Programs\Sanitized_Data\Sanitized_Data_MCP.exe`（args 留空）。
-DSH 集成（`@deepseek-ai/dsh-mcp-client` 的 patch 写法、工具名 `mcp__sanitized-data__*`）见
-[docs/impl/mcp.md](docs/impl/mcp.md)；完整配置/验证步骤见 `/mcp` 页面。
+- WorkBuddy 额外一步：**插件 → MCP 服务器 → 点信任/启用**（未信任不会启动进程）；Codex 建议把 `startup_timeout_sec` 调到 120、`tool_timeout_sec` 调到 600；
+- 大文件一律走 job 轮询：`sanitize_file`（≤15s 返回 job_id）→ `get_sanitize_job` 每 2–5s 轮询 → `export_sanitize_job`；
+  实测阈值（v1.2.1）：单次 `sanitize_document` 30 页/1113 实体≈37s、40 页/1477≈66s、50 页/1840≈113s；
+  **>30 页或 >1000 实体必须轮询**，**>150 页或 >5000 实体当前版本后处理可能 >10 分钟**（150 页实测停在 detecting 95%），建议按 20–30 页拆分。
+- **WorkBuddy 5.8.4 真机测试细节**见 `docs/impl/mcp.md` 与 `/mcp` 页面（实际路径、信任、协议协商 2025-11-25→2025-06-18、真实调用记录）；
+- DSH 集成（`@deepseek-ai/dsh-mcp-client` 的 patch 写法、工具名 `mcp__sanitized-data__*`）见 `docs/impl/mcp.md §5`；完整配置/验证步骤见 `/mcp` 页面。
 
 DSH 原生体验（工具卡 + 左下角「数据隐站工作台」真实 WebUI）用随包插件：
 
@@ -199,13 +200,13 @@ journalctl -u sanitized-data -f               # systemd 自己的 console 日志
 
 | 产物 | 说明 |
 |---|---|
-| `Sanitized_Data_Setup_1.2.1_x64.exe` | Windows x64 安装包（Inno Setup）：装到 `%LOCALAPPDATA%\Programs\Sanitized_Data`，**不需要管理员权限**；自动检查/静默补齐 WebView2 与 VC++ 运行库 |
-| `Sanitized_Data-1.2.1-win64-portable.zip` | Windows x64 绿色版：解压后直接运行 `Sanitized_Data.exe`，免安装 |
+| `Sanitized_Data_Setup_1.2.2_x64.exe` | Windows x64 安装包（Inno Setup）：装到 `%LOCALAPPDATA%\Programs\Sanitized_Data`，**不需要管理员权限**；自动检查/静默补齐 WebView2 与 VC++ 运行库 |
+| `Sanitized_Data-1.2.2-win64-portable.zip` | Windows x64 绿色版：解压后直接运行 `Sanitized_Data.exe`，免安装 |
 | `Sanitized_Data-1.1.2-arm64.dmg` | macOS Apple Silicon（M 系列）DMG：ad-hoc 签名测试包，拖入 Applications 即用；首次打开需右键 → 打开（未公证） |
 | `Sanitized_Data-1.1.2-x64.dmg` | macOS Intel DMG：ad-hoc 签名测试包，同上 |
 | `dist/Sanitized_Data/` | PyInstaller onedir 构建目录（绿色版解压前的目录形态） |
 
-安装包体积 / SHA-256 随 [v1.2.1 发布说明](docs/release-notes-v1.2.1.md) 的发布记录给出。
+安装包体积 / SHA-256 随 [v1.2.2 发布说明](docs/release-notes-v1.2.2.md) 的发布记录给出。
 
 | 文件 | 作用 |
 |---|---|
@@ -220,7 +221,7 @@ journalctl -u sanitized-data -f               # systemd 自己的 console 日志
 详细说明：
 
 - 安装 / 卸载 / 升级 / 数据位置 / 断网 / 排障：[docs/install-guide.md](docs/install-guide.md)
-- v1.2.1 发布说明（P1 补丁：MCP elicitation/confirm_token、工具卡缩略图与最近 Job footer、install.ps1 自动 MCP 配置、工作台自动拉起；macOS 未重建）：[docs/release-notes-v1.2.1.md](docs/release-notes-v1.2.1.md)
+- v1.2.2 发布说明（GTM 热修：CKA/GitHub 下载、DSH 工作台预热、macOS 重建；无 licensing）：[docs/release-notes-v1.2.2.md](docs/release-notes-v1.2.2.md)\n- v1.2.1 发布说明（P1 补丁：MCP elicitation/confirm_token、工具卡缩略图与最近 Job footer、install.ps1 自动 MCP 配置、工作台自动拉起；macOS 未重建）：[docs/release-notes-v1.2.1.md](docs/release-notes-v1.2.1.md)
 - v1.2.0 发布说明（MCP L2 产品体验：15 工具/资源/深链/DSH 工具卡与真实工作台 browser tab；身份证校验位异常兜底）：[docs/release-notes-v1.2.0.md](docs/release-notes-v1.2.0.md)
 - v1.1.3 发布说明（AI 换名版可读性/一致性、检测增强、YuNet 侧脸、日志/状态可观测性）：[docs/release-notes-v1.1.3.md](docs/release-notes-v1.1.3.md)
 - v1.1.2 发布说明（P2/P3：扫描件 verify 零 OCR 快检、warning 去重、整页证件收紧、异常大码框待确认、TIF rasterio Orientation 修复）：[docs/release-notes-v1.1.2.md](docs/release-notes-v1.1.2.md)
@@ -440,7 +441,7 @@ python ..\tests\e2e.py
 | TIF Orientation | v1.1.2 起 Pillow 与 rasterio 两条路径 parse/render/export 都按 tag 274 转正（Orientation 1–8），成品不再带 274；rasterio 大图路径的中性化地理变换已同步旋转/交换宽高 |
 | 扫描件 OCR 精度 | 清晰扫描件够用，手写体和低分辨率照片会漏 |
 | XLSX 宏 | `.xlsm` 导出后不保留宏（会告警） |
-| 安装包 | v1.2.1 Windows 安装包 / 绿色版（`Sanitized_Data_Setup_1.2.1_x64.exe` / `Sanitized_Data-1.2.1-win64-portable.zip`），装到用户目录、无需管理员；**未做代码签名**，SmartScreen / 杀软可能提示「未知发布者」，体积与 SHA-256 见发布说明 |
+| 安装包 | v1.2.2 Windows 安装包 / 绿色版（`Sanitized_Data_Setup_1.2.2_x64.exe` / `Sanitized_Data-1.2.2-win64-portable.zip`），装到用户目录、无需管理员；**未做代码签名**，SmartScreen / 杀软可能提示「未知发布者」，体积与 SHA-256 见发布说明 |
 
 ---
 
@@ -495,7 +496,7 @@ python app\server\rehydrate.py --job j_ab12cd34 回答.txt    # 还原成 回答
 ```
 
 **能不能不装 Python？**
-可以：Windows 用户用桌面安装包（`Sanitized_Data_Setup_1.2.1_x64.exe`）或绿色版即可，Python 运行时与 OCR 模型已打进程序，不需要本机装 Python（安装包约 160 MB，精确体积/SHA-256 见 [v1.2.1 发布说明](docs/release-notes-v1.2.1.md)）。安装步骤见 [docs/install-guide.md](docs/install-guide.md)。源码运行仍需 Python 3.10+。
+可以：Windows 用户用桌面安装包（`Sanitized_Data_Setup_1.2.2_x64.exe`）或绿色版即可，Python 运行时与 OCR 模型已打进程序，不需要本机装 Python（安装包约 160 MB，精确体积/SHA-256 见 [v1.2.2 发布说明](docs/release-notes-v1.2.2.md)）。安装步骤见 [docs/install-guide.md](docs/install-guide.md)。源码运行仍需 Python 3.10+。
 
 **端口被占了？**
 自动从 8760 往后找，实际端口写在 `data/runtime.json`。
