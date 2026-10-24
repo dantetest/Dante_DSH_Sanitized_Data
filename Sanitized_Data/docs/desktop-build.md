@@ -387,7 +387,7 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 
 > P1 补丁：能力感知 MCP elicitation（human 导出）、一次性 confirm_token 兜底、
 > 工具卡图片缩略图/最近 Job footer、install.ps1 自动 MCP 配置、工作台自动拉起。
-> macOS 本环境无法构建（无 Mac/无 GH_TOKEN），仅 Windows/Linux 产物。
+> macOS 于 2026-10-24 通过 GitHub Actions 补构建，双架构 DMG 见 §8.2。
 
 | 项 | 结果 |
 |---|---|
@@ -405,5 +405,21 @@ arm64 包一次构建成功（127.8 MB DMG），但当时同样存在「0 个解
 | `Sanitized_Data-1.2.1-win64.zip` | 4,376,355 B | `3BE3D4CF36D09551580D24ADB62156CF425AC37954D8DB072C5F9C309ACF1A0E` |
 | `Sanitized_Data-1.2.1-linux64.tar.gz` | 4,197,419 B | `A9410E3C5354DFBECE4C9D9ED346A372A30B603A2910426CD97938FA923BD5B6` |
 
-> 发布：2026-10-23 已创建 Gitea Release v1.2.1（Windows/Linux；macOS 因无构建环境未发布）：
+> 发布：2026-10-23 已创建 Gitea Release v1.2.1（Windows/Linux；macOS 补构建见 §8.2）：
 > https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.2.1
+
+### 8.2 macOS v1.2.1 补构建（2026-10-24）
+
+> 构建源：GitHub `dantetest/Dante_DSH_Sanitized_Data`，commit `dd6ec59`；
+> 包含最新 main（P2/P3 检测收口）。版本号仍为 `1.2.1`，作为 v1.2.1 的 macOS 补构建。
+
+| 项 | 结果 |
+|---|---|
+| 构建机 | GitHub Actions `macos-15`（arm64）+ `macos-15-intel`（x64） |
+| Workflow | `.github/workflows/build-macos.yml`，run 40087148675 |
+| 签名 | ad-hoc（`codesign --force --deep --sign -`），未公证，首次打开右键→打开 |
+| arm64 DMG | **221,285,796 B（211.0 MiB）** / SHA-256 `4C9CBFAE778DC215F55CA86BA93F9E851A66A8E79D35E67ED586C61AED42849F` |
+| x64 DMG | **210,325,842 B（200.6 MiB）** / SHA-256 `B6146DAC0F0F071E862F7F54221F4A2EBD5DAAEA3DE70D6014896E494FECA55F` |
+| 冒烟 | 双架构均通过：挂载 DMG → 启动 .app → `/api/health` |
+| 服务器 | 已上传 Gitea Release v1.2.1：两个 DMG + `SHA256SUMS-macos-1.2.1.txt` |
+| CKA | 待运维 `git pull` 后执行 `deploy/publish_update.py --tag v1.2.1`，清单会含 macOS 资产 |

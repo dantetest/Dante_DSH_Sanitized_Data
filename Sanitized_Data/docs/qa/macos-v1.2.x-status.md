@@ -1,34 +1,42 @@
-# macOS v1.2.x 构建状态（2026-10-23）
+# macOS v1.2.1 构建状态（2026-10-24）
 
-> 任务：P1 #5「macOS v1.2.0 重建」。
-> 结论：**本环境无法构建/验证 macOS 包；不是代码阻塞，是构建资源/凭证阻塞。**
+> 任务：最新 macOS 双架构重建。
+> 结论：**已完成**。GitHub Actions `build-desktop-macos` 双架构构建、ad-hoc 签名、DMG、冒烟测试全部通过；
+> DMG 已上传 Gitea Release `v1.2.1`，CKA 更新清单待运维执行 publish_update.py。
 
-## 环境检查
+## 构建
 
-- 当前构建机：Windows 10 Pro 19045 x64，无 macOS runner。
-- 历史 macOS 包由 GitHub Actions 构建（`.github/workflows/build-desktop-macos.yml`，仓库
-  `dantetest/Dante_DSH_Sanitized_Data`）；需要 `GH_TOKEN`（Contents:Read+Write、Actions:Read）
-  才能推送/触发/下载 artifacts。
-- 本次检查：`GH_TOKEN` / `GITHUB_TOKEN` 均未设置；本机无 `gh`；`git credential fill github.com`
-  无可用非交互凭证。
-- Gitea 侧没有 macOS runner；不能用 Windows 交叉编译 PyInstaller macOS 包。
+- 构建源：GitHub `dantetest/Dante_DSH_Sanitized_Data`，commit `dd6ec59`
+- Workflow：`.github/workflows/build-macos.yml`
+- Run：`https://github.com/dantetest/Dante_DSH_Sanitized_Data/actions/runs/40087148675`
+- Runner：`macos-15`（arm64）+ `macos-15-intel`（x64）
+- 版本：`1.2.1`（`app/server/yinzhan/config.py`）
+- 签名：ad-hoc（`codesign --force --deep --sign -`），未做 Apple 公证
+- 冒烟：挂载 DMG → 启动 `.app` → `/api/health`，两架构均通过
 
-## 现状
+## 产物
 
-- v1.2.0 与 v1.2.1 Windows/Linux 已发布；Windows 安装包/绿色版/源码包已挂 Gitea Release。
-- macOS 仍为 v1.1.2 DMG（arm64 / Intel，ad-hoc 签名，未公证）：
-  `Sanitized_Data-1.1.2-arm64.dmg` / `Sanitized_Data-1.1.2-x64.dmg`。
-- macOS 没有 v1.2.x 的 MCP L2、DSH 插件、身份证校验位兜底、native browser tab 等更新。
+| 架构 | 文件 | 大小 | SHA-256 |
+|---|---|---|---|
+| Apple Silicon | `Sanitized_Data-1.2.1-arm64.dmg` | 221,285,796 B | `4C9CBFAE778DC215F55CA86BA93F9E851A66A8E79D35E67ED586C61AED42849F` |
+| Intel | `Sanitized_Data-1.2.1-x64.dmg` | 210,325,842 B | `B6146DAC0F0F071E862F7F54221F4A2EBD5DAAEA3DE70D6014896E494FECA55F` |
 
-## 解锁条件（按优先级）
+汇总文件：`SHA256SUMS-macos-1.2.1.txt`
 
-1. 提供 GitHub PAT（`GH_TOKEN`）并允许推送 `dantetest/Dante_DSH_Sanitized_Data`；
-   运行 `out/_macos_build_github.py`（需把版本/Release 目标更新到 v1.2.x），等待双架构
-   Actions 完成；
-2. 或提供一台 macOS + Python 3.12 + 项目依赖的构建机，执行 `desktop/build_macos.sh`；
-3. 构建后必须补：DMG 冒烟、`/api/health` 版本、ad-hoc 签名/未公证说明、Gitea Release 附件。
+## 服务器
 
-## 不作为
+- Gitea Release：`https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/tag/v1.2.1`
+- 已上传：两个 DMG + `SHA256SUMS-macos-1.2.1.txt`
+- CKA：`publish_update.py` 已支持 `--macos-arm64/--macos-x64`，运维在 CKA `git pull` 后执行：
+  ```bash
+  sudo -u sanitized env GITEA_TOKEN="$(sudo cat /etc/sanitized-data-gitea-token)" \
+    python3 deploy/publish_update.py --tag v1.2.1
+  ```
+  之后 `/updates/latest.json` 的 `assets` 会包含 `macos_arm64` / `macos_x64`，下载页 macOS 按钮自动可用。
 
-- 不伪造 macOS 产物，不把 Windows 包改名为 DMG。
-- 没有 macOS 实测前，不在 Release 说明中声称 macOS v1.2.x 可用。
+## 说明
+
+- 本次 macOS 包包含最新 `main` 代码（含 P2/P3 检测收口）；版本号仍为 1.2.1，作为 v1.2.1 的 macOS 补构建。
+- 首个打开仍会被 Gatekeeper 拦截：右键 → 打开，或
+  `xattr -dr com.apple.quarantine /Applications/Sanitized_Data.app`。
+- 正式对外分发前的 Apple 签名/公证仍未做（需要开发者账号），目前是测试包。

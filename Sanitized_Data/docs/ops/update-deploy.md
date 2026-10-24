@@ -93,7 +93,9 @@ curl -s https://cka.blctek.com:8443/updates/latest.json
   "release_url": "https://cka.blctek.com:8443/download",
   "assets": {
     "windows_installer": {"name": "...", "url": "...", "size": 0, "sha256": "..."},
-    "windows_portable":  {"name": "...", "url": "...", "size": 0, "sha256": "..."}
+    "windows_portable":  {"name": "...", "url": "...", "size": 0, "sha256": "..."},
+    "macos_arm64":       {"name": "...", "url": "...", "size": 0, "sha256": "..."},
+    "macos_x64":         {"name": "...", "url": "...", "size": 0, "sha256": "..."}
   }
 }
 ```
@@ -119,5 +121,5 @@ GET https://cka.blctek.com:8443/updates/latest.json
 
 ## 8. 与下载页的关系
 
-建议后续把 CKA `/download` 的“下载按钮”从 Gitea Release 改成 `/updates/` 当前版本资产；
-这样即使客户端没开自动更新，客户手动下载也不需要 Gitea 账号。
+CKA `/download` 页面现在通过 JS 读取 `/updates/latest.json`，Windows 安装包/绿色版和 macOS DMG 按钮都指向本服务器资产；
+清单未发布时按钮显示“暂未发布”，不再跳 Gitea 登录页。macOS 资产只有清单里存在时才可下载。

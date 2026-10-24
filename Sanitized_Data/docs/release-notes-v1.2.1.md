@@ -81,7 +81,7 @@
    需要 DSH 客户端插件仍以本插件为准，升级 DSH 后需做宿主契约回归。
 4. MCP exe 与插件依赖本机 Web 工作台时，须先启动数据隐站；否则 MCP 回退本地、
    面板/深链不可用（会明确提示）。
-5. Windows 安装包未代码签名；macOS v1.2.1 未重建，继续 v1.1.2 DMG。
+5. Windows 安装包未代码签名；macOS 已补构建 v1.2.1 双架构 DMG（ad-hoc 签名、未公证）；
 
 ## 五、产物与校验
 
@@ -93,5 +93,18 @@
 | `Sanitized_Data-1.2.1-win64-portable.zip`（绿色版） | 211,194,458 B（201.4 MiB） | `B1B8A5B602CD448D4FB9682DAF2A069BA5D9E4074D1063988C5F4601DEEF9DA1` |
 
 安装包/绿色版含 `Sanitized_Data_MCP.exe` 与 `dsh-plugin/`（DSH 工具卡/真实工作台）。
-macOS v1.2.1 未重建，继续使用 v1.1.2 DMG。
+
+## 六、macOS 补构建（2026-10-24）
+
+macOS v1.2.1 双架构测试包已由 GitHub Actions 重建并通过冒烟，包含最新 main（含 P2/P3 检测收口）：
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `Sanitized_Data-1.2.1-arm64.dmg`（Apple Silicon） | 221,285,796 B（211.0 MiB） | `4C9CBFAE778DC215F55CA86BA93F9E851A66A8E79D35E67ED586C61AED42849F` |
+| `Sanitized_Data-1.2.1-x64.dmg`（Intel） | 210,325,842 B（200.6 MiB） | `B6146DAC0F0F071E862F7F54221F4A2EBD5DAAEA3DE70D6014896E494FECA55F` |
+
+- ad-hoc 签名、未 Apple 公证；首次打开：右键 → 打开，或
+  `xattr -dr com.apple.quarantine /Applications/Sanitized_Data.app`。
+- Gitea Release 已上传 DMG 与 `SHA256SUMS-macos-1.2.1.txt`；CKA 清单待运维执行
+  `deploy/publish_update.py --tag v1.2.1` 后包含 macOS 资产。
 

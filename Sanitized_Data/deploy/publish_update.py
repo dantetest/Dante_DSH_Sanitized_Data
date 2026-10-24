@@ -103,6 +103,8 @@ def main() -> int:
     ap.add_argument("--ca-bundle", default=os.environ.get("GITEA_CA_BUNDLE"))
     ap.add_argument("--installer", default="", help="本地安装包路径（给定时不下载）")
     ap.add_argument("--portable", default="", help="本地绿色版路径（给定时不下载）")
+    ap.add_argument("--macos-arm64", default="", help="本地 macOS arm64 DMG 路径")
+    ap.add_argument("--macos-x64", default="", help="本地 macOS x64 DMG 路径")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -113,34 +115,52 @@ def main() -> int:
     token = os.environ.get(args.token_env, "").strip()
     context = ssl_context(args.ca_bundle)
 
+    selected: dict[str, Path | dict] = {}
+    for key, value in (
+        ("windows_installer", args.installer),
+        ("windows_portable", args.portable),
+        ("macos_arm64", args.macos_arm64),
+        ("macos_x64", args.macos_x64),
+    ):
+        if value:
+            selected[key] = Path(value)
+
     release = None
     if not (args.installer and args.portable):
         if not token:
-            die(f"缺少环境变量 {args.token_env}（只读 release token）")
-        api = args.gitea.rstrip("/") + f"/api/v1/repos/{args.repo}/releases/tags/{tag}"
-        try:
-            release = request_json(api, token, context)
-        except Exception as e:
-            die(f"读取 Gitea Release 失败: {type(e).__name__}: {e}")
+            if not selected:
+                die(f"缺少环境变量 {args.token_env}（只读 release token）")
+        else:
+            api = args.gitea.rstrip("/") + f"/api/v1/repos/{args.repo}/releases/tags/{tag}"
+            try:
+                release = request_json(api, token, context)
+            except Exception as e:
+                die(f"读取 Gitea Release 失败: {type(e).__name__}: {e}")
 
     dest = Path(args.dest).resolve()
     dest.mkdir(parents=True, exist_ok=True)
     url_prefix = args.url_prefix.rstrip("/")
 
-    selected = {}
-    if args.installer:
-        selected["windows_installer"] = Path(args.installer)
-    if args.portable:
-        selected["windows_portable"] = Path(args.portable)
-
     remote_assets = (release or {}).get("assets") or []
+    if release:
+        if "windows_installer" not in selected:
+            hit = pick(remote_assets, lambda n: n.startswith("Sanitized_Data_Setup_") and n.endswith(".exe"))
+            if hit:
+                selected["windows_installer"] = hit
+        if "windows_portable" not in selected:
+            hit = pick(remote_assets, lambda n: n.startswith("Sanitized_Data-") and n.endswith("-win64-portable.zip"))
+            if hit:
+                selected["windows_portable"] = hit
+        if "macos_arm64" not in selected:
+            hit = pick(remote_assets, lambda n: n == f"Sanitized_Data-{version}-arm64.dmg")
+            if hit:
+                selected["macos_arm64"] = hit
+        if "macos_x64" not in selected:
+            hit = pick(remote_assets, lambda n: n == f"Sanitized_Data-{version}-x64.dmg")
+            if hit:
+                selected["macos_x64"] = hit
     if not selected:
-        installer = pick(remote_assets, lambda n: n.startswith("Sanitized_Data_Setup_") and n.endswith(".exe"))
-        portable = pick(remote_assets, lambda n: n.startswith("Sanitized_Data-") and n.endswith("-win64-portable.zip"))
-        if not installer or not portable:
-            die("Release 缺少安装包或绿色版资产（需要 Setup*.exe 与 *win64-portable.zip）")
-        selected["windows_installer"] = installer
-        selected["windows_portable"] = portable
+        die("Release 没有可用资产（需要 Windows Setup/portable，或 macOS DMG）")
 
     if args.dry_run:
         print("DRY-RUN", version, "release assets:")
