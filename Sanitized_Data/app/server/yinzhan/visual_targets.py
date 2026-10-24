@@ -515,12 +515,52 @@ def _yunet_detector(width: int, height: int):
         return detector
 
 
-def _yunet_face_pass(rgb: np.ndarray) -> list[tuple[Box, float, str]]:
-    """YuNet 推理，返回 ``(rect, confidence, "yunet")``。
+def _yunet_tile_plan(width: int, height: int, cap: int) -> list[tuple[int, int, int, int, float]]:
+    """YuNet 大图分块：与 Haar 不同，每块保留到 1600 长边，避免二次缩小丢小脸。"""
+    mode = str(os.environ.get("YINZHAN_SCAN_FACE_YUNET_TILE", "auto")).strip().lower()
+    long_edge = max(int(width), int(height))
+    forced = 0
+    if mode in ("0", "false", "no", "off", "single"):
+        forced = 1
+    elif mode in ("2", "3"):
+        forced = int(mode)
+    grid = forced
+    if grid == 0:
+        if long_edge <= _FACE_TILE_TRIGGER:
+            grid = 1
+        elif long_edge <= 4800:
+            grid = 2
+        else:
+            grid = 3
+    if grid <= 1:
+        scale = min(1.0, cap / float(long_edge)) if long_edge else 1.0
+        return [(0, 0, int(width), int(height), scale)]
+    tile_cap = _env_int("YINZHAN_SCAN_FACE_YUNET_TILE_CAP", 1600,
+                        minimum=640, maximum=2400)
+    try:
+        overlap = float(os.environ.get("YINZHAN_SCAN_FACE_YUNET_TILE_OVERLAP", "0.12") or 0.12)
+    except (TypeError, ValueError):
+        overlap = 0.12
+    overlap = max(0.0, min(0.45, overlap))
+    tile_w = width / float(max(1.0, grid - (grid - 1) * overlap))
+    tile_h = height / float(max(1.0, grid - (grid - 1) * overlap))
+    step_x = tile_w * (1.0 - overlap)
+    step_y = tile_h * (1.0 - overlap)
+    tiles: list[tuple[int, int, int, int, float]] = []
+    for gy in range(grid):
+        for gx in range(grid):
+            x0 = min(max(0, int(round(gx * step_x))), max(0, int(round(width - tile_w))))
+            y0 = min(max(0, int(round(gy * step_y))), max(0, int(round(height - tile_h))))
+            x1 = min(int(width), int(round(x0 + tile_w)))
+            y1 = min(int(height), int(round(y0 + tile_h)))
+            tw, th = max(1, x1 - x0), max(1, y1 - y0)
+            scale = min(1.0, tile_cap / float(max(tw, th)))
+            tiles.append((x0, y0, x1, y1, scale))
+    return tiles
 
-    输入限制长边（默认 1600）：既保留侧脸细节，又控制 CPU 开销；模型缺失/旧版
-    OpenCV 无 FaceDetectorYN 时返回空，调用方自动回退 Haar 照片补检。
-    """
+
+def _yunet_face_pass(rgb: np.ndarray, allow_tiles: bool = True) -> list[tuple[Box, float, str]]:
+    """YuNet 推理：大图按 2x2/3x3 分块（每块保留 1600 长边）以提升小脸/侧脸召回。"""
     if _FACE_CASCADES_OVERRIDE is not None or not _yunet_enabled():
         return []
     if cv2 is None:
@@ -533,45 +573,67 @@ def _yunet_face_pass(rgb: np.ndarray) -> list[tuple[Box, float, str]]:
         return []
     cap = _env_int("YINZHAN_SCAN_FACE_YUNET_MAX_SIDE", 1600,
                    minimum=640, maximum=2400)
-    scale = min(1.0, cap / float(max(width, height)))
     try:
-        small = (cv2.resize(rgb, (max(1, int(round(width * scale))),
-                                  max(1, int(round(height * scale)))),
-                            interpolation=cv2.INTER_AREA)
-                 if scale < 0.999 else rgb)
-        bgr = cv2.cvtColor(small, cv2.COLOR_RGB2BGR)
-    except Exception:
-        return []
-    detector = _yunet_detector(bgr.shape[1], bgr.shape[0])
-    if detector is None:
-        return []
-    try:
-        with _YUNET_LOCK:
-            _ok, faces = detector.detect(bgr)
-    except Exception:
-        return []
+        score_min = float(os.environ.get("YINZHAN_SCAN_FACE_YUNET_SCORE", "0.50") or 0.50)
+    except (TypeError, ValueError):
+        score_min = 0.50
     found: list[tuple[Box, float, str]] = []
-    try:
+    if allow_tiles:
+        tile_plan = _yunet_tile_plan(width, height, cap)
+    else:
+        tile_plan = [(0, 0, width, height, min(1.0, cap / float(max(width, height))))]
+    tiled = len(tile_plan) > 1
+    for (tx0, ty0, tx1, ty1, scale) in tile_plan:
         try:
-            score_min = float(os.environ.get("YINZHAN_SCAN_FACE_YUNET_SCORE", "0.50") or 0.50)
-        except (TypeError, ValueError):
-            score_min = 0.50
+            tile = rgb[ty0:ty1, tx0:tx1]
+            if tile.size == 0:
+                continue
+            if scale < 0.999:
+                tile = cv2.resize(
+                    tile,
+                    (max(1, int(round((tx1 - tx0) * scale))),
+                     max(1, int(round((ty1 - ty0) * scale)))),
+                    interpolation=cv2.INTER_AREA,
+                )
+            bgr = cv2.cvtColor(tile, cv2.COLOR_RGB2BGR)
+        except Exception:
+            continue
+        detector = _yunet_detector(bgr.shape[1], bgr.shape[0])
+        if detector is None:
+            continue
+        try:
+            with _YUNET_LOCK:
+                _ok, faces = detector.detect(bgr)
+        except Exception:
+            continue
         for face in faces if faces is not None else []:
             try:
                 x, y, fw, fh = (float(v) for v in list(face)[:4])
                 score = float(face[-1])
             except Exception:
                 continue
-            if fw <= 0 or fh <= 0 or score < score_min:
+            if fw <= 0 or fh <= 0 or score < score_min or scale <= 0:
                 continue
-            rect: Box = (x / scale, y / scale, (x + fw) / scale,
-                         (y + fh) / scale)
-            # 过小的检出框在照片里多为图案误报；保留 16px 以上（原图）
+            local_rect: Box = (x / scale, y / scale,
+                               (x + fw) / scale, (y + fh) / scale)
+            if tiled:
+                # 分块会放大座椅纹理/手臂等假脸；用肤色 + 尺寸约束收敛。
+                try:
+                    min_skin = float(os.environ.get(
+                        "YINZHAN_SCAN_FACE_YUNET_TILE_MIN_SKIN", "0.12") or 0.12)
+                except (TypeError, ValueError):
+                    min_skin = 0.12
+                if _face_skin_ratio(tile, local_rect) < min_skin:
+                    continue
+                if max(local_rect[2] - local_rect[0], local_rect[3] - local_rect[1]) > (
+                        0.55 * max(tile.shape[1], tile.shape[0])):
+                    continue
+            rect: Box = (tx0 + local_rect[0], ty0 + local_rect[1],
+                         tx0 + local_rect[2], ty0 + local_rect[3])
+            # 过小的检出框在照片里多为图样误报；保留 16px 以上（原图）
             if min(rect[2] - rect[0], rect[3] - rect[1]) < 16:
                 continue
             found.append((rect, max(0.35, min(0.98, score)), "yunet"))
-    except Exception:
-        return []
     return found
 
 
@@ -746,7 +808,21 @@ def _detect_faces(rgb: np.ndarray, ctx: ScanContext) -> list[ScanHit]:
                    and _FACE_CASCADES_OVERRIDE is None)
     if yunet_ready:
         # YuNet 主检测：侧脸/低头/闭眼更稳；仍保留 Haar 命中，统一去重/整头外扩。
-        found.extend(_yunet_face_pass(rgb))
+        # 大图分块只在整图已有 Haar 命中时启用：没有脸的证件/卡片图分块
+        # 容易把纹理当脸，先由整图结果决定是否值得加扫。
+        try:
+            global_skin = _face_skin_ratio(
+                preview, (0, 0, float(preview.shape[1]), float(preview.shape[0])))
+        except Exception:
+            global_skin = 0.0
+        try:
+            min_global_skin = float(os.environ.get(
+                "YINZHAN_SCAN_FACE_YUNET_TILE_MIN_GLOBAL_SKIN", "0.40") or 0.40)
+        except (TypeError, ValueError):
+            min_global_skin = 0.40
+        allow_tiles = (bool(found) or global_skin >= min_global_skin
+                       or _env_bool("YINZHAN_SCAN_FACE_YUNET_TILE_ALWAYS", False))
+        found.extend(_yunet_face_pass(rgb, allow_tiles=allow_tiles))
     elif auto_profile and photo_like_fmt:
         # 模型缺失时的无模型回退：照片场景补充高分辨率 alt2/profile（肤色校验）。
         found.extend(_photo_face_pass(rgb, fmt=fmt))
@@ -2484,6 +2560,38 @@ def _prune_nested(hits: list[ScanHit]) -> list[ScanHit]:
     return out
 
 
+def _filter_id_document_false_positives(hits: list[ScanHit],
+                                         rgb: np.ndarray) -> list[ScanHit]:
+    """身份证页去误报：ID 卡页上的木纹/徽章假脸、卡面纹理假二维码不输出。
+
+    - 有 id_document 命中时，face 必须通过肤色比（真实证件照/人像有肤色）；
+    - ID 卡面区域内的 detect-only QR 一律丢弃（身份证本身没有二维码）；
+    - 其他页面不受影响。
+    """
+    id_docs = [h for h in hits if h.kind == "id_document"]
+    if not id_docs:
+        return hits
+    out: list[ScanHit] = []
+    for hit in hits:
+        if hit.kind == "face":
+            try:
+                if _face_skin_ratio(rgb, hit.rect) < 0.12:
+                    continue
+            except Exception:
+                pass
+        if hit.kind == "qrcode":
+            note = str(getattr(hit, "note", "") or "")
+            if "/detect" in note:
+                for doc in id_docs:
+                    if _ioc(hit.rect, doc.rect) >= 0.80:
+                        break
+                else:
+                    out.append(hit)
+                continue
+        out.append(hit)
+    return out
+
+
 def scan(image_rgb: Any, ctx: ScanContext) -> list[ScanHit]:
     """mediascan 扫描器入口：一张页面图 → 目标命中列表（像素坐标）。"""
     if image_rgb is None or not isinstance(image_rgb, np.ndarray):
@@ -2530,6 +2638,10 @@ def scan(image_rgb: Any, ctx: ScanContext) -> list[ScanHit]:
         except Exception as exc:
             ctx.warnings.append(f"visual_targets:road/door 失败：{exc}")
 
+    try:
+        hits = _filter_id_document_false_positives(hits, image_rgb)
+    except Exception as exc:
+        ctx.warnings.append(f"visual_targets:id_document 去误报失败：{exc}")
     return _prune_nested(hits)
 
 

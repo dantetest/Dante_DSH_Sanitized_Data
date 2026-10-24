@@ -510,6 +510,43 @@ def test_performance() -> None:
         _skip("PDF/200dpi 无码文本页耗时", f"{type(exc).__name__}: {exc}")
 
 
+def test_truncated_tile_full_fallback() -> None:
+    """分块截断时，scan_page 必须追加整图 zxing 兜底。"""
+    if zxingcpp is None:
+        _skip("分块截断整图兜底", "zxing-cpp 不可用")
+        return
+    import numpy as np
+    gray = np.zeros((1200, 1200), dtype=np.uint8)
+    calls = []
+    orig = barcodes._zxing_scan
+
+    def fake(g, w, h):
+        calls.append((w, h))
+        return []
+
+    old_max = os.environ.get("YINZHAN_BARCODE_MAX_TILES")
+    old_edge = os.environ.get("YINZHAN_BARCODE_TILE_EDGE")
+    barcodes._zxing_scan = fake
+    try:
+        os.environ["YINZHAN_BARCODE_TILE_EDGE"] = "100"
+        os.environ["YINZHAN_BARCODE_MAX_TILES"] = "1"
+        ctx = mediascan.ScanContext(page=0, dpi=0.0, image_size=(1200, 1200), options={})
+        barcodes.scan_page(np.stack([gray, gray, gray], axis=-1), ctx)
+        _check("分块截断：整图兜底被调用", (1200, 1200) in calls, f"calls={calls[-4:]}")
+        _check("分块截断：warning 说明整图兜底",
+               any("整图兜底" in w for w in ctx.warnings), f"warnings={ctx.warnings}")
+    finally:
+        barcodes._zxing_scan = orig
+        if old_max is None:
+            os.environ.pop("YINZHAN_BARCODE_MAX_TILES", None)
+        else:
+            os.environ["YINZHAN_BARCODE_MAX_TILES"] = old_max
+        if old_edge is None:
+            os.environ.pop("YINZHAN_BARCODE_TILE_EDGE", None)
+        else:
+            os.environ["YINZHAN_BARCODE_TILE_EDGE"] = old_edge
+
+
 def test_env_disable() -> None:
     print(f"\n{DIM}── 开关 YINZHAN_SCAN_BARCODE=0 ──{RESET}")
     manifest = _ensure_fixtures()
@@ -550,6 +587,7 @@ def main() -> int:
         test_no_false_positives,
         test_performance,
         test_env_disable,
+        test_truncated_tile_full_fallback,
     ]
     started = time.time()
     for fn in tests:

@@ -509,7 +509,7 @@ def scan_page(image_rgb: Any, ctx: mediascan.ScanContext) -> list[mediascan.Scan
         if truncated:
             ctx.warnings.append(
                 f"条码扫描：页面 {width}×{height} 分块数超过上限 {max_tiles}，"
-                "仅扫描前若干块，可能漏检")
+                "已扫描前若干块并追加整图兜底，仍可能漏检")
         for (tx0, ty0, tx1, ty1) in tiles:
             tile = gray[ty0:ty1, tx0:tx1]
             tile_h, tile_w = tile.shape[:2]
@@ -535,6 +535,13 @@ def scan_page(image_rgb: Any, ctx: mediascan.ScanContext) -> list[mediascan.Scan
                 hit.rect = (hit.rect[0] + tx0, hit.rect[1] + ty0,
                             hit.rect[2] + tx0, hit.rect[3] + ty0)
                 hits.append(hit)
+
+    if truncated:
+        # 分块被截断时追加一次整图/内置降采样扫描，避免边缘码漏检。
+        try:
+            hits.extend(_zxing_scan(gray, width, height))
+        except Exception as exc:
+            ctx.warnings.append(f"条码扫描：整图兜底失败（{type(exc).__name__}）")
 
     if not hits and cv2_ok:
         try:

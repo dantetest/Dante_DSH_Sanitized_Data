@@ -896,6 +896,28 @@ class TestFaceLogic(unittest.TestCase):
         self.assertIn("2x2", hits[0].note)
         self.assertIn("照片较大，小脸可能漏检，请人工复核/整图涂黑", ctx.warnings)
 
+    def test_yunet_tile_plan_for_large_photo(self):
+        keys = ("YINZHAN_SCAN_FACE_YUNET_TILE", "YINZHAN_SCAN_FACE_YUNET_TILE_CAP")
+        old = {k: os.environ.get(k) for k in keys}
+        try:
+            os.environ["YINZHAN_SCAN_FACE_YUNET_TILE"] = "auto"
+            os.environ["YINZHAN_SCAN_FACE_YUNET_TILE_CAP"] = "1600"
+            small = visual_targets._yunet_tile_plan(1200, 800, 1600)
+            self.assertEqual(len(small), 1)
+            self.assertLessEqual(small[0][4], 1.0)
+            large = visual_targets._yunet_tile_plan(4000, 3000, 1600)
+            self.assertGreaterEqual(len(large), 4)
+            self.assertTrue(all(t[4] <= 1.0 and t[2] > t[0] and t[3] > t[1]
+                                for t in large))
+            huge = visual_targets._yunet_tile_plan(6000, 4000, 1600)
+            self.assertGreaterEqual(len(huge), 9)
+        finally:
+            for key, value in old.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def test_small_image_no_downscale_warning(self):
         # 长边 ≤1600 的普通图片即使缩到 640 检测，也不应刷"照片较大"提示
         fake = _FakeCascade([[(100, 100, 80, 80)]])
@@ -1677,6 +1699,53 @@ class TestPerformance(unittest.TestCase):
         print(f"\n[perf] 1600x1200 扫描：{elapsed*1000:.0f}ms，marks={len(marks)}")
         self.assertLess(elapsed, 3.0, f"1600px 扫描过慢: {elapsed:.2f}s")
 
+
+
+class TestIdDocumentFalsePositiveFilter(unittest.TestCase):
+    def test_back_side_drops_face_and_qrcode(self):
+        hits = [
+            ScanHit("id_document", (10.0, 10.0, 900.0, 1600.0), 0.92,
+                    "engine=ocr;doc=id_card;side=back;fields=2;orient=0"),
+            ScanHit("id_authority", (100.0, 200.0, 300.0, 500.0), 0.88,
+                    "engine=ocr;doc=id_card;side=back;fields=2;orient=0"),
+            ScanHit("face", (800.0, 300.0, 950.0, 450.0), 0.92, "engine=haar"),
+            ScanHit("qrcode", (300.0, 700.0, 500.0, 900.0), 0.5,
+                    "Data Matrix/zxing/detect"),
+        ]
+        out = mediascan._filter_id_card_marks(hits)
+        kinds = [h.kind for h in out]
+        self.assertNotIn("face", kinds)
+        self.assertNotIn("qrcode", kinds)
+        self.assertIn("id_document", kinds)
+        self.assertIn("id_authority", kinds)
+
+    def test_front_keeps_face_inside_id_photo(self):
+        hits = [
+            ScanHit("id_document", (10.0, 10.0, 900.0, 1600.0), 0.92,
+                    "engine=ocr;doc=id_card;side=front;fields=4;orient=0"),
+            ScanHit("id_photo", (500.0, 200.0, 850.0, 700.0), 0.9,
+                    "engine=ocr;doc=id_card;side=front;fields=4;orient=0"),
+            ScanHit("face", (560.0, 240.0, 800.0, 650.0), 0.9, "yunet"),
+            ScanHit("face", (900.0, 1200.0, 1000.0, 1300.0), 0.9, "yunet"),
+        ]
+        out = mediascan._filter_id_card_marks(hits)
+        faces = [h for h in out if h.kind == "face"]
+        self.assertEqual(len(faces), 1)
+        self.assertGreater(faces[0].rect[0], 500.0)
+
+    def test_front_drops_detect_only_qr_inside_card(self):
+        hits = [
+            ScanHit("id_document", (10.0, 10.0, 900.0, 1600.0), 0.92,
+                    "engine=ocr;doc=id_card;side=front;fields=4;orient=0"),
+            ScanHit("qrcode", (300.0, 700.0, 500.0, 900.0), 0.5,
+                    "Data Matrix/zxing/detect"),
+            ScanHit("qrcode", (1200.0, 200.0, 1300.0, 300.0), 0.9,
+                    "QRCode/zxing"),
+        ]
+        out = mediascan._filter_id_card_marks(hits)
+        qrs = [h for h in out if h.kind == "qrcode"]
+        self.assertEqual(len(qrs), 1)
+        self.assertGreater(qrs[0].rect[0], 1000.0)
 
 def main() -> int:
     print("数据隐站 · 图像 P0 扫描器测试（visual_targets）")

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -185,6 +186,46 @@ def _merge_hits(hits: list[ScanHit], iou_threshold: float = 0.5) -> list[ScanHit
     return merged
 
 
+
+
+def _ioc_ratio(inner: tuple, outer: tuple) -> float:
+    x0, y0 = max(inner[0], outer[0]), max(inner[1], outer[1])
+    x1, y1 = min(inner[2], outer[2]), min(inner[3], outer[3])
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    inter = (x1 - x0) * (y1 - y0)
+    area = max(0.0, inner[2] - inner[0]) * max(0.0, inner[3] - inner[1])
+    return inter / area if area > 0 else 0.0
+
+
+def _filter_id_card_marks(hits: list[ScanHit]) -> list[ScanHit]:
+    """身份证页收敛：卡背上的假脸/卡面纹理假 QR 不进入业务实体。
+
+    ID 卡背面本身不应有人脸或二维码；ID 卡正面只保留落在 id_document 内的 face，
+    卡外木纹/背景误检丢弃。仅在这些强锚点命中时生效，普通照片不受影响。
+    """
+    id_docs = [h for h in hits if h.kind == "id_document"]
+    if not id_docs:
+        return hits
+    back = any(re.search(r"\bside=back\b", str(h.note or "")) for h in id_docs)
+    if back:
+        return [h for h in hits if h.kind not in ("face", "qrcode")]
+    photos = [h for h in hits if h.kind == "id_photo"]
+    out: list[ScanHit] = []
+    for hit in hits:
+        if hit.kind == "face":
+            anchors = photos or id_docs
+            if not any(_ioc_ratio(hit.rect, a.rect) >= 0.50 for a in anchors):
+                continue
+        elif hit.kind == "qrcode":
+            note = str(hit.note or "")
+            if "/detect" in note and any(
+                    _ioc_ratio(hit.rect, d.rect) >= 0.80 for d in id_docs):
+                continue
+        out.append(hit)
+    return out
+
+
 def analyze(image_rgb: Any, *, page: int = 0, dpi: float = 0.0,
             options: dict | None = None) -> tuple[list[dict], list[str]]:
     """对一张页面图跑所有启用的扫描器。
@@ -234,10 +275,11 @@ def analyze(image_rgb: Any, *, page: int = 0, dpi: float = 0.0,
                                     float(hit.confidence), str(hit.note or "")))
             except Exception:
                 continue
+    merged = _filter_id_card_marks(_merge_hits(hits))
     marks = [
         {"kind": h.kind, "rect": h.rect, "confidence": round(h.confidence, 3),
          "note": h.note, "page": int(page)}
-        for h in _merge_hits(hits)
+        for h in merged
     ]
     return marks, warnings
 

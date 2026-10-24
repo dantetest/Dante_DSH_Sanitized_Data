@@ -312,7 +312,7 @@ def _eval_one(path: Path, out_dir: Path, engine: dict, ocr, strictness: str) -> 
                 row["verify"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
             row["verify_ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
 
-        row["warnings"] = engine["eval"]._sanitize_warnings(warnings, entities, doc)
+        row["warnings"] = jobs._dedupe_warnings(engine["eval"]._sanitize_warnings(warnings, entities, doc))
     except Exception as exc:  # noqa: BLE001
         row["error"] = f"{type(exc).__name__}: {exc}"
     finally:

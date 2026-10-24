@@ -266,3 +266,11 @@ cd app\server; $env:PYTHONIOENCODING='utf-8'; python -X utf8 ..\tests\e2e.py
 - 升级 zxing-cpp 小版本时，重点回归：`return_errors` 行为、`extra["Version"]`、格式字符串（note 里用）、`position` 角点顺序；跑一遍 `test_barcodes.py` 即可发现。
 - 修改 fixtures 生成逻辑后需重跑并提交新 PNG/manifest（sha256 会变）。
 - 本模块不写日志、不落盘、不联网；所有解码内容仅在调用栈内存中短暂存在。
+
+## 8. P2 更新（2026-10-24）
+
+- 分块数超过 `YINZHAN_BARCODE_MAX_TILES` 被截断时，不再只扫前 N 块：
+  追加一次整图 zxing（内置 `try_downscale`）扫描并合并结果；
+- 警告文案改为「已扫描前若干块并追加整图兜底，仍可能漏检」；
+- 单元测试 `test_barcodes.py::test_truncated_tile_full_fallback` 覆盖；
+- 大图分块上限仍是保护性限制，真实超大拼接图仍建议人工复核。
