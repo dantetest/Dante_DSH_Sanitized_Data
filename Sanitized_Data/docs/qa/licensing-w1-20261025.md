@@ -60,7 +60,7 @@ POST /api/trial/start
 - `python -X utf8 app/tests/test_licensing.py`：**12/12 通过**
 - `python -X utf8 app/tests/run_all.py --only licensing`：**1/1 通过**
 - HTTP 冒烟：status/machine-code/trial 均返回 200；trial 进入 14 天试用
-- 尚未跑：完整 `run_all`（已在跑）；打包后的安装包加载公钥（等 W3 生成生产公钥后打包验证）
+- 完整 `run_all`：**32/32 通过**，耗时 312.6s；打包后的安装包加载公钥留到 W3 生成生产公钥后验证
 
 ## 5. 暂未做
 
