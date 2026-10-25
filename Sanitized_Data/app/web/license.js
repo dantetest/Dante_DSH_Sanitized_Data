@@ -40,11 +40,13 @@
     state.status = status || {};
     const s = state.status;
     const st = s.state || 'free';
+    const testMode = s.paywall_enabled === false;
     const badge = $('stateBadge');
-    badge.textContent = TEXT[st] || st;
-    badge.className = 'badge ' + (['free', 'trial', 'paid', 'grace'].includes(st) ? st : 'free');
-    $('edition').textContent = s.edition || '免费版';
-    $('stateText').textContent = st === 'paid' ? '离线授权有效'
+    badge.textContent = testMode ? '测试版' : (TEXT[st] || st);
+    badge.className = 'badge ' + (testMode ? 'paid' : (['free', 'trial', 'paid', 'grace'].includes(st) ? st : 'free'));
+    $('edition').textContent = testMode ? '测试版 · 全功能' : (s.edition || '免费版');
+    $('stateText').textContent = testMode ? '收费门禁未开启（内部测试）'
+      : st === 'paid' ? '离线授权有效'
       : st === 'trial' ? '全功能试用'
       : st === 'grace' ? '已到期，宽限期内仍可使用'
       : '未授权';
@@ -52,7 +54,9 @@
       ? fmtDate(s.license.expires_at) : '—';
     $('machineCode').textContent = s.machine_display || s.machine_code || '—';
     const q = s.quota || {};
-    if (q.unlimited) {
+    if (testMode) {
+      $('quotaText').textContent = '全功能测试，不限制份数/页数';
+    } else if (q.unlimited) {
       $('quotaText').textContent = st === 'trial'
         ? '不限份数/页数（试用期内）'
         : '不限份数/页数';
@@ -62,7 +66,7 @@
       $('quotaText').textContent = `今日剩余 ${Math.max(0, limit - used)}/${limit} 份 · 单份 ≤20 页`;
     }
     const trial = s.trial || {};
-    $('trialRow').style.display = (st === 'free' && !trial.used) ? 'block' : 'none';
+    $('trialRow').style.display = (!testMode && st === 'free' && !trial.used) ? 'block' : 'none';
     if (s.clock_suspect) {
       $('statusMsg').textContent = '系统时间异常：本机授权状态可能受影响，请校正系统时间。';
       $('statusMsg').className = 'msg err';

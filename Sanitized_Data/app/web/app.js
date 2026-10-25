@@ -286,7 +286,7 @@ function renderNet() {
   ui.netText.textContent = blocked ? '本机处理 · 不联网' : (h ? '本机处理 · 未确认断网' : '本机服务未连接');
   ui.footDot.className = 'netdot ' + (blocked ? 'ok' : (h ? 'warn' : 'off'));
   ui.footNet.textContent = blocked ? '本机处理 · 不联网' : (h ? '本机处理 · 未确认断网' : '本机服务未连接');
-  ui.footMeta.textContent = h ? '数据隐站 · v' + (h.version || '1.2.2') : '数据隐站 · 本机服务';
+  ui.footMeta.textContent = h ? '数据隐站 · v' + (h.version || '1.3.0') : '数据隐站 · 本机服务';
 }
 async function loadHealth() {
   try { state.health = await api('/api/health'); } catch (err) { state.health = null; }
@@ -312,7 +312,9 @@ function renderLicenseChip() {
   const st = s.state || 'free';
   const q = s.quota || {};
   let text = '';
-  if (st === 'free') {
+  if (s.paywall_enabled === false) {
+    text = '测试版 · 全功能';
+  } else if (st === 'free') {
     text = `免费版 · 今日剩余 ${Math.max(0, Number(q.remaining || 0))}/${Number(q.limit_today || 3)}`;
   } else if (st === 'trial') {
     text = `试用 · 剩 ${Number((s.trial && s.trial.days_left) || 0)} 天`;
@@ -323,7 +325,7 @@ function renderLicenseChip() {
     text = s.edition || '授权';
   }
   ui.licenseChipText.textContent = text;
-  ui.licenseChip.className = 'license-chip ' + st;
+  ui.licenseChip.className = 'license-chip ' + (s.paywall_enabled === false ? 'paid' : st);
   ui.licenseChip.hidden = false;
 }
 function openLicenseLimit(err) {

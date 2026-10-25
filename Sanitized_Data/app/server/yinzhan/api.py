@@ -17,8 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import audit, logging_setup, quota, registry, vault
-from .config import (BUILD_ID, DATA_DIR, MAX_UPLOAD, PURCHASE_URL, UPLOAD_DIR,
-                     VERSION, WEB_DIR)
+from .config import (BUILD_CHANNEL, BUILD_ID, DATA_DIR, MAX_UPLOAD, PAYWALL_ENABLED,
+                     PURCHASE_URL, UPLOAD_DIR, VERSION, WEB_DIR)
 from .jobs import MANAGER
 from .licensing import LicenseError
 from .ocr import get_ocr
@@ -276,6 +276,8 @@ def license_status(ctx):
         data["quota"] = LICENSE.quota_status()
         data["purchase_url"] = PURCHASE_URL
         data["pricing_url"] = "/pricing"
+        data["paywall_enabled"] = PAYWALL_ENABLED
+        data["build_channel"] = BUILD_CHANNEL
         return data
     return _license_call(_status_with_quota)
 

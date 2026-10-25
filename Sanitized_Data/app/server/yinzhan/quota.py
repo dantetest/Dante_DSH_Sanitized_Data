@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 
 from . import paths
+from .config import PAYWALL_ENABLED
 from .licensing import tiers
 from .licensing.service import LicenseError, LicenseService
 
@@ -28,6 +29,8 @@ class QuotaError(LicenseError):
 
 
 def is_enforced() -> bool:
+    if not PAYWALL_ENABLED:
+        return False
     if os.environ.get("YINZHAN_ENFORCE_FREE_TIER") == "1":
         return True
     return bool(paths.FROZEN)
