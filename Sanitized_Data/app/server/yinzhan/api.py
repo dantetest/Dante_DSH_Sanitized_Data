@@ -19,9 +19,13 @@ from pathlib import Path
 from . import audit, logging_setup, registry, vault
 from .config import BUILD_ID, DATA_DIR, MAX_UPLOAD, UPLOAD_DIR, VERSION, WEB_DIR
 from .jobs import MANAGER
+from .licensing import LicenseError
+from .licensing.service import LicenseService
 from .ocr import get_ocr
 from .udm import YinzhanError
 from .utils import safe_name, sha256_bytes
+
+LICENSE = LicenseService()
 
 
 def log_error(text: str) -> None:
@@ -242,6 +246,43 @@ def packs(ctx):
     for r in rules:
         detail.setdefault(r.pack, []).append(r.to_dict())
     return {"packs": index, "detail": detail}
+
+
+def _license_call(fn):
+    try:
+        return fn()
+    except LicenseError as exc:
+        raise ApiError(exc.message, exc.code, exc.status)
+
+
+@route("GET", r"/api/license/status")
+def license_status(ctx):
+    return _license_call(LICENSE.status)
+
+
+@route("GET", r"/api/license/machine-code")
+def license_machine_code(ctx):
+    info = _license_call(LICENSE.machine_info)
+    return {"machine_code": info["code"], "machine_display": info["display"]}
+
+
+@route("POST", r"/api/license/import")
+def license_import(ctx):
+    body = ctx.json()
+    if not isinstance(body, dict):
+        raise ApiError("授权数据格式无效")
+    if "schema" in body and "payload" in body:
+        content = body
+    else:
+        content = body.get("content") or body.get("license") or ""
+    if not content:
+        raise ApiError("缺少授权文件内容")
+    return _license_call(lambda: LICENSE.import_license(content))
+
+
+@route("POST", r"/api/trial/start")
+def trial_start(ctx):
+    return _license_call(LICENSE.start_trial)
 
 
 # ══════════════════════════ HTTP 层 ══════════════════════════
