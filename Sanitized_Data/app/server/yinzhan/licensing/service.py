@@ -455,5 +455,100 @@ class LicenseService:
             self._event("trial_start", expires_utc=_iso(expires))
             return self.status()
 
+    # ── W2 免费额度（复用同一份 state.usage）──
+    def _usage_today(self, state: dict, effective_now: datetime, clock_suspect: bool) -> dict:
+        usage = state.get("usage") if isinstance(state.get("usage"), dict) else {}
+        today = effective_now.astimezone().date().isoformat()
+        used = int(usage.get("jobs") or 0)
+        used_ocr = int(usage.get("ocr_pages") or 0)
+        if usage.get("date") != today and not clock_suspect:
+            # 本地自然日重置；时钟异常时不重置（防止调到明天刷额度）
+            usage = {"date": today, "jobs": 0, "ocr_pages": 0}
+        elif not usage.get("date"):
+            usage = {"date": today, "jobs": used, "ocr_pages": used_ocr}
+        else:
+            usage = {"date": str(usage.get("date")), "jobs": used,
+                     "ocr_pages": used_ocr}
+        state["usage"] = usage
+        return usage
+
+    def quota_status(self) -> dict:
+        status = self.status()
+        with self._lock:
+            state = self._load_state()
+            effective_now, clock_suspect = self._effective_now(state)
+            usage = self._usage_today(state, effective_now, clock_suspect)
+            self._save_state(state)
+            free = status.get("state") == "free"
+            limit = int(tiers.FREE_LIMITS.get("jobs_per_day") or 3)
+            used = max(0, int(usage.get("jobs") or 0))
+            today = effective_now.astimezone().date()
+            reset_at = datetime.combine(today + timedelta(days=1),
+                                        datetime.min.time()).astimezone().isoformat()
+            return {
+                "state": status.get("state"),
+                "edition": status.get("edition"),
+                "free": free,
+                "unlimited": not free,
+                "limit_today": limit,
+                "used_today": used,
+                "remaining": max(0, limit - used) if free else None,
+                "date": today.isoformat(),
+                "reset_at": reset_at,
+                "clock_suspect": clock_suspect,
+                "ocr_pages_used": int(usage.get("ocr_pages") or 0),
+            }
+
+    def consume_free_job(self) -> dict:
+        with self._lock:
+            status = self.status()
+            if status.get("state") != "free":
+                return self.quota_status()
+            q = self.quota_status()
+            if int(q.get("remaining") or 0) <= 0:
+                raise LicenseError("quota_exceeded",
+                                   "今天的 3 份免费额度用完了。明天 0 点恢复；也可以现在升级，今天就能继续。",
+                                   403)
+            state = self._load_state()
+            effective_now, clock_suspect = self._effective_now(state)
+            usage = self._usage_today(state, effective_now, clock_suspect)
+            usage["jobs"] = int(usage.get("jobs") or 0) + 1
+            state["usage"] = usage
+            self._save_state(state)
+            return self.quota_status()
+
+    def refund_free_job(self) -> dict:
+        with self._lock:
+            state = self._load_state()
+            effective_now, clock_suspect = self._effective_now(state)
+            usage = self._usage_today(state, effective_now, clock_suspect)
+            usage["jobs"] = max(0, int(usage.get("jobs") or 0) - 1)
+            state["usage"] = usage
+            self._save_state(state)
+            return self.quota_status()
+
+    def license_content(self) -> str | None:
+        try:
+            if self.license_path.is_file():
+                return self.license_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        return None
+
+    def events(self, limit: int = 20) -> list[dict]:
+        try:
+            lines = self.events_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            return []
+        out: list[dict] = []
+        for line in lines[-max(1, min(100, int(limit))):]:
+            try:
+                item = json.loads(line)
+                if isinstance(item, dict):
+                    out.append(item)
+            except Exception:
+                continue
+        return out
+
     def has_feature(self, feature: str) -> bool:
         return feature in (self.status().get("features") or [])

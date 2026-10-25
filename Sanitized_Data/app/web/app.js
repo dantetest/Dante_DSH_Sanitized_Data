@@ -125,6 +125,14 @@ const ERROR_CN = {
   bad_response: '本机回了看不懂的内容，请重新试一次。',
   busy: '本机正在忙，等这一份处理完再试。',
   forbidden: '这项操作被拦下了，原件没有被改动。',
+  quota_exceeded: '今天的 3 份免费额度用完了。明天 0 点恢复；也可以现在升级，今天就能继续。',
+  free_page_limit: '免费版单份最多 20 页。升级后不限页数。',
+  free_ocr_limit: '免费版单份最多识别 10 页扫描件。升级后可整份识别。',
+  free_format: 'TIF / 三维文件需要个人版及以上。免费版可先用 PDF、Word、Excel、图片。',
+  free_size_limit: '免费版单文件限 100MB。更大的文件建议升级后处理。',
+  pack_requires_paid: '该行业规则包需要个人版及以上；请切换通用规则，或升级后使用。',
+  quota_busy: '当前免费任务还没处理完，请等它完成后再建下一个。',
+  license_required: '这项能力需要个人版及以上授权；可先导入授权文件。',
 };
 class AppError extends Error {
   constructor(code, human) { super(human || '这一步没走通，请重新试一次。'); this.code = code; this.human = this.message; }
@@ -162,6 +170,7 @@ function jobErrorMessage(error) {
 const state = {
   screen: 'drop',
   health: null,
+  license: null,
   uploadId: null,
   fileName: '',
   jobId: null,
@@ -282,6 +291,61 @@ function renderNet() {
 async function loadHealth() {
   try { state.health = await api('/api/health'); } catch (err) { state.health = null; }
   renderNet();
+}
+function licenseDate(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value).slice(0, 10);
+  return d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+async function loadLicenseStatus() {
+  try {
+    state.license = await api('/api/license/status');
+  } catch (err) {
+    state.license = null;
+  }
+  renderLicenseChip();
+}
+function renderLicenseChip() {
+  const s = state.license;
+  if (!s || !ui.licenseChip) { if (ui.licenseChip) ui.licenseChip.hidden = true; return; }
+  const st = s.state || 'free';
+  const q = s.quota || {};
+  let text = '';
+  if (st === 'free') {
+    text = `免费版 · 今日剩余 ${Math.max(0, Number(q.remaining || 0))}/${Number(q.limit_today || 3)}`;
+  } else if (st === 'trial') {
+    text = `试用 · 剩 ${Number((s.trial && s.trial.days_left) || 0)} 天`;
+  } else if (st === 'paid' || st === 'grace') {
+    const exp = s.license && s.license.expires_at;
+    text = `${s.edition || '已授权'}${exp ? ' · ' + licenseDate(exp) + ' 到期' : ''}`;
+  } else {
+    text = s.edition || '授权';
+  }
+  ui.licenseChipText.textContent = text;
+  ui.licenseChip.className = 'license-chip ' + st;
+  ui.licenseChip.hidden = false;
+}
+function openLicenseLimit(err) {
+  const code = err && err.code;
+  const title = {
+    quota_exceeded: '今天的免费额度用完了',
+    free_page_limit: '这份文件超出免费页数',
+    free_ocr_limit: '这份扫描件超出免费识别页数',
+    free_format: '这个格式需要升级',
+    free_size_limit: '文件超过免费版大小',
+    pack_requires_paid: '这个规则包需要升级',
+    quota_busy: '先等当前任务完成',
+    license_required: '这项能力需要授权',
+  }[code] || '继续使用，需要升级';
+  const message = (err && (err.human || (code && ERROR_CN[code]))) || '升级后可以继续处理这份文件。';
+  ui.licenseLimitTitle.textContent = title;
+  ui.licenseLimitText.textContent = message;
+  ui.licenseLimitBuy.href = '/pricing';
+  ui.modalLicense.classList.add('open');
+}
+function closeLicenseLimit() {
+  if (ui.modalLicense) ui.modalLicense.classList.remove('open');
 }
 function makeDocNo() {
   const d = new Date();
@@ -641,6 +705,11 @@ function scanFailed(err) {
   if (!(err && err.human)) console.warn('处理失败：', err);
   logScan('✕ ' + human, { hl: true });
   toast(human);
+  const quotaCodes = ['quota_exceeded', 'free_page_limit', 'free_ocr_limit',
+    'free_format', 'free_size_limit', 'pack_requires_paid', 'quota_busy',
+    'license_required'];
+  if (err && quotaCodes.includes(err.code)) openLicenseLimit(err);
+  loadLicenseStatus();
   setTimeout(() => { if (state.screen === 'scan') setScreen('drop'); }, 1800);
 }
 
@@ -2084,6 +2153,8 @@ function cacheDom() {
     'btnAcceptAll', 'btnReview', 'reviewCount', 'btnSelect', 'btnExport',
     'footDot', 'footNet', 'footMeta', 'modalExport', 'cardAi', 'cardHuman',
     'btnCloseModal', 'toast', 'toastMsg', 'toastActions',
+    'licenseChip', 'licenseChipText', 'modalLicense', 'licenseLimitTitle',
+    'licenseLimitText', 'licenseLimitBuy', 'btnLicenseLimitClose',
   ].forEach((id) => { ui[id] = document.getElementById(id); });
   ui.rail = $('.rail');
 }
@@ -2122,6 +2193,7 @@ function bindConsole() {
       closeMarkMenu();
       if (state.selectMode) setSelectMode(false);
       if (ui.modalExport.classList.contains('open')) closeExportModal();
+      if (ui.modalLicense && ui.modalLicense.classList.contains('open')) closeLicenseLimit();
       if (state.markDraft) {
         state.markDraft = null;
         document.body.classList.remove('selecting');
@@ -2145,6 +2217,10 @@ function bindModal() {
   ui.btnCloseModal.addEventListener('click', () => closeExportModal());
   ui.modalExport.addEventListener('click', (ev) => {
     if (ev.target === ui.modalExport) closeExportModal();
+  });
+  if (ui.btnLicenseLimitClose) ui.btnLicenseLimitClose.addEventListener('click', closeLicenseLimit);
+  if (ui.modalLicense) ui.modalLicense.addEventListener('click', (ev) => {
+    if (ev.target === ui.modalLicense) closeLicenseLimit();
   });
   $$('.card[data-export]').forEach((card) => {
     card.addEventListener('click', () => onExportCard(card));
@@ -2195,6 +2271,7 @@ function init() {
   bindDivider();
   setScreen('drop');
   loadHealth();
+  loadLicenseStatus();
   if (new URLSearchParams(window.location.search).get('job')) resumeJobFromQuery();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

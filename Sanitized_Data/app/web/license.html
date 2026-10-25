@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>授权 · 数据隐站</title>
+<link rel="stylesheet" href="license.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="topbar">
+  <a class="homelink" href="/">
+    <img src="/logo.svg" width="34" height="34" alt="" aria-hidden="true">
+    <span class="brand">数据隐站<small>AUTHORIZATION</small></span>
+  </a>
+  <div class="spacer"></div>
+  <nav class="topnav" aria-label="导航">
+    <a href="/console">控制台</a>
+    <a href="/pricing">价格</a>
+    <a href="/download">下载</a>
+    <a href="/mcp">MCP 接入</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <div class="eyebrow">LICENSE · 本机授权</div>
+    <h1>授权档案卡</h1>
+    <p class="lead">所有校验都在本机完成；授权文件不上传、不联网核验。<span class="hint">本页价格与购买状态仅为参考，以官网为准。</span></p>
+  </div>
+
+  <div class="grid">
+    <section class="card" aria-label="授权状态">
+      <span class="seal-stamp" id="verifiedStamp">已核验</span>
+      <h2><span class="no">01</span>当前授权</h2>
+      <div><span class="badge free" id="stateBadge">免费版</span></div>
+      <dl class="kv">
+        <dt>版本</dt><dd id="edition">—</dd>
+        <dt>状态</dt><dd id="stateText">—</dd>
+        <dt>到期</dt><dd id="expiresText">—</dd>
+        <dt>本机识别码</dt>
+        <dd>
+          <div class="copyrow">
+            <span class="mono" id="machineCode">—</span>
+            <button class="btn ghost" id="btnCopyMachine" type="button">复制</button>
+          </div>
+          <div class="hint">购买/续费/换机时提供此识别码。它由本机硬件标识哈希得到，不包含原始硬件序列号。</div>
+        </dd>
+        <dt>今日额度</dt><dd id="quotaText">—</dd>
+      </dl>
+      <div id="trialRow" style="margin-top:14px;display:none">
+        <button class="btn seal" id="btnStartTrial" type="button">开始 14 天全功能试用</button>
+        <div class="hint" style="margin-top:6px">试用只有一次；选择“先看看免费版”不会立即开始，之后仍可在这里启用。</div>
+      </div>
+      <div class="msg" id="statusMsg" role="status"></div>
+    </section>
+
+    <section class="card" aria-label="购买与续费">
+      <h2><span class="no">02</span>升级 / 续费</h2>
+      <ul class="price-list">
+        <li><span>个人版 · 1 台设备</span><b>¥199/年</b></li>
+        <li><span>首发早鸟（限量 1,000 份）</span><b>¥99/年</b></li>
+        <li><span>专业版 · 2 台设备 + MCP</span><b>¥499/年</b></li>
+        <li><span>团队版 · 5 席</span><b>¥1,999/年</b></li>
+        <li><span>机构版 · 内网部署</span><b>¥3.88 万起</b></li>
+      </ul>
+      <p class="hint" style="margin:10px 0 12px">本地页不加载外链脚本；购买按钮只打开系统浏览器。价格是参考价，以官网为准。</p>
+      <a class="btn seal" id="buyLink" href="/pricing" target="_blank" rel="noopener">查看价格 / 购买</a>
+      <p class="hint" id="buyHint" style="margin-top:8px"></p>
+      <hr style="border:0;border-top:1px dotted var(--rule);margin:14px 0">
+      <p class="hint">购买后把 `license.json` 或授权文本导入下方；导入成功即可解锁，不需要重启软件。</p>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:20px" aria-label="导入授权">
+    <h2><span class="no">03</span>导入授权文件</h2>
+    <div class="drop" id="licenseDrop" tabindex="0" role="button" aria-label="拖拽或选择授权文件">
+      <div>把 <b>license.json</b> 拖到这里，或 <b>点击选择文件</b></div>
+      <div class="hint" style="margin-top:6px">也可以把授权文本粘贴到下方。</div>
+    </div>
+    <input type="file" id="licenseFile" accept=".json,application/json,text/plain" hidden>
+    <textarea id="licenseText" placeholder="粘贴 license.json 内容…" spellcheck="false" aria-label="粘贴授权文本"></textarea>
+    <div class="copyrow" style="margin-top:8px">
+      <button class="btn" id="btnImport" type="button">导入授权</button>
+      <button class="btn ghost" id="btnBackup" type="button">备份当前授权</button>
+      <span class="msg" id="importMsg" role="status"></span>
+    </div>
+  </section>
+
+  <div class="grid" style="margin-top:20px">
+    <section class="card" aria-label="常见问题">
+      <h2><span class="no">04</span>常见问题</h2>
+      <div class="faq">
+        <details open><summary>授权绑定设备吗？换电脑怎么办？</summary><p>一台设备一个授权（专业版 2 台，团队版按席位）。重装系统/软件不影响；换电脑联系我们重签，12 个月内首次免费，之后 ¥50/次。</p></details>
+        <details><summary>授权文件会被上传吗？</summary><p>不会。文件只在本机 `<code>data/license/</code>` 目录保存，引擎和本页都不联网。</p></details>
+        <details><summary>试用结束会怎样？</summary><p>自动回到免费版：每天 3 份、单份 20 页、扫描件 10 页；已导出的成品不受影响。</p></details>
+        <details><summary>为什么导入后显示无效？</summary><p>常见原因是授权文件属于另一台机器、已过期、被修改，或复制不完整。用本机识别码重新签发即可。</p></details>
+      </div>
+    </section>
+    <section class="card" aria-label="本机授权事件">
+      <h2><span class="no">05</span>本机授权事件</h2>
+      <p class="hint">只记录事件类型/时间/授权号，不记录文件内容或个人信息。</p>
+      <ul class="events" id="eventList"><li>加载中…</li></ul>
+    </section>
+  </div>
+
+  <footer class="footer">
+    <span>数据隐站 · 本机处理，不把文件上传到服务器</span>
+    <span>去标识化 ≠ 匿名化，不承诺合规结论</span>
+    <span><a href="/pricing">价格</a> · <a href="/download">下载</a> · <a href="/">首页</a></span>
+  </footer>
+</main>
+<script src="license.js"></script>
+</body>
+</html>

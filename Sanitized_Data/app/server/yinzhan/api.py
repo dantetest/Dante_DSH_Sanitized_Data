@@ -17,7 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import audit, logging_setup, quota, registry, vault
-from .config import BUILD_ID, DATA_DIR, MAX_UPLOAD, UPLOAD_DIR, VERSION, WEB_DIR
+from .config import (BUILD_ID, DATA_DIR, MAX_UPLOAD, PURCHASE_URL, UPLOAD_DIR,
+                     VERSION, WEB_DIR)
 from .jobs import MANAGER
 from .licensing import LicenseError
 from .ocr import get_ocr
@@ -273,6 +274,8 @@ def license_status(ctx):
     def _status_with_quota():
         data = LICENSE.status()
         data["quota"] = LICENSE.quota_status()
+        data["purchase_url"] = PURCHASE_URL
+        data["pricing_url"] = "/pricing"
         return data
     return _license_call(_status_with_quota)
 
@@ -305,6 +308,23 @@ def license_import(ctx):
 @route("POST", r"/api/trial/start")
 def trial_start(ctx):
     return _license_call(LICENSE.start_trial)
+
+
+@route("GET", r"/api/license/file")
+def license_file(ctx):
+    content = LICENSE.license_content()
+    if not content:
+        raise ApiError("本机还没有授权文件", "license_required", 404)
+    return {"content": content, "filename": "license.json"}
+
+
+@route("GET", r"/api/license/events")
+def license_events(ctx):
+    try:
+        limit = int(ctx.query.get("limit", "20"))
+    except Exception:
+        limit = 20
+    return {"events": LICENSE.events(limit)}
 
 
 # ══════════════════════════ HTTP 层 ══════════════════════════
@@ -435,6 +455,10 @@ class Handler(BaseHTTPRequestHandler):
         "download/": "download.html",
         "mcp": "mcp.html",
         "mcp/": "mcp.html",
+        "license": "license.html",
+        "license/": "license.html",
+        "pricing": "pricing.html",
+        "pricing/": "pricing.html",
     }
 
     def _static(self, path: str) -> bool:
