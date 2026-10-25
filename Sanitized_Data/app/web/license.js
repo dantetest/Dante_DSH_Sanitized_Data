@@ -70,10 +70,15 @@
     const buy = $('buyLink');
     const url = s.purchase_url || '';
     if (/^https?:\/\//i.test(url)) {
-      buy.href = url;
+      const qs = new URLSearchParams({
+        sku: 'personal',
+        machine_code: s.machine_display || s.machine_code || '',
+        from: 'license',
+      });
+      buy.href = url + (url.includes('?') ? '&' : '?') + qs.toString();
       buy.target = '_blank';
       buy.rel = 'noopener';
-      $('buyHint').textContent = '将在系统浏览器打开官网购买页；本机文件不会上传。';
+      $('buyHint').textContent = '将在系统浏览器打开官网购买页，并带上本机识别码；本机文件不会上传。';
     } else {
       buy.href = '/pricing';
       $('buyHint').textContent = '购买入口尚未配置；可先查看价格页，或联系交付顾问人工开通。';

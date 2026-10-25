@@ -1,0 +1,2 @@
+order_id,customer_name,customer_org,contact,sku,amount_cny,paid_at,payment_method,machine_codes,license_id,issued_at,expires_at,invoice_status,notes
+ord_20261025_0001,张三,,,personal,199,2026-10-25 14:00,对公/静态码,K7Q2-9WXM-4TRB-EFGH,lic_20261025_0001,2026-10-25,2027-10-25,普票待开,

@@ -10,7 +10,12 @@
   if (/^https?:\/\//i.test(purchase)) {
     document.querySelectorAll('a.buy').forEach((a) => {
       const sku = a.dataset.sku || 'personal';
-      a.href = purchase + (purchase.includes('?') ? '&' : '?') + 'sku=' + encodeURIComponent(sku);
+      const qs = new URLSearchParams({
+        sku,
+        machine_code: (status && (status.machine_display || status.machine_code)) || '',
+        from: 'pricing',
+      });
+      a.href = purchase + (purchase.includes('?') ? '&' : '?') + qs.toString();
       a.target = '_blank';
       a.rel = 'noopener';
     });
