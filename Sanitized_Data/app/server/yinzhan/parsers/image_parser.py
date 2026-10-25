@@ -446,7 +446,8 @@ class ImageParser(registry.Parser):
 
         doc = Document(
             doc_id=_new_doc_id(), path=str(path), fmt="image",
-            meta={"format": pil_format, "size": [int(width), int(height)], "mode": mode},
+            meta={"format": pil_format, "size": [int(width), int(height)], "mode": mode,
+                  "ocr_pages": 1},
         )
         if frames > 1:
             doc.warnings.append(f"图片包含 {frames} 帧，仅处理第 1 帧")

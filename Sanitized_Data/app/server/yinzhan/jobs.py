@@ -17,8 +17,9 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from . import audit, pipeline, registry, vault
+from . import audit, pipeline, quota, registry, vault
 from .config import OUTPUT_DIR, STRICTNESS, WORK_DIR
+from .licensing import LicenseError
 from .ocr import get_ocr
 from .udm import (
     Decision, Document, Entity, ParseContext, Rule, Span, YinzhanError,
@@ -148,6 +149,11 @@ class Job:
     warnings: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=iso_now)
     cancel_flag: bool = False
+    # W2 免费额度：是否已扣 1 份、是否免费任务、是否已退款、是否已进入检测
+    quota_free: bool = False
+    quota_charged: bool = False
+    quota_refunded: bool = False
+    quota_detect_started: bool = False
 
     doc: Document | None = None
     parser: registry.Parser | None = None
@@ -227,6 +233,11 @@ class JobManager:
         parser = registry.find_parser(path)
         if parser is None:
             raise YinzhanError(f"暂不支持这种文件：{path.suffix or '无扩展名'}")
+        # W2：免费版同一时刻只允许 1 个任务（MCP/HTTP 都走这里）
+        if quota.is_enforced() and quota.is_free() and self.active_free_count() > 0:
+            raise LicenseError("quota_busy", "当前免费任务还没处理完，请等它完成后再建下一个。", 409)
+        # W2：免费版格式/大小/页数/规则包/当日额度前置检查；返回规范化 pack_ids
+        pack_ids = quota.precheck(path, parser.format_id, pack_ids)
         mode = id_card_mode if id_card_mode in ("fields", "whole") else "fields"
         job_id = "j_" + os.urandom(4).hex()
         job = Job(
@@ -235,6 +246,7 @@ class JobManager:
             id_card_mode=mode, time_blur=bool(time_blur), parser=parser,
             origin="mcp" if origin == "mcp" else "api",
         )
+        quota.consume_job(job)
         with self._lock:
             self._jobs[job_id] = job
             self._order.append(job_id)
@@ -252,6 +264,13 @@ class JobManager:
         with self._lock:
             ids = self._order[-limit:][::-1]
         return [self._jobs[i].snapshot() for i in ids if i in self._jobs]
+
+    def active_free_count(self) -> int:
+        with self._lock:
+            jobs = list(self._jobs.values())
+        return sum(1 for j in jobs
+                   if getattr(j, "quota_free", False)
+                   and j.stage not in ("ready", "done", "error"))
 
     # ── 主流程 ──
     def _run(self, job: Job) -> None:
@@ -281,6 +300,9 @@ class JobManager:
                 raise YinzhanError("这个文件里没有可识别的内容")
             job.doc = doc
             job.warnings.extend(doc.warnings or [])
+            # W2：Office/文本等无法预判页数的格式，解析后查 20 页/10 OCR 页上限
+            quota.after_parse(job, len(doc.pages), (doc.meta or {}).get("ocr_pages"))
+            job.quota_detect_started = True
 
             job.stage, job.target = "detecting", 0.95
             job.note = "正在比对敏感信息…"
@@ -414,6 +436,14 @@ class JobManager:
             job.dedupe_warnings()
             job.stage = "ready"
         except Exception as exc:
+            # W2：detect 之前的系统/解析失败退还 1 份；用户主动取消不退
+            if (not job.cancel_flag and getattr(job, "quota_charged", False)
+                    and not getattr(job, "quota_refunded", False)
+                    and not getattr(job, "quota_detect_started", False)):
+                try:
+                    quota.refund_job(job)
+                except Exception:
+                    pass
             job.error = "已取消" if job.cancel_flag else f"{exc}"
             job.note = ""
             job.stage = "error"

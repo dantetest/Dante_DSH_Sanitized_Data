@@ -107,6 +107,8 @@ def _specs() -> list[dict]:
          "label": "Batch2 AI 视图视觉/待确认策略"},
         {"key": "licensing", "file": TESTS / "test_licensing.py", "timeout": 120,
          "label": "离线授权 W1（机器码/Ed25519/trial/时钟回拨/错机/过期）"},
+        {"key": "quota", "file": TESTS / "test_quota.py", "timeout": 120,
+         "label": "免费额度 W2（格式/页数/规则包/每日 3 份/退款）"},
         {"key": "mcpv2", "file": TESTS / "test_mcp_v2.py", "timeout": 600,
          "label": "MCP L2（Job/资源/复核工具/双协议/HTTP 后端）"},
         {"key": "dshplugin", "file": TESTS / "test_dsh_plugin.py", "timeout": 120,

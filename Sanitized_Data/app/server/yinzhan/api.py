@@ -16,16 +16,16 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import audit, logging_setup, registry, vault
+from . import audit, logging_setup, quota, registry, vault
 from .config import BUILD_ID, DATA_DIR, MAX_UPLOAD, UPLOAD_DIR, VERSION, WEB_DIR
 from .jobs import MANAGER
 from .licensing import LicenseError
-from .licensing.service import LicenseService
 from .ocr import get_ocr
 from .udm import YinzhanError
 from .utils import safe_name, sha256_bytes
 
-LICENSE = LicenseService()
+# license / quota 共用同一个 service，避免状态文件锁和计数各算各的
+LICENSE = quota.SERVICE
 
 
 def log_error(text: str) -> None:
@@ -104,7 +104,7 @@ def health(ctx):
             "detectors": sorted(registry.all_detectors().keys()),
             "scanners": scanners,
             "scan_enabled": scan_enabled,
-            "packs": packs,
+            "packs": quota.visible_packs(packs),
             "vault_key": vault.key_fingerprint(),
             # 预览与 human 导出使用同一套涂黑矩形（v1.1.2 起）；部署自检用
             "preview_parity": "export-parity/v1",
@@ -151,12 +151,22 @@ def create_job(ctx):
             raise ApiError("路径不存在")
     else:
         raise ApiError("缺少 upload_id 或 path")
-    job = MANAGER.create(path, strictness=strictness, pack_ids=packs,
-                         id_card_mode=id_card_mode,
-                         time_blur=bool(body.get("time_blur")),
-                         # MCP 客户端（Claude Desktop/DSH）经本地 HTTP 建任务时标记来源；
-                         # 其他调用不传则默认 api，不影响既有行为。
-                         origin="mcp" if body.get("origin") == "mcp" else "api")
+    parser = registry.find_parser(path)
+    if parser is None:
+        raise ApiError("暂不支持这种文件", "free_format", 400)
+    try:
+        packs = quota.precheck(path, parser.format_id, packs)
+    except LicenseError as exc:
+        raise ApiError(exc.message, exc.code, exc.status)
+    try:
+        job = MANAGER.create(path, strictness=strictness, pack_ids=packs,
+                             id_card_mode=id_card_mode,
+                             time_blur=bool(body.get("time_blur")),
+                             # MCP 客户端（Claude Desktop/DSH）经本地 HTTP 建任务时标记来源；
+                             # 其他调用不传则默认 api，不影响既有行为。
+                             origin="mcp" if body.get("origin") == "mcp" else "api")
+    except LicenseError as exc:
+        raise ApiError(exc.message, exc.code, exc.status)
     return {"job_id": job.id, "name": job.name, "fmt": job.fmt,
             "origin": job.origin,
             "id_card_mode": job.id_card_mode, "time_blur": job.time_blur}
@@ -245,7 +255,10 @@ def packs(ctx):
     detail = {}
     for r in rules:
         detail.setdefault(r.pack, []).append(r.to_dict())
-    return {"packs": index, "detail": detail}
+    visible = quota.visible_packs(index)
+    allowed = {p.get("id") for p in visible}
+    detail = {k: v for k, v in detail.items() if k in allowed}
+    return {"packs": visible, "detail": detail}
 
 
 def _license_call(fn):
@@ -257,7 +270,16 @@ def _license_call(fn):
 
 @route("GET", r"/api/license/status")
 def license_status(ctx):
-    return _license_call(LICENSE.status)
+    def _status_with_quota():
+        data = LICENSE.status()
+        data["quota"] = LICENSE.quota_status()
+        return data
+    return _license_call(_status_with_quota)
+
+
+@route("GET", r"/api/quota/status")
+def quota_status(ctx):
+    return _license_call(LICENSE.quota_status)
 
 
 @route("GET", r"/api/license/machine-code")

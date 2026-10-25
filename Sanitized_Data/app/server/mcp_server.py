@@ -55,7 +55,7 @@ os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "disabled")
 os.environ.setdefault("OPENCV_OPENCL_DEVICE", "disabled")
 os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
 
-from yinzhan import audit, pipeline, registry, vault          # noqa: E402
+from yinzhan import audit, pipeline, quota, registry, vault   # noqa: E402
 from yinzhan.config import PORT, RUNTIME_PATH, VERSION        # noqa: E402
 from yinzhan.jobs import MANAGER, _load_rules                 # noqa: E402
 from yinzhan.ocr import get_ocr                               # noqa: E402
@@ -1851,6 +1851,24 @@ def _initialize_result(params: dict) -> dict:
     }
 
 
+# D-M1：MCP 只读小工具免费；文件写/复核/导出等需要 mcp 功能位（Pro 及以上/试用）
+_MCP_FREE_TOOLS = {"list_rules", "check_support", "redact_text"}
+
+
+def _require_mcp_entitlement(name: str) -> None:
+    if not quota.is_enforced() or name in _MCP_FREE_TOOLS:
+        return
+    try:
+        if quota.SERVICE.has_feature("mcp"):
+            return
+    except Exception:
+        pass
+    raise ToolError(
+        "文件脱敏/复核/导出等 MCP 工具需要专业版授权；list_rules、check_support、redact_text 可直接用。",
+        "license_required",
+    )
+
+
 def _handle_tools_call(msg_id, params: dict):
     name = str(params.get("name") or "")
     arguments = params.get("arguments") or {}
@@ -1860,7 +1878,10 @@ def _handle_tools_call(msg_id, params: dict):
     if fn is None:
         return _ok(msg_id, _error(f"未知工具：{name}", "unknown_tool"))
     try:
+        _require_mcp_entitlement(name)
         return _ok(msg_id, fn(arguments))
+    except ToolError as exc:
+        return _ok(msg_id, _error(exc.message, exc.code, **exc.extra))
     except Exception as exc:  # noqa: BLE001  兜底：工具异常不掀翻协议层
         log("tool call error:", traceback.format_exc())
         return _ok(msg_id, _error(f"{type(exc).__name__}: {exc}", "internal"))

@@ -2211,6 +2211,7 @@ class PdfParser(registry.Parser):
                 page_count = 0
             if page_count == 0:
                 doc.warnings.append("PDF 没有页面")
+            ocr_page_count = 0
             for page_index in range(page_count):
                 # 用户点了「停止」就立刻收手，别让扫描件把整台机器占住
                 ctx.check_stop()
@@ -2227,6 +2228,7 @@ class PdfParser(registry.Parser):
                     scanned = len(text.strip()) < MIN_TEXT_CHARS
                     udm_page.ref["scanned"] = bool(scanned)
                     if scanned:
+                        ocr_page_count += 1
                         ctx.report(page_index, page_count,
                                    f"正在识别第 {page_index + 1}/{page_count} 页（扫描件）")
                         ocr_blocks = _ocr_page_blocks(page, page_index, ctx, doc.warnings)
@@ -2249,6 +2251,7 @@ class PdfParser(registry.Parser):
                         raise
                     doc.warnings.append(f"第 {page_index + 1} 页解析失败：{exc}")
                     doc.pages.append(Page(index=page_index, width=0.0, height=0.0))
+            doc.meta["ocr_pages"] = int(ocr_page_count)
         finally:
             try:
                 pdf.close()
