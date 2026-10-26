@@ -87,6 +87,8 @@ def _specs() -> list[dict]:
          "label": "TIFF IFD 分类（mask/overview 不计帧、正射走 rasterio 路径）自测"},
         {"key": "metaview", "file": TESTS / "test_metadata_entities.py", "timeout": 420,
          "label": "非画面敏感数据（GPS/EXIF/地理坐标）进隐去清单自测"},
+        {"key": "proxycsrf", "file": TESTS / "test_proxy_csrf.py", "timeout": 120,
+         "label": "反代 Host / 跨站 CSRF（CKA nginx 事故）自测"},
         {"key": "surrogate", "file": TESTS / "test_surrogate.py", "timeout": 120,
          "label": "R04 假值不保留完整原值 + verify 豁免收紧自测"},
         {"key": "secrets", "file": TESTS / "test_secrets.py", "timeout": 300,

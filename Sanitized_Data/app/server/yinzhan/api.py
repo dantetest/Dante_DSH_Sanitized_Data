@@ -413,24 +413,35 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": {"code": "internal", "message": str(exc)}}, 500)
 
     def _same_origin(self) -> bool:
-        """防 CSRF：只接受「同源」的写请求。
+        """防 CSRF + DNS rebinding：只接受同源请求。
 
         部署在 nginx/Caddy 反代后面时，Origin 是 https://cka.blctek.com:8443，
-        但 Host 可能被改写成 cka.blctek.com 或 127.0.0.1:8760，
-        直接字符串比较会把正常请求全拦掉。所以这里只比主机名，
-        并优先信任反向代理传来的 X-Forwarded-Host。
+        Host 可能是公网域名；服务只监听 127.0.0.1，不能因此把反代请求全拒掉。
+        这里用「反代头是否由 nginx 写入」区分正常反代与 DNS rebinding：
+        - 浏览器直连 127.0.0.1 的恶意域名请求：Host=evil.com，但浏览器无法
+          伪造 X-Forwarded-*（fetch 自定义头会触发预检，本服务不返回 CORS）；
+        - 正常反代：nginx 写入 X-Forwarded-Host/For/Proto 或 X-Real-IP。
         """
-        # DNS rebinding 防护：只绑回环地址时，Host 必须是回环名；否则恶意域名
-        # 解析到 127.0.0.1 后，浏览器视角仍是「同源」，Origin/Host 均可伪造。
         try:
             bound_host = str(self.server.server_address[0])
         except Exception:
             bound_host = "127.0.0.1"
+        host_hdr = _host_only(self.headers.get("Host", ""))
+        # 反代头存在即视为来自受信反向代理；直接暴露时浏览器无法带上这些头
+        behind_proxy = any(
+            str(self.headers.get(key) or "").strip()
+            for key in ("X-Forwarded-Host", "X-Forwarded-For",
+                        "X-Forwarded-Proto", "X-Real-IP"))
+        allowed_hosts = {
+            _host_only(item) for item in os.environ.get("YINZHAN_ALLOWED_HOSTS", "").split(",")
+            if item.strip()
+        }
+        # DNS rebinding 防护：只绑回环地址时，Host 非回环时必须能证明来自反代
         if bound_host in ("127.0.0.1", "localhost", "::1"):
-            host_hdr = _host_only(self.headers.get("Host", ""))
-            if host_hdr and host_hdr not in ("127.0.0.1", "localhost", "::1", "[::1]"):
-                log_warning("非回环 Host 被拒 host=%s" % logging_setup.sanitize_field(
-                    self.headers.get("Host", ""), 200))
+            if (host_hdr and host_hdr not in ("127.0.0.1", "localhost", "::1", "[::1]")
+                    and not behind_proxy and host_hdr not in allowed_hosts):
+                log_warning("非回环 Host 被拒（无反向代理头） host=%s" % (
+                    logging_setup.sanitize_field(self.headers.get("Host", ""), 200)))
                 return False
         origin = self.headers.get("Origin")
         if not origin:
@@ -444,6 +455,8 @@ class Handler(BaseHTTPRequestHandler):
             if raw:
                 candidates.append(_host_only(raw.split(",")[0].strip()))
         if origin_host in [c for c in candidates if c]:
+            return True
+        if origin_host in allowed_hosts:
             return True
         # 额外白名单：YINZHAN_ALLOWED_ORIGINS="https://a.com,https://b.com"
         allowed = os.environ.get("YINZHAN_ALLOWED_ORIGINS", "")
@@ -534,7 +547,8 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self, method: str):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-        if not self._same_origin():
+        # CSRF 只约束 API；静态页/JS 不应因反代 Host 差异整站 403。
+        if (path == "/api" or path.startswith("/api/")) and not self._same_origin():
             self._json({"error": {"code": "forbidden", "message": "跨站请求被拒绝"}}, 403)
             return
 
