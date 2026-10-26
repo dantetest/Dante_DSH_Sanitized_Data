@@ -95,7 +95,7 @@ args/cwd 留空即可。DSH 侧工具名为 `mcp__sanitized-data__<tool>`。
 | 组件 | 作用 |
 |---|---|
 | `lib/index.js` | host 代理：同源 `/sanitized-data/api/*` → `127.0.0.1:<port>/api/*`；含本地工作台 `POST /start` 自动拉起（白名单），不外呼 |
-| `lib/client.js` | 15 个工具卡（自检/计数/job/按钮、image content 缩略图）+ 完成态 footer 最近 Job 徽标 + 侧边栏「数据隐站工作台」入口（DSH 原生 browser tab；不再注册仿制面板） |
+| `lib/client.js` | 15 个工具卡（自检/计数/job/按钮、image content 缩略图）+ 完成态 footer 最近 Job 徽标 + 侧边栏「数据隐站工作台」入口（DSH 原生 browser tab；不再注册仿制面板）。左下角入口默认打开**空白工作台**，不自动挑最近 job，避免展示上一次样例/测试数据；真实工具结果仍用对应 job 深链 |
 | `cordis.patch.yml` | `- insert:` 数据隐站插件 bundle |
 | `install.ps1` | 复制包内容、更新 profile bundles、自动追加 MCP client patch（`-SkipMcp` 可跳过）；`-Uninstall` 卸载插件 |
 
@@ -134,6 +134,16 @@ python -X utf8 app/tests/run_all.py            # 全套
 本机实测（见 QA 报告）：DSH 对话实际调用 `mcp__sanitized-data__redact_text` 与
 `sanitize_file/get_sanitize_job/open_sanitize_workbench`，创建 `j_*` 任务、6 个实体、
 stage=ready，并返回深链。
+
+### 7.1 已实测客户端（2026-10-23）
+
+| 客户端 | 版本 | 结果 | 接入要点 |
+|---|---|---|---|
+| WorkBuddy AI | 5.8.4（Windows 10） | ✅ 端到端：15 工具、`list_rules`、`sanitize_file`（`j_99793ed4`，6 实体）、`export_sanitize_job`、审计落盘 | 实际配置在 **`~/.workbuddy-ai/mcp.json`**（旧文档 `~/.workbuddy/mcp.json` 在 5.8.4 不生效）；首次接入需在 MCP 页面点「信任」，否则不启动进程；协议协商 `2025-11-25 → 2025-06-18` |
+| Codex | CLI 0.163 / Desktop 26.1013 | ✅ MCP 客户端实测：连接 925 ms、15 工具、`list_rules`/`redact_text`、resources 读取 | `~/.codex/config.toml`；默认 `startup_timeout_sec=10`、`tool_timeout_sec=60`，大文件建议 120/600；prompts 无产品入口、图片预览不保证 |
+| DSH | 0.2.1-rc.2 | ✅ 工具卡 + 工作台深链 | MCP 工具链路实测 4–427 ms（小工具 4–93ms、list_rules 427ms）；源码版冷启动 1–5.4 s（热 1.0s），生产建议安装版 exe；`toolCallTimeoutMs=600000`；配置见 §5 |
+
+> 详细真机测试记录（JSON-RPC 流量、截图、审计）保存在研发知识库 `research/mcp-compat/workbuddy-live-test.md`；官网 `/mcp` 页已按上述路径/信任/超时口径更新。
 
 ## 8. 未完成 / 后续（对照计划）
 

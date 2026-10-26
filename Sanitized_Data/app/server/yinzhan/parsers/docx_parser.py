@@ -1740,6 +1740,17 @@ class DocxParser(Parser):
         if media_meta:
             meta["embedded_media"] = media_meta
             meta["hidden_objects"] = list(media_meta.get("hidden_objects") or [])
+        # 免费额度：DOCX 是流式格式，解析后只有 1 个逻辑 Page，按页数限额会失效
+        # （25 页文档也只算 1 页，付费墙被绕过）。这里用显式分页符 / Word 保存的
+        # lastRenderedPageBreak 估算真实页数，供 quota.after_parse 判定；只做估算，
+        # 取两者较大者 +1，避免同一处分页被重复计数。
+        try:
+            body_element = parsed.element.body
+            explicit_breaks = len(body_element.xpath('.//w:br[@w:type="page"]'))
+            rendered_breaks = len(body_element.xpath('.//w:lastRenderedPageBreak'))
+            meta["page_estimate"] = int(1 + max(explicit_breaks, rendered_breaks))
+        except Exception:
+            pass
         document.meta = meta
         _append_office_media_warnings(document, media_meta, fmt="docx")
         return document

@@ -160,6 +160,46 @@ def _always_ok(value: str) -> bool:
     return bool(value)
 
 
+#: 机构类规则（法院/医院等）里没有识别意义的泛化词。词表只收「机构类型词」，
+#: 不含真实专名；正则 ``[\u4e00-\u9fa5]{2,20}(?:人民法院|…|法院)`` 的短后缀
+#: 会被通配吞掉（"人民法院" = "人民" + "法院"），再经 strip_prefix 裁掉
+#: "该/本/县/市" 后就只剩这些泛化词，必须丢弃（否则既无脱敏价值，还会让
+#: 出口自检把泛化片段误判成原文残留，阻断导出）。
+_GENERIC_ORG_TERMS = frozenset({
+    # 法院 / 检察院
+    "法院", "人民法院", "人民检察院", "检察院", "人民法庭",
+    "中级人民法院", "高级人民法院", "最高人民法院", "基层人民法院", "专门人民法院",
+    # 医院 / 卫生院等
+    "医院", "人民医院", "中医院", "中心医院", "卫生院", "妇幼保健院",
+    "疾病预防控制中心", "疾控中心", "社区卫生服务中心", "诊所", "卫生室",
+})
+
+#: 泛化词前面可能残留的单字/多字行政区划前缀（"县人民法院""市人民医院"）
+_GENERIC_ORG_PLACE_PREFIXES = (
+    "自治区", "自治州", "自治县", "自治旗",
+    "省", "市", "县", "区", "州", "旗", "盟", "乡", "镇", "街道",
+)
+
+
+@register_validator("org_not_generic")
+def org_not_generic(value: str) -> bool:
+    """机构名不能是纯泛化词（法院/医院等），避免产出无意义实体。
+
+    - "人民法院" / "县人民法院" / "该法院"（裁剪后）→ 丢弃
+    - "人民医院" / "市人民医院" / "中医院" → 丢弃
+    - "盐源县人民法院" / "永泰人民医院" / "海淀法院" → 保留
+    """
+    text = (value or "").strip()
+    if not text:
+        return False
+    if text in _GENERIC_ORG_TERMS:
+        return False
+    for prefix in _GENERIC_ORG_PLACE_PREFIXES:
+        if text.startswith(prefix) and text[len(prefix):] in _GENERIC_ORG_TERMS:
+            return False
+    return True
+
+
 _FLAG_MAP = {
     "i": re.IGNORECASE, "ignorecase": re.IGNORECASE,
     "m": re.MULTILINE, "multiline": re.MULTILINE,

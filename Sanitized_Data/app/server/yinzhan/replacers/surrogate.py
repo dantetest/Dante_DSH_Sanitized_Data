@@ -462,7 +462,7 @@ def _split_locality(stem: str) -> tuple[str, str]:
 
 def _replace_district(locality: str, rng: random.Random) -> str:
     """机构名没有字号可用时，换一个同长度的区/县/城市名（同城感）。"""
-    match = re.search(r"([\u4e00-\u9fa5]{2,4})(?:区|县|市)$", locality)
+    match = re.search(r"([\u4e00-\u9fa5]{2,4})(?:街道|镇|乡|区|县|市)$", locality)
     if match:
         body = match.group(1)
         pool = [d for d in _DISTRICT_NAMES if len(d) == len(body)] or list(_DISTRICT_NAMES)
@@ -472,6 +472,38 @@ def _replace_district(locality: str, rng: random.Random) -> str:
             pool = [c for c in _LOCALITY_NAMES_SORTED if len(c) == len(name)]
             return rng.choice(pool or list(_LOCALITY_NAMES_SORTED)) + locality[len(name):]
     return locality
+
+
+#: 括号补充说明里出现这些词，视为「括号内也是机构名」，必须一起换掉。
+_ANNOTATION_ORG_HINTS = (
+    "公司", "学院", "大学", "学校", "医院", "中心", "集团", "研究院",
+    "研究所", "事务所", "银行", "支行", "分行", "厂", "店", "局", "所",
+    "社", "会", "校", "站", "部", "委", "办", "馆", "院",
+)
+
+
+def _fake_annotation(annotation: str, rng: random.Random) -> str:
+    """括号补充说明如果是机构名，必须换掉。
+
+    保形假值旧逻辑把「（成都市技师学院）」这类括号内容**原样保留**，真实机构名
+    会留在 AI 换名版里（2026-10-25 QA S2-b，真实招录公告实测）。非识别性说明
+    （如「（有限合伙）」「（以下简称甲方）」）继续保留。
+    """
+    if len(annotation) < 4:
+        return annotation
+    inner = annotation[1:-1].strip()
+    if not inner or len(inner) > 20:
+        return annotation
+    if not any(word in inner for word in _ANNOTATION_ORG_HINTS):
+        return annotation
+    try:
+        fake = _fake_org(inner, rng, attempt=1)
+    except Exception:
+        fake = ""
+    if (not fake or fake == inner or inner in fake or len(fake) > 24):
+        fake = "".join(rng.choice(_ORG_CORE_CHARS)
+                       for _ in range(max(2, min(12, len(inner)))))
+    return annotation[0] + fake + annotation[-1]
 
 
 def _org_core(rng: random.Random, target: int) -> str:
@@ -499,7 +531,7 @@ def _fake_org(value: str, rng: random.Random, attempt: int = 0) -> str:
     annotation = ""
     match = re.search(r"[（(][^（）()]{1,12}[）)]$", body)
     if match:
-        annotation = match.group(0)
+        annotation = _fake_annotation(match.group(0), rng)
         body = body[:match.start()].strip()
 
     suffix = ""
@@ -520,6 +552,10 @@ def _fake_org(value: str, rng: random.Random, attempt: int = 0) -> str:
         elif locality:
             # 法院/检察院这类没有字号的机构：换掉最后的区/县级名称
             new_locality = _replace_district(locality, rng) if locality else locality
+            if new_locality == locality:
+                # 地名不在词池且替换不动 → 插假字号，避免退回整段乱码（QA S2-d）
+                return (label + locality + _org_core(rng, 2)
+                        + industry + suffix + annotation)
             return label + new_locality + industry + suffix + annotation
         else:
             core_len = 2

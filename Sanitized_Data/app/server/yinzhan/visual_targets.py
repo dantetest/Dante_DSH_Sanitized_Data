@@ -696,6 +696,115 @@ def _face_tile_plan(width: int, height: int) -> tuple[str, list[tuple[int, int, 
     return f"{grid}x{grid}/cap{tile_cap}", tiles
 
 
+# ── 超大照片人脸交叉校验（2026-10-25 无人机航拍实测）──
+# 20MP 航拍图上 Haar frontal 会把石堆/水面/地面纹理当正脸（固定 conf≈0.92、
+# 框 91–444px）；真脸则全部有 YuNet 双引擎一致（24–36px 小框）。超大照片上的
+# Haar 单引擎大框不可信：要求 YuNet 佐证，或框足够小才保留。
+_FACE_CROSS_CHECK_EDGE = 3200
+_FACE_CROSS_CHECK_LARGE_EDGE = 96
+#: 航拍场景（EXIF 无人机机型/海拔）：真人/车辆在画面里都很小，大框基本是纹理误报。
+_DRONE_FACE_MAX_EDGE = 48
+_DRONE_FACE_MIN_CONF = 0.60
+
+
+def _drone_scene(ctx: Any) -> bool:
+    """扫描上下文是否标记为无人机航拍影像（image_parser 传入 options.drone）。"""
+    try:
+        opts = getattr(ctx, "options", None) or {}
+        return bool(opts.get("drone"))
+    except Exception:
+        return False
+
+
+def _aerial_scene(ctx: Any) -> tuple[bool, float | None]:
+    """航拍场景判定：无人机照片（options.drone）或航空正射影像（options.aerial）。
+
+    返回 (是否航拍场景, GSD 米/像素或 None)。
+    """
+    try:
+        opts = getattr(ctx, "options", None) or {}
+        if opts.get("aerial"):
+            try:
+                gsd = float(opts.get("gsd_m") or 0) or None
+            except (TypeError, ValueError):
+                gsd = None
+            return True, gsd
+        return bool(opts.get("drone")), None
+    except Exception:
+        return False, None
+
+
+def _filter_drone_scene_faces(
+        found: list[tuple[Box, float, str]],
+        gsd_m: float | None = None,
+        pixel_scale: float = 1.0) -> list[tuple[Box, float, str]]:
+    """航拍场景：只保留小脸框（大框是屋顶/树堆/水面/地面纹理误报）。
+
+    真实人头约 0.15–0.3m；按地面分辨率换算「0.6m 对应的扫描图像素数」作为最大
+    合理人脸框（航拍/正射图常以 1/3–1/8 降采样预览扫描，需乘 preview_scale）。
+    无 GSD 时用固定 48px（无人机 20MP 实测真脸 21–41px）。仅对航拍场景生效。
+    """
+    max_edge = _env_int("YINZHAN_SCAN_FACE_DRONE_MAX_EDGE", _DRONE_FACE_MAX_EDGE,
+                        minimum=6, maximum=4000)
+    if gsd_m and not os.environ.get("YINZHAN_SCAN_FACE_DRONE_MAX_EDGE"):
+        try:
+            # options.preview_scale 是「扫描图 → 原图」的放大倍数（原图/预览），
+            # 0.6m 人头在原图的像素数需除以它才是扫描图上的像素数。
+            upscale = max(0.05, float(pixel_scale or 1.0))
+            max_edge = max(3, min(4000, int(round(0.6 / float(gsd_m) / upscale))))
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+    try:
+        min_conf = float(os.environ.get("YINZHAN_SCAN_FACE_DRONE_MIN_CONF",
+                                        _DRONE_FACE_MIN_CONF) or _DRONE_FACE_MIN_CONF)
+    except (TypeError, ValueError):
+        min_conf = _DRONE_FACE_MIN_CONF
+    return [
+        (rect, conf, label) for rect, conf, label in found
+        if min(rect[2] - rect[0], rect[3] - rect[1]) < max_edge
+        and conf >= min_conf
+    ]
+
+
+def _large_photo_face_cross_check(photo_like: bool, long_edge: int,
+                                  yunet_ready: bool) -> bool:
+    """是否对本次检测启用「超大照片人脸交叉校验」。"""
+    if not (photo_like and yunet_ready):
+        return False
+    raw = str(os.environ.get("YINZHAN_SCAN_FACE_CROSS_CHECK", "auto")).strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    return int(long_edge) > _FACE_CROSS_CHECK_EDGE
+
+
+def _cross_check_large_photo_faces(
+        found: list[tuple[Box, float, str]]) -> list[tuple[Box, float, str]]:
+    """超大照片：大框且只有单引擎命中的，视为纹理误报丢弃。
+
+    2026-10-25 无人机航拍实测（DJI 20MP）：
+    - 45 个框里 42 个是 Haar 单引擎纹理误报：**固定 conf≈0.92、框 91–444px**
+      （石堆/水面/地面纹理）；
+    - 真脸全部是 **≤41px 小框**（Haar 或 YuNet 单引擎都可能）；
+    - 41px 小框即使单引擎也保留（远距离真人误丢代价更高）。
+    规则：双引擎互证（IoU≥0.2）→ 保留；单引擎小框（最短边 <96px）→ 保留；
+    单引擎大框 → 丢弃。可用 YINZHAN_SCAN_FACE_CROSS_CHECK=0 关闭。
+    """
+    haar_boxes = [rect for rect, _conf, label in found if label != "yunet"]
+    yunet_boxes = [rect for rect, _conf, label in found if label == "yunet"]
+    kept: list[tuple[Box, float, str]] = []
+    for rect, conf, label in found:
+        edge = min(rect[2] - rect[0], rect[3] - rect[1])
+        others = yunet_boxes if label != "yunet" else haar_boxes
+        if any(_iou(rect, other) >= 0.2 for other in others):
+            kept.append((rect, conf, label))
+            continue
+        if edge < _FACE_CROSS_CHECK_LARGE_EDGE:
+            kept.append((rect, conf, label))
+    return kept
+
+
 def _detect_faces(rgb: np.ndarray, ctx: ScanContext) -> list[ScanHit]:
     if cv2 is None:
         return []
@@ -829,6 +938,28 @@ def _detect_faces(rgb: np.ndarray, ctx: ScanContext) -> list[ScanHit]:
 
     if not found:
         return []
+
+    # 航拍场景（EXIF 无人机照片 / 航空正射影像）：大框几乎全是纹理误报，只留小脸框
+    aerial, gsd_m = _aerial_scene(ctx)
+    if aerial:
+        pixel_scale = 1.0
+        try:
+            pixel_scale = float((getattr(ctx, "options", None) or {}).get(
+                "preview_scale") or 1.0)
+        except (TypeError, ValueError):
+            pixel_scale = 1.0
+        found = _filter_drone_scene_faces(found, gsd_m=gsd_m,
+                                          pixel_scale=pixel_scale)
+        if not found:
+            return []
+
+    # 超大照片（如 20MP 无人机航拍）先做交叉校验，去掉 Haar 单引擎纹理误报；
+    # 必须在去重前做（去重会按置信度保留 Haar 0.92 的大框、丢掉真脸的 YuNet 框）。
+    if found and _large_photo_face_cross_check(
+            photo_like_fmt, max(width, height), yunet_ready):
+        found = _cross_check_large_photo_faces(found)
+        if not found:
+            return []
 
     # 去重：同一张脸在多块/多尺度/正脸+侧脸重复命中只留一个（先按原始框去重）
     found.sort(key=lambda item: item[1], reverse=True)

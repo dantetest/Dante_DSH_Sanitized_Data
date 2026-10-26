@@ -36,7 +36,7 @@ class JoinedRegexDetector(Detector):
 
     def __init__(self, pattern: str, validate: str = "none", flags: int = 0,
                  confidence: float = 0.97, value_clean: str = "",
-                 max_blocks: int = 12) -> None:
+                 max_blocks: int = 12, require_bbox: bool = True) -> None:
         if not pattern:
             raise ValueError("JoinedRegexDetector 需要非空 pattern")
         self.pattern = str(pattern)
@@ -46,6 +46,9 @@ class JoinedRegexDetector(Detector):
         self.confidence = float(confidence)
         self.value_clean = str(value_clean or "").strip().lower()
         self.max_blocks = max(2, int(max_blocks))
+        # 纯文本（.txt/.md/.log）的 block 没有 bbox；默认仍要求 bbox 以保持
+        # PDF/图片旧行为不变；私钥块这类「必须跨行整块处理」的规则显式关掉。
+        self.require_bbox = bool(require_bbox)
 
     @classmethod
     def from_spec(cls, spec: dict) -> "JoinedRegexDetector":
@@ -61,6 +64,7 @@ class JoinedRegexDetector(Detector):
             confidence=float(spec.get("confidence", 0.97)),
             value_clean=str(spec.get("value_clean") or ""),
             max_blocks=int(spec.get("max_blocks", 12)),
+            require_bbox=bool(spec.get("require_bbox", True)),
         )
 
     def _clean(self, value: str) -> str:
@@ -75,11 +79,14 @@ class JoinedRegexDetector(Detector):
         merged: dict[str, Entity] = {}
         for page in doc.pages:
             blocks = [b for b in page.blocks
-                      if b.kind == "text" and (b.text or "").strip() and b.bbox]
+                      if b.kind == "text" and (b.text or "").strip()
+                      and (b.bbox or not self.require_bbox)]
             if not blocks:
                 continue
-            blocks.sort(key=lambda b: (round(float(b.bbox[1]), 1),
-                                       float(b.bbox[0])))
+            if all(b.bbox for b in blocks):
+                blocks.sort(key=lambda b: (round(float(b.bbox[1]), 1),
+                                           float(b.bbox[0])))
+            # 无 bbox（纯文本）时保持解析器给的行顺序，不再排序
             # 拼接全页文本，同时记录每块在拼接串里的区间
             pieces: list[str] = []
             maps: list[tuple[int, int, Any]] = []

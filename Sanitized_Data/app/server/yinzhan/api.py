@@ -132,6 +132,8 @@ def upload(ctx):
 @route("POST", r"/api/jobs")
 def create_job(ctx):
     body = ctx.json()
+    if not isinstance(body, dict):
+        raise ApiError("请求体必须是 JSON 对象")
     strictness = body.get("strictness") or "standard"
     packs = body.get("packs") or None
     # 证件脱敏档位：fields=只遮头像/姓名/身份证号/住址（默认）；whole=整卡涂黑
@@ -193,7 +195,11 @@ def get_entities(ctx, jid):
 
 @route("GET", r"/api/jobs/(?P<jid>[^/]+)/preview/(?P<page>\d+)")
 def preview(ctx, jid, page):
-    mode = ctx.query.get("mode", "orig")
+    mode = str(ctx.query.get("mode", "orig") or "orig").lower()
+    if mode == "redacted":            # 兼容旧调用方别名
+        mode = "out"
+    if mode not in ("orig", "out"):
+        raise ApiError("mode 只能是 orig 或 out")
     return MANAGER.preview(jid, int(page), mode)
 
 
@@ -240,7 +246,12 @@ def export(ctx, jid):
 
 @route("GET", r"/api/audit")
 def audit_list(ctx):
-    limit = int(ctx.query.get("limit", "50"))
+    raw = ctx.query.get("limit", "50")
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        raise ApiError("limit 必须是整数")
+    limit = max(1, min(500, limit))
     return {"records": audit.recent(limit), "stats": audit.stats()}
 
 
@@ -274,6 +285,7 @@ def license_status(ctx):
     def _status_with_quota():
         data = LICENSE.status()
         data["quota"] = LICENSE.quota_status()
+        data["quota"]["enforced"] = quota.is_enforced()
         data["purchase_url"] = PURCHASE_URL
         data["pricing_url"] = "/pricing"
         data["paywall_enabled"] = PAYWALL_ENABLED
@@ -284,7 +296,9 @@ def license_status(ctx):
 
 @route("GET", r"/api/quota/status")
 def quota_status(ctx):
-    return _license_call(LICENSE.quota_status)
+    data = _license_call(LICENSE.quota_status)
+    data["enforced"] = quota.is_enforced()
+    return data
 
 
 @route("GET", r"/api/license/machine-code")
@@ -406,6 +420,18 @@ class Handler(BaseHTTPRequestHandler):
         直接字符串比较会把正常请求全拦掉。所以这里只比主机名，
         并优先信任反向代理传来的 X-Forwarded-Host。
         """
+        # DNS rebinding 防护：只绑回环地址时，Host 必须是回环名；否则恶意域名
+        # 解析到 127.0.0.1 后，浏览器视角仍是「同源」，Origin/Host 均可伪造。
+        try:
+            bound_host = str(self.server.server_address[0])
+        except Exception:
+            bound_host = "127.0.0.1"
+        if bound_host in ("127.0.0.1", "localhost", "::1"):
+            host_hdr = _host_only(self.headers.get("Host", ""))
+            if host_hdr and host_hdr not in ("127.0.0.1", "localhost", "::1", "[::1]"):
+                log_warning("非回环 Host 被拒 host=%s" % logging_setup.sanitize_field(
+                    self.headers.get("Host", ""), 200))
+                return False
         origin = self.headers.get("Origin")
         if not origin:
             return True                     # 非浏览器（curl / MCP / 本地脚本）

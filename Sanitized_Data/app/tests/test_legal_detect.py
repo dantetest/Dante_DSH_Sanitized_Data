@@ -84,6 +84,11 @@ def main() -> int:
         "（2024）川3423 民初2058 号民事判决书",
         "（2025）川3423 执136 号裁定书",
         "经查，杨小书平户籍地四川省，村民，住峨边彝族自治县宜坪村水溪子组3号。",
+        # D-01（2026-10-25 真实判决书）：泛化引用「该人民法院」不得被当成法院名
+        "经审理，该人民法院认为，原审判决认定事实清楚。",
+        "杨书平根据原审判决向盐源县人民法院申请执行，盐源县人民法院扣划了款项。",
+        # M-01：律所执业许可证号（18 位统一社会信用代码格式，校验位可能不合法）
+        "执业许可证号：31310000E12345678X",
     ]
     doc, det = detect(blocks)
 
@@ -109,6 +114,24 @@ def main() -> int:
               for e in det.entities))
     check("带空格金额 930 700.00 元", has(det, "AMOUNT", "930 700.00 元"))
     check("带空格金额 11 250.00 元", has(det, "AMOUNT", "11 250.00 元"))
+
+    # D-01：机构类正则短后缀吞并产生的泛化实体（该人民法院 / 县人民医院）必须丢弃，
+    # 否则换名后泛化片段会进成品，出口自检误报原文残留（真实 29 页判决书无法交付）。
+    check("泛化「人民法院」不产生实体",
+          not any(e.value == "人民法院" for e in det.entities),
+          str([e.value for e in det.entities if e.etype == "ORG"][:8]))
+    check("真实法院名仍识别（盐源县人民法院）", has(det, "ORG", "盐源县人民法院"))
+    check("律所执业许可证号（18 位，校验位不合法也应识别）",
+          has(det, "LICENSE", "31310000E12345678X"),
+          str([e.value for e in det.entities if e.etype == "LICENSE"][:5]))
+    from yinzhan.detectors import regex_det
+    v = regex_det._VALIDATORS["org_not_generic"]
+    for generic in ("人民法院", "县人民法院", "法院", "人民医院", "市人民医院",
+                    "中医院", "中心医院", "卫生院"):
+        check(f"泛化机构名拒绝：{generic}", not v(generic))
+    for real in ("盐源县人民法院", "永泰人民医院", "海淀法院",
+                 "四川省成都市中级人民法院", "北京协和医院"):
+        check(f"真实机构名保留：{real}", v(real))
 
     # 金额/案号换名保形：分隔符、单位、号字保留
     session = pipeline.Session()

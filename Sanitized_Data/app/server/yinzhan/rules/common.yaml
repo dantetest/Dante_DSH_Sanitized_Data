@@ -13,6 +13,20 @@ rules:
     scope: [pdf, docx, xlsx, text, image, tiff, mesh]
     priority: 135
     detect:
+      # 完整 PEM 私钥块：BEGIN 行 + base64 正文 + END 行整块处理。只认 BEGIN 行
+      # 会把密钥正文/END 行留给成品（2026-10-25 QA E-01 实测 human 版仍含整块私钥）。
+      # 纯文本/PDF 的行块没有 bbox，用 require_bbox=false 的跨行拼接检测。
+      - type: joined_regex
+        pattern: '-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )*PRIVATE KEY-----'
+        require_bbox: false
+        max_blocks: 80
+      # 截断/残缺私钥（只有 BEGIN，没有 END）：整段 base64 正文一起涂黑。
+      # 用负向前瞻确保后面确实没有 END，避免把完整块截短。
+      - type: joined_regex
+        pattern: '-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----(?![A-Za-z0-9+/=\s]*-----END)[A-Za-z0-9+/=\s]{20,4000}'
+        require_bbox: false
+        max_blocks: 80
+      # 兜底：OCR 只读到首行/整块无法拼接
       - type: regex
         pattern: '-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----'
     replace: {strategy: black}
@@ -25,7 +39,15 @@ rules:
     priority: 130
     detect:
       - type: regex
-        pattern: '(?:sk-[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_\-]{30,})'
+        pattern: '(?:sk-[A-Za-z0-9\-_]{16,}|AKIA[0-9A-Z]{16}|(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_\-]{30,}|django-insecure-[A-Za-z0-9_\-]{16,})'
+      # 键值对形态：password= / passwd: / SECRET_KEY= / api_key= / token: 等。
+      # 支持 JSON 引号键（"password": "..."）与全角等号（密码＝...）。
+      # 只把「值」部分作为实体（(?P<value>...)），标签本身不误涂。
+      - type: regex
+        flags: I
+        pattern: '(?<![A-Za-z0-9])"?(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|client[_-]?secret|private[_-]?key)"?\s*[:：=＝]\s*"?(?P<value>[^\s,，;；"}]{4,128})'
+      - type: regex
+        pattern: '(?:密码|口令|密钥|秘钥|令牌)\s*[:：=＝]\s*"?(?P<value>[^\s,，;；"}]{4,128})'
     replace: {strategy: black}
 
   # ── 证件与号码 ──

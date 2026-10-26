@@ -64,6 +64,52 @@ class AddressSurrogateTest(unittest.TestCase):
                     value, repl,
                     f"假值完整包含原地址（R04 泄漏）：{value} -> {repl}")
 
+    def test_org_annotation_does_not_keep_inner_real_name(self):
+        # S2-b（2026-10-25 QA）：括号补充说明本身是真实机构名时，保形假值旧逻辑
+        # 会原样保留「（成都市技师学院）」，成品仍可读到真实机构名。
+        value = "成都新华永泰技术学院（成都市技师学院）"
+        for seed in range(6):
+            ctx = ReplaceContext(session={}, etype="ORG", seed=seed)
+            repl = surrogate._generate(ctx, "ORG", value, surrogate._FACTORIES["ORG"])
+            self.assertNotEqual(repl, value)
+            self.assertNotIn(value, repl)
+            self.assertNotIn("成都市技师学院", repl,
+                             f"括号内真实机构名残留：{repl}")
+
+    def test_org_without_known_locality_not_gibberish(self):
+        # S2-d：地名不在词池的政务机构（广汉市…街道办事处）曾退化为随机汉字乱码
+        value = "广汉市人民政府雒城街道办事处"
+        for seed in range(6):
+            ctx = ReplaceContext(session={}, etype="ORG", seed=seed)
+            repl = surrogate._generate(ctx, "ORG", value, surrogate._FACTORIES["ORG"])
+            self.assertNotEqual(repl, value)
+            self.assertNotIn(value, repl)
+            self.assertTrue(repl.endswith("办事处"), f"机构类型词丢失：{repl}")
+            self.assertIn("广汉市", repl, f"同城感地名应保留：{repl}")
+
+    def test_distinct_orgs_not_merged_by_place_prefix(self):
+        # S2-c：不同机构不能仅因共享地名前缀就被合并成同一假值
+        ents = [
+            _entity("北京大学", "北京立信学院", etype="ORG"),
+            _entity("北京物资学院", "北京远航学院", etype="ORG"),
+            _entity("四川大学", "四川青禾大学", etype="ORG"),
+            _entity("四川师范大学", "四川明理大学", etype="ORG"),
+        ]
+        stats = pipeline.consolidate_surrogates(ents)
+        self.assertEqual(stats["groups"], 0,
+                         f"不同机构被误归并：{[(e.value, e.decision.replacement) for e in ents]}")
+
+    def test_org_alias_still_merges(self):
+        # 真正的简称别名仍应归并（「云基公司」是「云基智慧工程股份有限公司」的简称）
+        ents = [
+            _entity("云基公司", "千帆公司", etype="ORG"),
+            _entity("云基智慧工程股份有限公司", "千帆智慧工程股份有限公司", etype="ORG"),
+        ]
+        stats = pipeline.consolidate_surrogates(ents)
+        self.assertEqual(stats["groups"], 1)
+        self.assertEqual(ents[0].decision.replacement,
+                         ents[1].decision.replacement)
+
     def test_generate_invariant_all_surrogate_types(self):
         cases = {
             "ADDRESS": "成都市武侯区",
@@ -108,6 +154,31 @@ class ReplacementIntervalTest(unittest.TestCase):
             text, [_entity(value, repl, etype="ORG")])
         self.assertIn(value, covered)
         self.assertTrue(covered[value])
+
+    def test_generic_fragment_inside_other_fake_is_exempted(self):
+        # D-01（2026-10-25 真实 29 页判决书）：泛化值「人民法院」落在另一个
+        # 机构保形假值「星汉景长中级人民法院」内部时，不得判成原文残留。
+        text = "审理机关：星汉景长中级人民法院"
+        ents = [
+            _entity("人民法院", "亲与人说又", etype="ORG"),
+            _entity("四川省成都市中级人民法院", "星汉景长中级人民法院", etype="ORG"),
+        ]
+        spans = pipeline._safe_replacement_spans(text, ents)
+        pos = text.find("人民法院")
+        self.assertTrue(spans, "跨实体假值区间应被登记")
+        self.assertTrue(any(s <= pos and pos + len("人民法院") <= e2
+                            for s, e2 in spans),
+                        "泛化片段落在其它假值内部应被豁免（D-01 误报）")
+
+    def test_generic_fragment_outside_fake_still_residual(self):
+        # 反向：泛化片段出现在假值之外（真残留）时仍必须能被检出
+        text = "本案由人民法院审理；假值：星汉景长中级人民法院"
+        ents = [_entity("四川省成都市中级人民法院", "星汉景长中级人民法院", etype="ORG")]
+        spans = pipeline._safe_replacement_spans(text, ents)
+        pos = text.find("人民法院")
+        self.assertFalse(any(s <= pos and pos + len("人民法院") <= e2
+                             for s, e2 in spans),
+                         "假值之外的命中不得被豁免")
 
     def test_numeric_fragment_is_not_residual(self):
         # R13 假阳性：金额假值「25万元」里含原金额「5万元」子串 → 属于更长数字 token

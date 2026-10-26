@@ -8,7 +8,7 @@ KNOWN_FEATURES = {
     "audit_export", "team_admin", "org_deploy", "ocr",
 }
 
-TRIAL_FEATURES = ["all_packs", "tif", "d3d", "mcp", "ocr"]
+TRIAL_FEATURES = ["all_packs", "tif", "d3d", "mcp", "ocr", "audit_export"]
 PERSONAL_FEATURES = ["all_packs", "tif", "d3d", "ocr"]
 PRO_FEATURES = ["all_packs", "custom_packs", "tif", "d3d", "mcp", "batch",
                 "audit_export", "ocr"]

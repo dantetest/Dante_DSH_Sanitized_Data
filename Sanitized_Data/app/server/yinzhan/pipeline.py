@@ -52,7 +52,13 @@ def _detector_for(spec: dict, cache: dict):
     return cache[key]
 
 
-def detect(doc: Document, rules: list[Rule], strictness: str = "standard") -> Detection:
+def detect(doc: Document, rules: list[Rule], strictness: str = "standard",
+           *, skip_types: set[str] | None = None) -> Detection:
+    """跑检测。
+
+    :param skip_types: 跳过的检测器类型集合（如超大文本跳过 {"ner"}，
+        见 jobs 的超长文本保护，QA E-10）；被跳过的规则不会静默——会写 warning。
+    """
     import time
     t0 = time.time()
     conf = STRICTNESS.get(strictness, STRICTNESS["standard"])
@@ -61,6 +67,7 @@ def detect(doc: Document, rules: list[Rule], strictness: str = "standard") -> De
     found: list[Entity] = []
     rule_of: dict[str, Rule] = {}
     warnings: list[str] = []
+    skipped: dict[str, int] = {}
 
     for rule in rules:
         if not rule.enabled:
@@ -68,6 +75,10 @@ def detect(doc: Document, rules: list[Rule], strictness: str = "standard") -> De
         if doc.fmt not in rule.scope and "*" not in rule.scope:
             continue
         for spec in rule.detect or []:
+            spec_type = str(spec.get("type") or "")
+            if skip_types and spec_type in skip_types:
+                skipped[spec_type] = skipped.get(spec_type, 0) + 1
+                continue
             det = _detector_for(spec, cache)
             if det is None:
                 warnings.append(f"规则 {rule.id} 的检测器 {spec.get('type')} 未注册")
@@ -89,6 +100,11 @@ def detect(doc: Document, rules: list[Rule], strictness: str = "standard") -> De
                 rule_of[e.id] = rule
 
     merged = _merge(found)
+    if skipped:
+        warnings.append(
+            "大文本降级：已跳过 " + "、".join(
+                f"{key}×{value}" for key, value in sorted(skipped.items()))
+            + " 条检测（人名/机构可能漏识别，建议拆分文件后重试）")
     # 单字人名是误报（比如把「甲方」尾巴上的「方」当成姓），而且没法复检 —— 直接丢
     merged = [e for e in merged
               if not (e.etype == "PERSON" and len(e.value.strip()) < 2)]
@@ -395,6 +411,28 @@ def _org_core(value: str) -> str:
     return core
 
 
+_ORG_ALIAS_PLACE_WORDS: frozenset[str] | None = None
+
+
+def _org_alias_place_word(core: str) -> bool:
+    """短 core 是否只是行政区/城市名（只是地名不算机构简称）。
+
+    QA S2-c：旧判据把「北京大学」与「北京物资学院」（core 北京 / 北京物资）、
+    「四川大学」与「四川师范大学」按前缀别名合并成同一假值，导致 AI 版里不同
+    单位同名、映射库只能还原其一。地名前缀不构成同一机构。
+    """
+    global _ORG_ALIAS_PLACE_WORDS
+    if _ORG_ALIAS_PLACE_WORDS is None:
+        words = set(_PROVINCE_TOKENS)
+        try:
+            from .replacers import surrogate as _surrogate
+            words.update(_surrogate._LOCALITY_NAMES)
+        except Exception:
+            pass
+        _ORG_ALIAS_PLACE_WORDS = frozenset(words)
+    return core in _ORG_ALIAS_PLACE_WORDS
+
+
 def _org_alias_similar(a: str, b: str) -> bool:
     """ORG 简称别名：较短 core 是较长 core 的前缀（含相等），且短 core 不是误检词。"""
     core_a, core_b = _org_core(a), _org_core(b)
@@ -403,6 +441,8 @@ def _org_alias_similar(a: str, b: str) -> bool:
     if len(core_a) < ORG_MIN_CORE_LEN or not core_b.startswith(core_a):
         return False
     if core_a in ORG_ALIAS_STOPWORDS or core_b in ORG_ALIAS_STOPWORDS:
+        return False
+    if _org_alias_place_word(core_a):
         return False
     return True
 
@@ -1031,6 +1071,12 @@ def has_cleanup_targets(doc: Document) -> bool:
         return True
     if (getattr(doc, "extra", None) or {}).get("geo_params"):
         return True
+    # 图片 EXIF/GPS/XMP/ICC：没有实体时也必须允许「仅清理导出」
+    # （2026-10-25 无人机航拍实测：清理视觉误检后部分图片 0 实体，只有 GPS/EXIF
+    #  要清，旧逻辑会拒绝导出「没有需要隐去的内容」）
+    for key in ("exif", "gps", "xmp", "icc", "icc_profile", "xml"):
+        if meta.get(key):
+            return True
     for key, value in meta.items():
         try:
             if value and str(key).lower() in META_KEYS:
@@ -1073,6 +1119,46 @@ def _replacement_intervals(text: str,
             covered.setdefault(needle, []).append((pos, pos + len(repl)))
             start = pos + 1
     return covered
+
+
+def _safe_replacement_spans(text: str,
+                            entities: list[Entity]) -> list[tuple[int, int]]:
+    """成品文本里**所有**安全假值占据的区间（扁平，供残留检查做包含判定）。
+
+    与 :func:`_replacement_intervals` 同一安全口径（假值不得完整包含原值），
+    区别是这里不再按原值分组：只要某处泛化片段落在**任意**安全假值内部，
+    就不算原文残留。典型误报场景（真实判决书 29 页，2026-10-25）：
+    实体「人民法院」是机构类正则被短后缀吞出的泛化值，成品里它同时出现在
+    另一个法院名的保形假值「星汉景长中级人民法院」内部；按原值分组的旧逻辑
+    只豁免「人民法院」自己的假值区间，于是把这个共同后缀误判成原文残留，
+    出口自检失败、整份文件无法交付。
+    """
+    spans: list[tuple[int, int]] = []
+    seen: set[tuple[str, str]] = set()
+    for e in entities:
+        if e.status == "rejected" or e.decision is None:
+            continue
+        dec = e.decision
+        if dec.black or dec.strategy in ("black", "drop", "keep"):
+            continue
+        needle = (e.value or "").strip()
+        repl = (dec.replacement or "").strip()
+        if len(needle) < 2 or len(repl) < 2:
+            continue
+        if needle in repl:                     # 假值完整包含原文 → 不允许豁免
+            continue
+        key = (needle, repl)
+        if key in seen:
+            continue
+        seen.add(key)
+        start = 0
+        while True:
+            pos = text.find(repl, start)
+            if pos < 0:
+                break
+            spans.append((pos, pos + len(repl)))
+            start = pos + 1
+    return spans
 
 
 def _is_numeric_fragment(text: str, pos: int, end: int, needle: str) -> bool:
@@ -1131,7 +1217,9 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
     # 换名版会把保形假值写回成品；假值里可能保留"人民法院/省市区"这类不敏感
     # 共同片段，导致原文值作为子串出现在**假值内部**。先记下所有假值在成品文本
     # 里的覆盖区间，属于假值内部的命中不算泄漏，假值之外还出现才是真残留。
-    covered = _replacement_intervals(text, entities)
+    # 注意：区间必须是**所有**实体的假值（不再按原值分组），否则「人民法院」
+    # 落在另一个法院名假值内部时会被误报（QA D-01）。
+    safe_spans = _safe_replacement_spans(text, entities)
     for e in entities:
         if e.status == "rejected" or not e.value:
             continue
@@ -1150,7 +1238,7 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
             if pos < 0:
                 break
             end = pos + len(needle)
-            if not any(s <= pos and end <= e2 for s, e2 in covered.get(needle, [])):
+            if not any(s <= pos and end <= e2 for s, e2 in safe_spans):
                 if _is_numeric_fragment(text, pos, end, needle):
                     start = pos + 1
                     continue

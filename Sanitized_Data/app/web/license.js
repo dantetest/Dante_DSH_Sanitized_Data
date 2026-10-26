@@ -40,7 +40,8 @@
     state.status = status || {};
     const s = state.status;
     const st = s.state || 'free';
-    const testMode = s.paywall_enabled === false;
+    const testMode = s.paywall_enabled === false
+      || (s.quota && s.quota.enforced === false);
     const badge = $('stateBadge');
     badge.textContent = testMode ? '测试版' : (TEXT[st] || st);
     badge.className = 'badge ' + (testMode ? 'paid' : (['free', 'trial', 'paid', 'grace'].includes(st) ? st : 'free'));

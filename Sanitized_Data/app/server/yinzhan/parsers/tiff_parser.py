@@ -22,6 +22,7 @@ P0（2026-10-20，方案 A）：
 from __future__ import annotations
 
 import os
+import re
 import struct
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,52 @@ def _scan_geo_tags(source: Image.Image) -> list[str]:
         except Exception:
             continue
     return names
+
+
+def _mask_digits(text: Any) -> str:
+    """把数字全部换成 *（工作台「隐去清单」展示用，不暴露真实坐标）。"""
+    return re.sub(r"\d", "*", str(text or ""))
+
+
+def _geo_masked_item(ref: Any, transform: Any, size: Any) -> dict:
+    """生成「GPS/地理坐标」展示条目（经纬度换算后全部打码）。
+
+    TIFF 正射影像的真实定位不一定在画面里，但一定在 GeoTIFF 标签里；工作台
+    清单要能看见「识别到了 GPS/地理坐标且已隐去」，用户才敢外发。raw 坐标
+    绝不进入 display。
+    """
+    epsg = getattr(ref, "epsg", None)
+    crs_desc = str(getattr(ref, "crs_desc", "") or "")
+    display = ""
+    try:
+        if transform and size:
+            from pyproj import CRS, Transformer
+
+            crs_obj = None
+            try:
+                wkt = str(getattr(ref, "crs_wkt", "") or "")
+                if wkt:
+                    crs_obj = CRS.from_wkt(wkt)
+                elif epsg:
+                    crs_obj = CRS.from_epsg(int(epsg))
+            except Exception:
+                crs_obj = None
+            if crs_obj is not None:
+                to_wgs = Transformer.from_crs(crs_obj, "EPSG:4326", always_xy=True)
+                cx = transform[0] * size[0] / 2 + transform[1] * size[1] / 2 + transform[2]
+                cy = transform[3] * size[0] / 2 + transform[4] * size[1] / 2 + transform[5]
+                lon, lat = to_wgs.transform(cx, cy)
+                display = (f"GPS 坐标：N {_mask_digits(f'{abs(lat):.6f}')}° "
+                           f"E {_mask_digits(f'{abs(lon):.6f}')}°")
+    except Exception:
+        display = ""
+    if not display:
+        display = "地理坐标（投影坐标已识别，数值已隐去）"
+    if epsg:
+        display += f" · 投影 EPSG:{epsg}"
+    elif crs_desc:
+        display += " · 坐标系：" + _mask_digits(crs_desc)
+    return {"type": "GEO", "label": "GPS/地理坐标（正射影像）", "display": display}
 
 
 def _safe_tiffinfo(source: Image.Image) -> dict[int, Any]:
@@ -428,6 +475,50 @@ def _to_uint8_rgb(data: np.ndarray, count: int) -> np.ndarray:
         ((work - lo) * (255.0 / (hi - lo))).clip(0, 255).astype(np.uint8))
 
 
+def _src_compression(src) -> str:
+    """读取 rasterio 源的压缩方式（不同版本/压缩类型可能是 str 或 enum）。"""
+    try:
+        comp = getattr(src, "compression", None)
+    except Exception:
+        return "none"
+    if not comp:
+        return "none"
+    value = getattr(comp, "value", None)
+    return str(value or comp).lower()
+
+
+def _is_ycbcr_source(src) -> bool:
+    """源 TIFF 是否为 YCbCr 色彩空间（JPEG 压缩的 GeoTIFF 正射影像很常见）。"""
+    try:
+        interp = list(src.colorinterp or [])
+    except Exception:
+        return False
+    if len(interp) < 3:
+        return False
+    names = [str(getattr(c, "name", c)).lower() for c in interp[:3]]
+    return names[:3] == ["ycbcr", "cb", "cr"]
+
+
+def _ycbcr_to_rgb(data: np.ndarray) -> np.ndarray:
+    """YCbCr(Y,Cb,Cr) → RGB（JPEG-in-TIFF 源不能按 RGB 直接写出，否则成品偏色）。"""
+    if data.ndim != 3 or data.shape[0] < 3:
+        return data
+    y = data[0].astype(np.float32)
+    cb = data[1].astype(np.float32) - 128.0
+    cr = data[2].astype(np.float32) - 128.0
+    r = np.clip(y + 1.402 * cr, 0.0, 255.0)
+    g = np.clip(y - 0.344136 * cb - 0.714136 * cr, 0.0, 255.0)
+    b = np.clip(y + 1.772 * cb, 0.0, 255.0)
+    out = data.copy()
+    conv = [r, g, b]
+    for idx in range(3):
+        if data.dtype == np.uint8:
+            out[idx] = np.round(conv[idx]).astype(np.uint8)
+        else:
+            out[idx] = np.round(conv[idx]).astype(data.dtype)
+    return out
+
+
 def _rasterio_read_preview(src, max_side: int | None) -> tuple[Image.Image, float]:
     """用 rasterio 读一张（可降采样的）RGB 预览图，返回 (PIL RGB, scale)。"""
     width, height = int(src.width), int(src.height)
@@ -448,6 +539,8 @@ def _rasterio_read_preview(src, max_side: int | None) -> tuple[Image.Image, floa
     if resampling is not None:
         kwargs["resampling"] = resampling
     data = src.read(**kwargs)
+    if _is_ycbcr_source(src):
+        data = _ycbcr_to_rgb(data)
     rgb = _to_uint8_rgb(data, len(indexes))
     return Image.fromarray(rgb, "RGB"), scale
 
@@ -473,6 +566,32 @@ def _scale_blocks(blocks: list, sx: float, sy: float) -> None:
             continue
 
 
+def _ortho_aerial_gsd(ref) -> float | None:
+    """按地理参考与像素尺寸判断是否航空正射影像，返回地面分辨率（米/像素）。
+
+    判据：真实地理参考 + 像素尺寸落在航空影像常见 GSD（0.2cm–2m）。
+    投影坐标系直接用米；地理坐标系按纬度换算（1° ≈ 111320·cosφ 米）。
+    """
+    try:
+        tr = getattr(ref, "transform", None)
+        if not tr or getattr(ref, "kind", "") != "real":
+            return None
+        px = abs(float(tr[0]))
+        if not (px > 0):
+            return None
+        if px > 1e-4:                       # 投影坐标（米）
+            gsd = px
+        else:                               # 经纬度（度）
+            import math
+            lat = float(tr[5])
+            gsd = px * 111320.0 * max(0.05, math.cos(math.radians(abs(lat))))
+        if 0.002 <= gsd <= 2.0:
+            return gsd
+    except Exception:
+        return None
+    return None
+
+
 def _scan_marks(image_rgb: Image.Image | np.ndarray, page_index: int,
                 ctx: ParseContext, doc: Document, *,
                 scale: float = 1.0) -> None:
@@ -490,11 +609,24 @@ def _scan_marks(image_rgb: Image.Image | np.ndarray, page_index: int,
             text_boxes = [{"text": b.text, "rect": b.bbox}
                           for b in doc.pages[page_index].blocks if b.bbox]
         options: dict[str, Any] = {"text_boxes": text_boxes, "fmt": "tiff"}
+        if (getattr(doc, "meta", None) or {}).get("aerial_scene"):
+            options["aerial"] = True
+            options["gsd_m"] = (doc.meta or {}).get("gsd_m")
         if scale and abs(scale - 1.0) > 1e-9:
             options["downsampled"] = True
             options["preview_scale"] = float(scale)
         marks, scan_warns = mediascan.analyze(
             image_rgb, page=page_index, dpi=0.0, options=options)
+        if (getattr(doc, "meta", None) or {}).get("aerial_scene") and marks:
+            # 航拍正射影像上「疑似手写/签名」几乎都是纹理误报，自动涂黑只会糊住画面；
+            # 这类不可靠小目标直接忽略，提示人工复核。
+            unreliable = {"handwriting"}
+            dropped = [m for m in marks if m.get("kind") in unreliable]
+            if dropped:
+                doc.warnings.append(
+                    f"航拍影像已忽略 {len(dropped)} 个不可靠视觉小目标"
+                    "（疑似手写/签名等，建议人工复核）")
+            marks = [m for m in marks if m.get("kind") not in unreliable]
         if marks:
             doc.visual_marks.extend(
                 mediascan.to_visual_marks(marks, page=page_index, scale=float(scale)))
@@ -568,7 +700,7 @@ class TiffParser(registry.Parser):
                 "size": [display_w, display_h],
                 "bands": count,
                 "dtype": dtype,
-                "compression": (src.compression.value if src.compression else "none"),
+                "compression": _src_compression(src),
                 "engine": "rasterio",
             })
             document.meta["orientation"] = orientation
@@ -601,6 +733,8 @@ class TiffParser(registry.Parser):
                         "transform": [round(float(v), 9) for v in geo_transform],
                         "size": geo_size,
                     }
+                    document.meta["meta_items"] = [
+                        _geo_masked_item(ref, geo_transform, geo_size)]
             elif kind == "local":
                 document.meta["geo_local_tags"] = names
                 document.warnings.append(
@@ -615,12 +749,28 @@ class TiffParser(registry.Parser):
             _detect_meta_leaks(structure, document.warnings)
             try:
                 interp = " ".join(str(ci) for ci in src.colorinterp).lower()
-                if "cmyk" in interp or "ycbcr" in interp:
+                if "ycbcr" in interp:
                     document.warnings.append(
-                        "源 TIFF 色彩空间为 CMYK/YCbCr：预览/OCR 按近似 RGB 处理，"
+                        "源 TIFF 为 YCbCr(JPEG) 色彩空间：预览/OCR/导出已转换为 RGB，"
+                        "成品颜色与原图一致")
+                elif "cmyk" in interp:
+                    document.warnings.append(
+                        "源 TIFF 色彩空间为 CMYK：预览/OCR 按近似 RGB 处理，"
                         "成品按原波段保留（查看器需支持该色彩空间）")
             except Exception:
                 pass
+
+            # 航空/无人机正射影像识别（真实地理参考 + 合理 GSD）：
+            # 这类影像上视觉小目标误检率极高（大面积屋顶/树丛被当成人脸自动涂黑），
+            # 需要交给扫描器做「航拍场景」严格过滤并给出人工复核提示。
+            aerial_gsd = _ortho_aerial_gsd(ref)
+            if aerial_gsd is not None:
+                document.meta["aerial_scene"] = True
+                document.meta["gsd_m"] = round(aerial_gsd, 6)
+                document.warnings.append(
+                    f"检测到航空正射影像（地面分辨率≈{aerial_gsd * 100:.2f} cm/像素）："
+                    "画面小目标（人员/车辆/小码）视觉检测可靠性有限，建议整图涂黑"
+                    "或逐张人工复核后交付")
 
             pixels = width * height
             full_read = pixels <= FULLREAD_MAX_PIXELS
@@ -667,8 +817,12 @@ class TiffParser(registry.Parser):
         pixels = int(getattr(structure, "pixels", 0) or 0)
         pil_limit = _pil_max_pixels()
         if pixels > pil_limit * 2:
-            hint = ("未安装可选依赖 rasterio，Pillow 无法处理如此大的影像；"
-                    "请安装 rasterio（离线 wheel 见 docs/impl/tiff.md）或先切图")
+            if g.has_rasterio():
+                hint = ("该文件为多帧/含透明蒙版结构，未走 rasterio 单帧路径，"
+                        "Pillow 无法处理如此大的影像；请先切分为单帧 TIFF 或裁剪后再处理")
+            else:
+                hint = ("未安装可选依赖 rasterio，Pillow 无法处理如此大的影像；"
+                        "请安装 rasterio（离线 wheel 见 docs/impl/tiff.md）或先切图")
             raise ParseError(
                 f"TIFF 过大（{structure.width}×{structure.height}，{pixels / 1e6:.0f}M 像素）："
                 f"{hint}")
@@ -746,6 +900,13 @@ class TiffParser(registry.Parser):
                         "size": [int(document.pages[0].width),
                                  int(document.pages[0].height)],
                     }
+                    document.meta["meta_items"] = [_geo_masked_item(
+                        None, transform,
+                        [int(document.pages[0].width), int(document.pages[0].height)])]
+                else:
+                    document.meta["meta_items"] = [{
+                        "type": "GEO", "label": "GPS/地理坐标（正射影像）",
+                        "display": "地理坐标（GeoTIFF 地理标签已识别，数值已隐去）"}]
             elif kind == "local":
                 document.meta["geo_local_tags"] = present
                 document.warnings.append("源文件已是本地/任意 CRS，导出按中性化处理")
@@ -927,6 +1088,7 @@ class TiffParser(registry.Parser):
 
         with g.rasterio.open(doc.path) as src:
             src_w, src_h = int(src.width), int(src.height)
+            ycbcr = _is_ycbcr_source(src)
             if display_size:
                 out_w, out_h = int(display_size[0]), int(display_size[1])
             else:
@@ -1005,6 +1167,8 @@ class TiffParser(registry.Parser):
                                 full = src.read()
                                 data = np.ascontiguousarray(
                                     _orient_bands(full, orientation))[:, row:row + h, col:col + w]
+                            if ycbcr:
+                                data = _ycbcr_to_rgb(data)
                             win = Window(col, row, w, h)
                             black_n, text_n = _paint_window(
                                 data, win, items, warnings, warn_once)
@@ -1018,6 +1182,8 @@ class TiffParser(registry.Parser):
                             h = min(EXPORT_WINDOW, out_h - row)
                             win = Window(col, row, w, h)
                             data = src.read(window=win)
+                            if ycbcr:
+                                data = _ycbcr_to_rgb(data)
                             black_n, text_n = _paint_window(
                                 data, win, items, warnings, warn_once)
                             black_count += black_n

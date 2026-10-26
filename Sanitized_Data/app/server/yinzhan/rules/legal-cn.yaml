@@ -49,6 +49,13 @@ rules:
       - type: regex
         pattern: '(?<!\d)\d{17}[\dXx](?!\d)'
         near: [律师执业证, 执业证号, 执业证, 律师证]
+      # 律所执业许可证号（2017 年起即统一社会信用代码 18 位）。合法 USCC 由 cn.uscc
+      # 兜底；这里补「校验位不合法 / OCR 误读但标签明确」的 18 位字母数字：
+      # 标签近邻 + 含字母，精度足够直接脱敏（宁可标签标错，不可漏）。
+      - type: regex
+        pattern: '(?<![0-9A-Za-z])(?=[0-9A-Z]*[A-Z])[0-9A-Z]{18}(?![0-9A-Za-z])'
+        near: [执业许可证号, 执业许可证, 许可证号, 执业证号]
+        confidence: 0.9
     replace: {strategy: surrogate}
 
   # 律师事务所
@@ -76,6 +83,7 @@ rules:
     detect:
       - type: regex
         pattern: '(?<![A-Za-z0-9])[\u4e00-\u9fa5]{2,20}(?:人民法院|人民检察院|法院|检察院)'
+        validate: org_not_generic
         strip_prefix: [来自, 前往, 送至, 诉至, 起诉至, 向, 在, 于, 到, 由, 该, 本, 其,
                        系, 为, 是, 的, 以及, 及, 与]
     replace: {strategy: surrogate}

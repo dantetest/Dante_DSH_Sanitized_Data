@@ -23,7 +23,7 @@ try:
 except Exception:
     pass
 # 仅用于「部署后确认是不是新包」：/api/health 原样返回；不参与业务逻辑。
-BUILD_ID = "20261022-ai-view"
+BUILD_ID = "20261026-ortho-meta"
 
 # 资源（只读）：源码运行时是 app/，打包后是 sys._MEIPASS
 APP_DIR = paths.resource_root()

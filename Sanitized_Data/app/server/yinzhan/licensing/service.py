@@ -137,7 +137,18 @@ class LicenseService:
 
     def _load_state(self) -> dict:
         if not self.state_path.is_file():
-            return self._new_state()
+            state = self._new_state()
+            # 状态文件不存在：首次运行可以从 0 开始；但如果是「用过后被删」
+            # （.state_seen 标记还在），按 free-tier §3.1 以「今日已用 1 份」恢复，
+            # 不能删掉 state.json 就刷满 3 份额度。
+            try:
+                seeded = (self.license_dir / ".state_seen").is_file()
+            except OSError:
+                seeded = False
+            if seeded:
+                state["flags"]["state_recovered"] = True
+                state["usage"]["jobs"] = 1
+            return state
         try:
             raw = self.state_path.read_text(encoding="utf-8")
             state = json.loads(raw)
@@ -149,9 +160,12 @@ class LicenseService:
                 raise ValueError("sig")
             return state
         except Exception:
-            # 损坏/被改：不惩罚成完全不能用；但也不恢复试用资格（防删文件重置）
+            # 损坏/被改：不惩罚成完全不能用；但也不恢复试用资格（防删文件重置）。
+            # 按 free-tier.md §3.1：按「今日已用 1 份」恢复，而不是清零当天额度
+            # （否则删掉 state.json 就能刷满 3 份，额度形同虚设）。
             state = self._new_state()
             state["flags"]["state_recovered"] = True
+            state["usage"]["jobs"] = 1
             return state
 
     def _save_state(self, state: dict) -> None:
@@ -164,6 +178,10 @@ class LicenseService:
             tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2,
                                       sort_keys=True) + "\n", encoding="utf-8")
             tmp.replace(self.state_path)
+            # 首次落盘标记：用于区分「首次运行」与「状态文件被删」
+            marker = self.license_dir / ".state_seen"
+            if not marker.is_file():
+                marker.write_text(_iso(self._now()), encoding="utf-8")
         except Exception:
             # 本地状态写失败不应导致整个产品不可用；授权文件本身仍有签名
             pass
@@ -326,6 +344,8 @@ class LicenseService:
                 "clock_suspect": clock_suspect,
                 "can_import": True,
                 "license": None,
+                "state_recovered": bool(
+                    (state.get("flags") or {}).get("state_recovered")),
                 "trial": {
                     "used": bool(trial),
                     "active": trial_active,
@@ -382,13 +402,19 @@ class LicenseService:
 
     def import_license(self, content: str | bytes | dict) -> dict:
         with self._lock:
-            payload = self._verify_container(content)
+            try:
+                payload = self._verify_container(content)
+            except LicenseError as exc:
+                # R7：导入失败也要留本地事件（只记类型/错误码，不记内容）
+                self._event("license_import_failed", code=exc.code)
+                raise
             # 先按当前机器/时间完整校验；过期/错机不允许导入
             state = self._load_state()
             effective_now, _ = self._effective_now(state)
             checked = self._load_license_from_payload(payload, effective_now)
             if checked.get("status") not in ("paid", "grace"):
                 error = checked.get("error") or {"code": "license_invalid", "message": "授权文件无效"}
+                self._event("license_import_failed", code=error.get("code"))
                 raise LicenseError(error["code"], error["message"], 403)
             self.license_dir.mkdir(parents=True, exist_ok=True)
             if self.license_path.is_file():
@@ -445,6 +471,10 @@ class LicenseService:
                 if expires and effective_now < expires:
                     return self.status()
                 raise LicenseError("trial_expired", "本机试用已结束", 403)
+            # 冗余校验（licensing.md §5/T4）：state 被删后 events.jsonl 里的
+            # trial_start 历史仍能阻止重新试用，避免删单个文件白拿 14 天。
+            if self._trial_history():
+                raise LicenseError("trial_expired", "本机试用已结束", 403)
             expires = effective_now + timedelta(days=TRIAL_DAYS)
             state["trial"] = {
                 "used": True,
@@ -496,6 +526,8 @@ class LicenseService:
                 "date": today.isoformat(),
                 "reset_at": reset_at,
                 "clock_suspect": clock_suspect,
+                "state_recovered": bool(
+                    (state.get("flags") or {}).get("state_recovered")),
                 "ocr_pages_used": int(usage.get("ocr_pages") or 0),
             }
 
@@ -526,6 +558,35 @@ class LicenseService:
             state["usage"] = usage
             self._save_state(state)
             return self.quota_status()
+
+    def add_ocr_pages(self, pages: int) -> dict:
+        """累加当日 OCR 页数（H-16：/api/quota/status.ocr_pages_used 不再恒为 0）。"""
+        try:
+            count = max(0, int(pages or 0))
+        except (TypeError, ValueError):
+            count = 0
+        with self._lock:
+            state = self._load_state()
+            effective_now, clock_suspect = self._effective_now(state)
+            usage = self._usage_today(state, effective_now, clock_suspect)
+            usage["ocr_pages"] = int(usage.get("ocr_pages") or 0) + count
+            state["usage"] = usage
+            self._save_state(state)
+            return self.quota_status()
+
+    def _trial_history(self) -> bool:
+        """events.jsonl 里是否已有本次安装的 trial_start（试用防删冗余）。"""
+        try:
+            lines = self.events_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return False
+        for line in lines:
+            try:
+                if json.loads(line).get("event") == "trial_start":
+                    return True
+            except Exception:
+                continue
+        return False
 
     def license_content(self) -> str | None:
         try:

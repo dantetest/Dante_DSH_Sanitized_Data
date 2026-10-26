@@ -48,6 +48,9 @@ const TYPE_CN = {
   SHOP_SIGN: '店招/门头', ORG_PLAQUE: '单位铭牌',
   EMBEDDED_IMAGE: '内嵌图片（敏感）',
   PASSPORT: '护照号',
+  // 非画面敏感数据（TIFF 地理坐标 / 照片 EXIF、GPS、XMP、ICC）
+  GEO: 'GPS/地理坐标（正射影像）', GPS: 'GPS 位置信息',
+  EXIF: 'EXIF 拍摄信息', META: '文件元数据',
   OTHER: '其他敏感',
 };
 const TYPE_ORDER = [
@@ -57,6 +60,7 @@ const TYPE_ORDER = [
   'PLATE', 'ROAD_SIGN', 'DOOR_ADDRESS', 'SHOP_SIGN', 'ORG_PLAQUE',
   'SEAL', 'SIGNATURE', 'SIG_BLOCK', 'HANDWRITING', 'QRCODE', 'BARCODE',
   'EMBEDDED_IMAGE', 'PASSPORT',
+  'GEO', 'GPS', 'EXIF', 'META',
   'OTHER',
 ];
 const TYPE_COLOR = {
@@ -76,6 +80,8 @@ const TYPE_COLOR = {
   CHAT_TIME: '#4A6B62', CHAT_INPUT: '#7A6A5A',
   SHOP_SIGN: '#8A5A2F', ORG_PLAQUE: '#5A6B5A',
   EMBEDDED_IMAGE: '#3A4A3F', PASSPORT: '#6B5A3A',
+  // 非画面敏感数据：比画面实体更淡，提示“不在画面上、导出时剥离”
+  GEO: '#5B6B7A', GPS: '#5B6B7A', EXIF: '#7A7060', META: '#7A7060',
   OTHER: '#8C8272',
 };
 const STRICT_CN = { loose: '宽松', standard: '标准', strict: '最严' };
@@ -311,8 +317,11 @@ function renderLicenseChip() {
   if (!s || !ui.licenseChip) { if (ui.licenseChip) ui.licenseChip.hidden = true; return; }
   const st = s.state || 'free';
   const q = s.quota || {};
+  const notEnforced = s.paywall_enabled === false || q.enforced === false;
   let text = '';
-  if (s.paywall_enabled === false) {
+  if (notEnforced) {
+    // 源码运行的测试服默认不启用收费门禁（quota.enforced=false），
+    // 必须显示“测试版·全功能”，否则朋友会误以为只剩 3 份而不敢测。
     text = '测试版 · 全功能';
   } else if (st === 'free') {
     text = `免费版 · 今日剩余 ${Math.max(0, Number(q.remaining || 0))}/${Number(q.limit_today || 3)}`;
@@ -325,7 +334,7 @@ function renderLicenseChip() {
     text = s.edition || '授权';
   }
   ui.licenseChipText.textContent = text;
-  ui.licenseChip.className = 'license-chip ' + (s.paywall_enabled === false ? 'paid' : st);
+  ui.licenseChip.className = 'license-chip ' + (notEnforced ? 'paid' : st);
   ui.licenseChip.hidden = false;
 }
 function openLicenseLimit(err) {
@@ -1790,14 +1799,21 @@ function buildRail() {
     head.appendChild(mk('span', 'cnt', '×' + items.length));
     group.appendChild(head);
     items.forEach((ent) => {
-      const row = mk('div', 'row' + (ent.status === 'pending' ? ' pend' : ''));
+      const isMeta = ent.origin === 'metadata';
+      const row = mk('div', 'row' + (ent.status === 'pending' ? ' pend' : '')
+                             + (isMeta ? ' meta' : ''));
       row.dataset.eid = ent.id || '';
       row.appendChild(mk('span', 'raw', ent.value || '—'));
       row.appendChild(mk('span', 'arrow', '→'));
       row.appendChild(mk('span', 'sur', surrogateOf(ent)));
+      if (isMeta) {
+        row.appendChild(mk('span', 'metatag', '非画面数据'));
+      }
       if (ent.status === 'pending') {
         row.appendChild(mk('span', 'pendtag', '待确认'));
         row.title = '点一下确认这一处';
+      } else if (isMeta) {
+        row.title = '非画面敏感数据：导出时随元数据自动剥离，不影响画面';
       } else {
         row.title = '点一下定位';
       }
@@ -1811,7 +1827,7 @@ function buildRail() {
         row.appendChild(undo);
         row.title = '点一下定位 · 手动添加，可撤销';
       }
-      row.addEventListener('click', () => onRailRow(ent));
+      row.addEventListener('click', () => { if (!isMeta) onRailRow(ent); });
       group.appendChild(row);
     });
     ui.railList.appendChild(group);

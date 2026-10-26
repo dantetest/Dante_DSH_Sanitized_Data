@@ -122,6 +122,10 @@
 > **限量不是 feature**：免费版的「3 份/天、20 页/份、OCR 10 页/份」由 [02](free-tier.md) 的 quota 配置实现；付费授权 = 不限额（`limits=null`）。feature 只控制「有没有」，不控制「多少」。
 
 > **feature 与 trial 的关系**：试用不使用 license 文件；`tiers.py` 的 trial 配置授予「专业版级」features（含 `all_packs/tif/d3d/mcp/audit_export`，不含 `custom_packs/team_admin`；批量/管理台 P1 上线后开放）。**各文档的 trial 定义以本句 + [02 §1](free-tier.md) 为准**，W1/W2 不得各写一套。
+>
+> **MCP 分级（2026-10-24 调研建议，待拍板）**：`mcp` feature 只覆盖「文件写操作 + L2 Job/导出/还原/审计/工作台深链」；只读小工具（`list_rules`/`check_support`/小文本 `redact_text`）免费。详见 [mcp-monetization.md](mcp-monetization.md) §2/§4。
+>
+> **结果付费 credits（可选第三轨，见 [result-payment.md](result-payment.md)）**：需在 schema 上扩展 `term="credits"`、`sku=credits_*`（`expires_at` 必填）+ `credits_total`；**`credits_used` 只写本地 HMAC 状态，不回写签名 payload**（本地无私钥、不能重签）；与年度/永久/买断共用同一 Ed25519 密钥与公钥；旧版本遇 `term=credits` 应提示升级而不是 `license_invalid`。**默认不启用；完整版需 D-R1 显式批准。**
 
 ### 3.4 两个示例
 
@@ -273,9 +277,9 @@ display = code[0:4]-code[4:8]-code[8:12]-code[12:16]   # 例：K7Q2-9WXM-4TRB-EF
 |---|---|---|---|
 | `api.create_job`（`POST /api/jobs`） | 直接 `MANAGER.create` | 调 `licensing.gate_job(path, fmt)`：格式/规则包/页数/OCR/日限额 | 返回 `403` + 错误码 + 可读文案 + 升级链接 |
 | `jobs.JobManager.create` | 被 API 与 MCP 调用 | 防御性再校验（防绕过 API 直调）；detect 前断言规则非空 | 抛 `LicenseError`（API 层转 403）；空规则 → job=`error` |
-| **`POST /api/jobs/{jid}/export` / `GET /api/jobs/{jid}/file`** | 成品导出（换名/涂黑） | **永不 gate**（产品底线：免费/试用到期后，已识别结果仍可导出；限额只发生在创建任务时） | — |
+| **`POST /api/jobs/{jid}/export` / `GET /api/jobs/{jid}/file`** | 成品导出（换名/涂黑） | **永不 gate**（产品底线：免费/试用到期后，已识别结果仍可导出；限额只发生在创建任务时）。**结果付费完整版若实施，必须由 D-R1 显式改写本条并新增“超额 Job 例外”；默认不改。** | — |
 | `api.packs` / `GET /api/packs` / **`/api/health` 的 packs 字段** | 返回全部包 | 免费版过滤为通用包；付费全量；**不得在 health 里泄露付费包** | 过滤 + 升级提示（见 [02 §4.1](free-tier.md)） |
-| `mcp_server.py` 四个工具 | 直接执行 | 工具入口 `licensing.require_paid("mcp")`；免费返回错误 JSON-RPC 结果 | 工具错误「需要专业版授权」 |
+| `mcp_server.py` **15 个工具 + resources + prompts** | 直接执行 | `_handle_tools_call` 用 `PAID_TOOLS` 检查 **12 个付费工具**（`sanitize_document` + 11 个 L2）；只读 3 工具（`list_rules`/`check_support`/`redact_text`）按 D-M1；`_list_resources`/`_read_resource` gate `resources/list` 与 `sanitize://jobs`；resources/prompts 用 **JSON-RPC error**；错误 `license_required` **不放 machine_code** | 工具 `isError`；资源 JSON-RPC error（如 -32002/-32001）；不泄露 job 列表 |
 | `api.license/*`（新增） | — | `GET /api/license/status`、`POST /api/license/import`、`GET /api/license/machine-code`、`POST /api/license/backup` | 见 §6.5 |
 | `GET /api/audit`、`POST /api/audit/verify` | 可看/可验 | **免费可看/可验**（不 gate） | — |
 | `GET /api/audit/export`（**P1 新增**） | 当前不存在 | 新增后才 gate `audit_export`（导出审计/复检报告） | 403 |
@@ -294,7 +298,7 @@ display = code[0:4]-code[4:8]-code[8:12]-code[12:16]   # 例：K7Q2-9WXM-4TRB-EF
 | `POST /api/trial/start` | — | 同 status | 手动启用试用；**仅当三处冗余 + 审计链均无试用记录时允许**（防重复试用） |
 | `POST /api/license/refresh` | — | 同 status | 导入后/换文件后重读（可选） |
 
-错误码（统一 `error.code`）：`license_invalid`、`license_machine_mismatch`、`license_expired`、`license_not_yet_valid`、`clock_suspect`、`quota_exceeded`、`feature_required`、`trial_expired`、`state_recovered`。
+错误码（统一 `error.code`）：`license_invalid`、`license_machine_mismatch`、`license_expired`、`license_not_yet_valid`、`clock_suspect`、`quota_exceeded`、`feature_required`、`license_required`（MCP 侧）、`trial_expired`、`state_recovered`。
 
 ### 6.6 授权状态页（产品内，新页面/面板）
 
@@ -469,3 +473,14 @@ app/tests/test_quota.py
 | L6 | 机构版是否加「并发会话软限制」 | P0 不做，合同约束 | 用户 |
 | L7 | 是否做「二维码机器码」方便手机购买 | 做（**纯前端生成**，不新增依赖；或 P1 再做） | 前端 |
 | L8 | 授权文件是否允许公开分发（团队） | 允许（不含私钥；机器码列表限制） | 安全/后端 |
+
+---
+
+## 13 W1 实现状态（2026-10-25）
+
+- 已落地：`machine.py` / `tiers.py` / `keys.py` / `service.py` / API 4 个端点 /
+  `deploy/license_keygen.py` / `test_licensing.py`（12 例）/ `desktop/app.spec` 公钥数据。
+- 已支持：机器码、Ed25519 验签、年度/买断、到期+14 天宽限、trial 14 天、时钟回拨、
+  状态 HMAC、本地事件、导入备份、错机/过期/篡改拒绝。
+- 尚未做：W2 免费额度门禁、W3 `/license` UI/购买入口、生产公钥、服务端签发。
+- 实现报告：`docs/qa/licensing-w1-20261025.md`。

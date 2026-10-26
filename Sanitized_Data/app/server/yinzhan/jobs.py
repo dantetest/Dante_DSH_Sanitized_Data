@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from . import audit, pipeline, quota, registry, vault
+from . import audit, logging_setup, pipeline, quota, registry, vault
 from .config import OUTPUT_DIR, STRICTNESS, WORK_DIR
 from .licensing import LicenseError
 from .ocr import get_ocr
@@ -25,6 +25,27 @@ from .udm import (
     Decision, Document, Entity, ParseContext, Rule, Span, YinzhanError,
 )
 from .utils import iso_now, safe_name, sha256_file, unique_path
+
+#: 超长文本保护阈值（QA E-10）：>200 万字符跳过 NER、>800 万字符直接拒绝。
+BIG_TEXT_NER_CHARS = 2_000_000
+BIG_TEXT_REJECT_CHARS = 8_000_000
+
+
+def _text_volume(doc: Document) -> int:
+    """文档文本量（字符数），用于超长文本保护。"""
+    try:
+        return sum(len(block.text or "") for _page, block in doc.all_blocks())
+    except Exception:
+        return 0
+
+
+def _big_text_policy(chars: int) -> str:
+    """按文本量返回 normal / skip_ner / reject（阈值见上方常量）。"""
+    if chars > BIG_TEXT_REJECT_CHARS:
+        return "reject"
+    if chars > BIG_TEXT_NER_CHARS:
+        return "skip_ner"
+    return "normal"
 
 
 def _load_rules(fmt: str, pack_ids: list[str] | None = None) -> tuple[list[Rule], str, list[dict]]:
@@ -300,9 +321,33 @@ class JobManager:
                 raise YinzhanError("这个文件里没有可识别的内容")
             job.doc = doc
             job.warnings.extend(doc.warnings or [])
-            # W2：Office/文本等无法预判页数的格式，解析后查 20 页/10 OCR 页上限
-            quota.after_parse(job, len(doc.pages), (doc.meta or {}).get("ocr_pages"))
+            # W2：Office/文本等无法预判页数的格式，解析后查 20 页/10 OCR 页上限。
+            # DOCX 只有 1 个逻辑 Page，解析器用分页符给出 page_estimate；取二者较大值，
+            # 否则 25 页 DOCX 在免费版只算 1 页（额度形同虚设）。
+            pages_for_quota = len(doc.pages)
+            try:
+                pages_for_quota = max(
+                    pages_for_quota, int((doc.meta or {}).get("page_estimate") or 0))
+            except Exception:
+                pass
+            quota.after_parse(job, pages_for_quota, (doc.meta or {}).get("ocr_pages"))
             job.quota_detect_started = True
+
+            # 超长文本保护（QA E-10）：15MB/17 万行的 TXT 在 NER 规则上会跑 >16 分钟
+            # 且检测阶段无法取消。大文本跳过 NER（人名/机构）类检测并明确告警，
+            # 超大文本直接给可读错误让人拆分——宁可少识别，不可卡死。
+            text_chars = _text_volume(doc)
+            big_text = _big_text_policy(text_chars)
+            if big_text == "reject":
+                raise YinzhanError(
+                    f"文本内容过大（约 {text_chars // 10000} 万字），当前版本无法在"
+                    "合理时间内完成检测/导出；请按章节拆分后重试")
+            skip_types: set[str] = set()
+            if big_text == "skip_ner":
+                skip_types = {"ner"}
+                job.warnings.append(
+                    f"文本量较大（约 {text_chars // 10000} 万字），已跳过 NER 人名/"
+                    "机构类检测以保障可用性；建议拆分后处理")
 
             job.stage, job.target = "detecting", 0.95
             job.note = "正在比对敏感信息…"
@@ -310,7 +355,7 @@ class JobManager:
             job.pack_label = pack_label
             if not rules:
                 job.warnings.append("没有匹配到任何规则包，只能靠人工框选")
-            det = pipeline.detect(doc, rules, job.strictness)
+            det = pipeline.detect(doc, rules, job.strictness, skip_types=skip_types)
             job.entities = det.entities
             job.rules = det.rules
             job.warnings.extend(det.warnings)
@@ -404,6 +449,15 @@ class JobManager:
             low_conf = _low_confidence_entities(doc, job.entities)
             if low_conf:
                 job.entities.extend(low_conf)
+            # 非画面敏感数据（照片 EXIF/GPS、TIFF GeoTIFF 地理坐标等）也进「隐去清单」，
+            # 否则工作台看不出这类“看不见的脱敏”。
+            meta_ents = _metadata_entities(doc)
+            if meta_ents:
+                job.entities.extend(meta_ents)
+                labels = "、".join(sorted({e.label for e in meta_ents}))
+                job.warnings.append(
+                    f"识别到 {len(meta_ents)} 项非画面敏感数据（{labels}），"
+                    "导出时随文件元数据一并剥离")
 
             # P1-A：精确时间模糊化（默认关）、未成年人推断、组合风险提示
             try:
@@ -448,7 +502,8 @@ class JobManager:
             job.note = ""
             job.stage = "error"
             if not job.cancel_flag:
-                job.warnings.append(traceback.format_exc(limit=3))
+                # 技术堆栈只进本地日志，不回传给用户（H-11）
+                logging_setup.log_error(traceback.format_exc(limit=5))
         finally:
             job.dedupe_warnings()
             stop.set()
@@ -795,7 +850,10 @@ class JobManager:
         # 导出（安全优先，免得 AI 读到手写签名/批注）；human 涂黑版保持现状
         # （pending 仍交给人工确认，不在这里自动处理）。
         ai_handwriting_black = 0
-        if mode == "ai":
+        # 航空正射影像（按 GSD 判定）上「疑似手写」几乎都是纹理误报，AI 版不要自动
+        # 涂黑（否则会在大图上糊一块黑）；这类待确认项留给人工复核。
+        aerial_scene = bool((getattr(job.doc, "meta", None) or {}).get("aerial_scene"))
+        if mode == "ai" and not aerial_scene:
             for entity in job.entities:
                 if (entity.status != "pending"
                         or (entity.etype or "").upper() != "HANDWRITING"):
@@ -808,11 +866,18 @@ class JobManager:
         ents = [e for e in job.entities
                 if e.status != "rejected" and e.decision is not None]
         if mode == "human":
+            # H-19：human 涂黑是导出期临时决策，必须拷贝，不能原地改 job.entities；
+            # 否则「先导 human 再导 ai」时 AI 版会沿用 black（退化成涂黑版、映射失效）。
+            ents = [copy.copy(e) for e in ents]
             for e in ents:
                 e.decision = Decision(strategy="black", black=True, replacement=None)
 
         res = pipeline.export(job.doc, job.parser, ents, out,
                               {"mode": mode, **options})
+        meta_count = sum(1 for e in ents if getattr(e, "origin", "") == "metadata")
+        if meta_count:
+            res.warnings.append(
+                f"已剔除非画面敏感数据 {meta_count} 项（GPS/EXIF/地理坐标等）")
         if ai_handwriting_black:
             msg = (f"AI 视图将 {ai_handwriting_black} 个疑似手写签名按涂黑处理"
                    "（仅换名版；涂黑版保持人工确认）")
@@ -854,6 +919,9 @@ _TYPE_LABEL = {
     "EMBEDDED_IMAGE": "内嵌图片（敏感）",
     "PASSPORT": "护照号",
     "QRCODE": "二维码", "BARCODE": "条形码",
+    # 非画面敏感数据（TIFF 地理坐标 / 照片 EXIF、GPS、XMP、ICC）
+    "GEO": "GPS/地理坐标（正射影像）", "GPS": "GPS 位置信息",
+    "EXIF": "EXIF 拍摄信息", "META": "文件元数据",
 }
 
 # 视觉/码类标记的展示口径。前三元组向后兼容旧代码：
@@ -902,7 +970,35 @@ _OCR_LOW_CONF = 0.85
 _OCR_LOW_MAX_LEN = 24
 
 
+def _metadata_entities(doc: Document) -> list[Entity]:
+    """把解析器识别出的非画面敏感数据（GPS/EXIF/地理坐标/XMP/ICC）变成实体。
+
+    2026-10-26 用户反馈：工作台右侧清单只列画面里的框，TIFF 的 GeoTIFF 地理坐标、
+    照片的 EXIF/GPS 这些“看不见的脱敏”没有展示，用户无法确认到底隐去了什么。
+    这里生成 value 已打码、无 spans 的实体，只进「隐去清单」，导出时随元数据剥离。
+    """
+    items = (getattr(doc, "meta", None) or {}).get("meta_items") or []
+    out: list[Entity] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        etype = str(item.get("type") or "META").upper()
+        label = str(item.get("label") or _TYPE_LABEL.get(etype, "文件元数据"))
+        display = str(item.get("display") or "已识别，导出时剥离")
+        out.append(Entity(
+            id=Entity.new_id(), etype=etype, label=label, value=display,
+            spans=[], level="L2", confidence=1.0, origin="metadata",
+            status="accepted",
+            decision=Decision(strategy="drop", black=False, replacement="已移除"),
+        ))
+    return out
+
+
 def _low_confidence_entities(doc: Document, entities: list[Entity]) -> list[Entity]:
+    # 航拍正射影像上的 OCR 低置信文本几乎都是纹理误报（会被当「疑似手写/签名」
+    # 自动涂黑，糊住大图画面）；这类不可靠目标不产生实体，提示人工复核即可。
+    if (getattr(doc, "meta", None) or {}).get("aerial_scene"):
+        return []
     out: list[Entity] = []
     taken = [s for e in entities if e.status != "rejected" for s in e.spans if s.block_id]
     for page in doc.pages:

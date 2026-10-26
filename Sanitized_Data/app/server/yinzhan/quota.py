@@ -167,6 +167,12 @@ def after_parse(job, pages: int, ocr_pages: int | None = None,
             f"免费版单份最多 20 页，这份文件有 {pages} 页。升级后不限页数。",
             403,
         )
+    if ocr_pages is not None and int(ocr_pages) > 0:
+        # H-16：当日 OCR 页数用量落库（此前只暴露字段不累加，/api/quota/status 恒为 0）
+        try:
+            (service or SERVICE).add_ocr_pages(int(ocr_pages))
+        except Exception:
+            pass
     if ocr_pages is not None and int(ocr_pages) > int(tiers.FREE_LIMITS.get("ocr_pages_per_file") or 10):
         refund_job(job, service)
         raise QuotaError(

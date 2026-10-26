@@ -201,6 +201,8 @@ class TiffStructure:
     first_values: dict[int, Any] = field(default_factory=dict)
     #: 跳过的 overview IFD 数量
     overview_frames: int = 0
+    #: 跳过的透明蒙版 IFD 数量（NewSubfileType bit2；OAM/Pix4D 正射常带）
+    mask_frames: int = 0
     bigtiff: bool = False
     error: str = ""
 
@@ -288,6 +290,24 @@ def _unpack_inline(endian: str, typ: int, count: int, raw_field: bytes) -> Any:
     except struct.error:
         return None
     return None
+
+
+def _ifd_kind(subfile_type: int) -> str:
+    """按 TIFF NewSubfileType 判定 IFD 类型：frame / overview / mask。
+
+    bit0=reduced-resolution（金字塔 overview）、bit2=transparency mask。
+    OAM/Pix4D 等正射影像常带 mask IFD（254=4）；旧逻辑只认 bit0，会把 mask
+    当成第二帧 → 多帧判断错误 → 跳过 rasterio 路线导致标准正射影像无法处理。
+    """
+    try:
+        value = int(subfile_type)
+    except (TypeError, ValueError):
+        value = 0
+    if value & 4:
+        return "mask"
+    if value & 1:
+        return "overview"
+    return "frame"
 
 
 def scan_tiff(path: str | Path) -> TiffStructure:
@@ -384,9 +404,11 @@ def scan_tiff(path: str | Path) -> TiffStructure:
                         subfile_type = int(values[254][0])
                     except Exception:
                         subfile_type = 0
-                is_overview = bool(subfile_type & 1)
-                if is_overview:
+                kind = _ifd_kind(subfile_type)
+                if kind == "overview":
                     structure.overview_frames += 1
+                elif kind == "mask":
+                    structure.mask_frames += 1
                 else:
                     structure.frame_tags.append(tags)
                     structure.frames += 1

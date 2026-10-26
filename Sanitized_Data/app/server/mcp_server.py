@@ -396,11 +396,15 @@ def _http_bytes(method: str, path: str, timeout: float = 60.0) -> bytes:
     return body
 
 
-def _http_ready(timeout: float = 0.5) -> bool:
+def _http_ready(timeout: float = 1.5, attempts: int = 2) -> bool:
     """探测本机 Web 服务健康状态。
 
-    auto 模式下没有 data/runtime.json 就不探（无服务环境每次 0.5s 白等，
+    auto 模式下没有 data/runtime.json 就不探（无服务环境每次白等，
     也会让单测/回归变得不确定）；强制 http 时无条件探活。
+
+    探活失败要重试：Web 服务在跑大文件/OCR 时单次健康检查可能慢于 0.5s，
+    旧逻辑会把它当成「没有工作台」并静默回退本地 MANAGER，导致 job 建在
+    MCP 本地进程里、随后 get/export 却按 HTTP 后端查不到（2026-10-25 QA M-03）。
     """
     mode = _backend_mode()
     if mode == "local":
@@ -411,12 +415,18 @@ def _http_ready(timeout: float = 0.5) -> bool:
                 return False
         except Exception:  # noqa: BLE001
             return False
-    try:
-        data = _http_json("GET", "/api/health", timeout=timeout)
-    except Exception:  # noqa: BLE001
-        return False
-    return isinstance(data, dict) and (data.get("ok") is True
-                                       or bool(data.get("version")))
+    total = max(1, int(attempts))
+    for attempt in range(total):
+        try:
+            data = _http_json("GET", "/api/health", timeout=timeout)
+        except Exception:  # noqa: BLE001
+            if attempt + 1 < total:
+                time.sleep(0.2)
+                continue
+            return False
+        return isinstance(data, dict) and (data.get("ok") is True
+                                           or bool(data.get("version")))
+    return False
 
 
 def _map_api_code(code: str, message: str) -> str:
@@ -467,7 +477,9 @@ def _resolve_backend(allow_local: bool = True):
 
     - YINZHAN_MCP_BACKEND=local：直接本地；
     - http：强制 HTTP，探活失败返回 isError（no_workbench），不静默退化；
-    - auto（默认）：无可用 Web 服务时本地回退，并在结果里带启动引导。
+    - auto（默认）：**没有 runtime.json（本机没起工作台）才本地回退**；
+      有 runtime.json 却探活失败（服务繁忙/刚崩溃）时明确报错，不静默
+      切到本地后端造成 job 表分裂（M-03）。
     """
     mode = _backend_mode()
     if mode == "local":
@@ -476,6 +488,14 @@ def _resolve_backend(allow_local: bool = True):
         return HttpBackend()
     if mode == "http" or not allow_local:
         raise BackendUnavailable()
+    try:
+        runtime_present = RUNTIME_PATH.is_file()
+    except Exception:  # noqa: BLE001
+        runtime_present = False
+    if runtime_present:
+        raise BackendUnavailable(
+            "本机数据隐站工作台无响应（可能正在处理大文件），请稍后重试；"
+            "若工作台已退出，请删除 data/runtime.json 或重新启动工作台")
     return LocalBackend()
 
 
@@ -1869,6 +1889,27 @@ def _require_mcp_entitlement(name: str) -> None:
     )
 
 
+def _require_resource_entitlement() -> None:
+    """resources/list 与 resources/read 的授权门禁。
+
+    免费态不得泄露任务列表/实体视图/审计（licensing.md §6.4、
+    mcp-monetization.md §4.2）；协议层返回 JSON-RPC error，不能返回空列表或
+    "错误资源内容"糊弄过去。Prompts 只有引导文案，不 gate。
+    """
+    if not quota.is_enforced():
+        return
+    try:
+        if quota.SERVICE.has_feature("mcp"):
+            return
+    except Exception:
+        pass
+    raise ToolError(
+        "MCP 资源（任务/实体/审计/页面）需要专业版授权；"
+        "list_rules、check_support、redact_text 可直接用。",
+        "license_required",
+    )
+
+
 def _handle_tools_call(msg_id, params: dict):
     name = str(params.get("name") or "")
     arguments = params.get("arguments") or {}
@@ -1914,6 +1955,12 @@ def handle(msg: dict):
             return _ok(msg_id, {"tools": TOOLS})
         if method == "tools/call":
             return _handle_tools_call(msg_id, params)
+        if method in ("resources/list", "resources/read"):
+            # H-03：免费态 resources 与付费工具同级门禁，不得泄露 job/实体/审计
+            try:
+                _require_resource_entitlement()
+            except ToolError as exc:
+                return _err(msg_id, -32002, f"{exc.code}: {exc.message}")
         if method == "resources/list":
             try:
                 backend = _resolve_backend()

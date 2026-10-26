@@ -487,6 +487,60 @@ def _cv2_scan(gray: np.ndarray, width: int, height: int) -> list[mediascan.ScanH
     return hits
 
 
+# ── 超大图上「仅检出、未解码」的小码类候选过滤（2026-10-25 无人机航拍实测）──
+# 20MP 航拍图上 zxing 会把石堆/路面纹理报成 Data Matrix（valid=False、conf=0.5、
+# 面积 800–4900px²）；这些不是可读码，却会被当成码类自动涂黑。超大图里
+# 面积占比过小的未解码候选按纹理噪声丢弃；已解码/面积足够/普通尺寸页面全部保留。
+_UNVERIFIED_CODE_MIN_MP = 12_000_000
+_UNVERIFIED_CODE_AREA_RATIO = 0.0005
+
+
+def _filter_unverified_code_hits(hits: list[mediascan.ScanHit],
+                                 width: int, height: int) -> list[mediascan.ScanHit]:
+    """过滤超大图上的未解码小码候选；可用 YINZHAN_BARCODE_KEEP_UNVERIFIED=1 关闭。"""
+    if not hits:
+        return hits
+    if _env_flag("YINZHAN_BARCODE_KEEP_UNVERIFIED", False):
+        return hits
+    area = float(max(0, width)) * float(max(0, height))
+    if area < _UNVERIFIED_CODE_MIN_MP:
+        return hits
+    min_area = area * _UNVERIFIED_CODE_AREA_RATIO
+    kept: list[mediascan.ScanHit] = []
+    for hit in hits:
+        if float(hit.confidence) >= 0.9:          # 已解码/高置信
+            kept.append(hit)
+            continue
+        rect = hit.rect or (0, 0, 0, 0)
+        box_area = max(0.0, rect[2] - rect[0]) * max(0.0, rect[3] - rect[1])
+        if box_area >= min_area:                  # 面积足够大的码仍保留（未解码也打码）
+            kept.append(hit)
+    return kept
+
+
+def _drone_scan_scene(options: Any) -> bool:
+    """扫描上下文是否航拍场景（无人机照片 options.drone / 正射影像 options.aerial）。"""
+    try:
+        opts = options or {}
+        return bool(opts.get("drone") or opts.get("aerial"))
+    except Exception:
+        return False
+
+
+def _filter_drone_code_hits(hits: list[mediascan.ScanHit]) -> list[mediascan.ScanHit]:
+    """航拍场景：码类只保留已解码（conf≥0.9）命中。
+
+    2026-10-25 实测：DJI 20MP 航拍图 16 个码类候选全部是 zxing `detect`
+    未解码纹理误报（路/石/水），逐张涂黑会破坏影像。航拍图里真实可用的码
+    应当能被解码；未解码的一律当噪声。可用 YINZHAN_BARCODE_DRONE_STRICT=0 关闭。
+    """
+    if not hits:
+        return hits
+    if _env_flag("YINZHAN_BARCODE_DRONE_RELAXED", False):
+        return hits
+    return [hit for hit in hits if float(hit.confidence) >= 0.9]
+
+
 # ────────────────────────────── 扫描器主入口 ──────────────────────────────
 
 def scan_page(image_rgb: Any, ctx: mediascan.ScanContext) -> list[mediascan.ScanHit]:
@@ -550,6 +604,9 @@ def scan_page(image_rgb: Any, ctx: mediascan.ScanContext) -> list[mediascan.Scan
             ctx.warnings.append(f"条码扫描：cv2 兜底失败（{type(exc).__name__}）")
 
     hits = _dedupe(hits)
+    hits = _filter_unverified_code_hits(hits, width, height)
+    if _drone_scan_scene(getattr(ctx, "options", None)):
+        hits = _filter_drone_code_hits(hits)
     if _env_flag("YINZHAN_BARCODE_DEBUG", False):
         elapsed = (time.perf_counter() - t0) * 1000.0
         engines = "zxing" if zxing_ok else ""

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 import uuid
 from io import BytesIO
 from pathlib import Path
@@ -325,6 +326,140 @@ def _to_export_image(image: Image.Image) -> Image.Image:
     return image.convert("RGBA" if has_alpha else "RGB")
 
 
+#: 无人机厂商关键字（EXIF Make/Model）；航拍图视觉小目标检测可靠性低，单独提示
+_DRONE_MAKE_HINTS = ("dji", "autel", "parrot", "skydio", "yuneec", "hasselblad")
+
+
+def _exif_cleanup_flags(image: Image.Image) -> dict:
+    """记录原图是否带需要清理的元数据（供「无实体但只清元数据」导出放行）。
+
+    2026-10-25 无人机航拍实测：优化视觉误检后，部分航拍图没有任何实体，只剩
+    EXIF/GPS 要清；旧逻辑 `has_cleanup_targets` 不认图片 EXIF，导出被拒
+    「没有需要隐去的内容」，带 GPS 的原图反而出不去。
+    """
+    flags: dict[str, str] = {}
+    try:
+        exif = image.getexif() or {}
+        if exif and len(list(exif.keys())) > 0:
+            flags["exif"] = "present"
+        try:
+            gps = exif.get_ifd(0x8825) or {}
+        except Exception:
+            gps = {}
+        if gps or exif.get(34853):
+            flags["gps"] = "present"
+        if image.info.get("xmp"):
+            flags["xmp"] = "present"
+        if image.info.get("icc_profile"):
+            flags["icc"] = "present"
+    except Exception:
+        pass
+    return flags
+
+
+def _mask_digits(text: Any) -> str:
+    """把数字全部换成 *（用于工作台「隐去清单」展示，不暴露原值）。"""
+    return re.sub(r"\d", "*", str(text or ""))
+
+
+def _gps_degrees(value: Any) -> float | None:
+    """EXIF GPS 的 度/分/秒 有理数 → 十进制度。"""
+    try:
+        vals = [float(v) for v in value]
+    except Exception:
+        return None
+    if len(vals) == 3:
+        return vals[0] + vals[1] / 60.0 + vals[2] / 3600.0
+    if len(vals) == 1:
+        return vals[0]
+    return None
+
+
+def _meta_masked_items(image: Image.Image) -> list[dict]:
+    """识别 EXIF/GPS/XMP/ICC 等**非画面**敏感数据，返回已打码的展示条目。
+
+    2026-10-26 用户反馈：工作台右侧「隐去清单」只显示画面里的框，照片/TIFF 的
+    EXIF、GPS、GeoTIFF 地理坐标等“看不见的脱敏”没有列出，用户无从确认到底隐去了
+    什么。这里把元数据项转成 `doc.meta["meta_items"]`，由 jobs 生成实体进入清单；
+    display 里所有数字都已替换成 *，原值不出解析器。
+    """
+    items: list[dict] = []
+    exif = {}
+    try:
+        exif = image.getexif() or {}
+    except Exception:
+        exif = {}
+    gps: dict = {}
+    try:
+        gps = exif.get_ifd(0x8825) or {}
+    except Exception:
+        gps = {}
+    if gps:
+        lat = _gps_degrees(gps.get(2))
+        lon = _gps_degrees(gps.get(4))
+        lat_ref = str(gps.get(1) or "N").upper()[:1] or "N"
+        lon_ref = str(gps.get(3) or "E").upper()[:1] or "E"
+        parts: list[str] = []
+        if lat is not None:
+            parts.append(f"{lat_ref} {_mask_digits(f'{abs(lat):.6f}')}°")
+        if lon is not None:
+            parts.append(f"{lon_ref} {_mask_digits(f'{abs(lon):.6f}')}°")
+        display = "GPS 坐标：" + (" ".join(parts) if parts else "**.**°（已隐去）")
+        alt = gps.get(6)
+        if alt is not None:
+            try:
+                display += f" · 海拔 {_mask_digits(f'{float(alt):.1f}')} m"
+            except Exception:
+                pass
+        items.append({"type": "GPS", "label": "GPS 位置信息", "display": display})
+    make, model = exif.get(271), exif.get(272)
+    software = exif.get(305)
+    taken = exif.get(36867) or exif.get(306)
+
+    def _clean(value: Any) -> str:
+        text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))
+        return re.sub(r"\s+", " ", text).strip()
+
+    parts = []
+    if make or model:
+        device = (f"{_clean(make)} {_clean(model)}").strip()
+        parts.append("设备 " + _mask_digits(device))
+    if taken:
+        parts.append("拍摄时间 " + _mask_digits(_clean(taken)))
+    if software:
+        parts.append("软件 " + _mask_digits(_clean(software)))
+    if parts:
+        items.append({"type": "EXIF", "label": "EXIF 拍摄信息",
+                      "display": "；".join(parts)})
+    elif exif:
+        items.append({"type": "EXIF", "label": "EXIF 拍摄信息",
+                      "display": "EXIF 元数据（设备/时间等已隐去）"})
+    try:
+        if image.info.get("xmp"):
+            items.append({"type": "META", "label": "XMP 元数据",
+                          "display": "XMP 描述（已剥离）"})
+        if image.info.get("icc_profile"):
+            items.append({"type": "META", "label": "ICC 色彩配置",
+                          "display": "ICC profile（已剥离）"})
+    except Exception:
+        pass
+    return items
+
+
+def _is_drone_photo(image: Image.Image) -> bool:
+    """EXIF 判断是否无人机航拍影像（厂商关键字或 GPS 海拔）。"""
+    try:
+        exif = image.getexif()
+        text = " ".join(str(exif.get(tag) or "").replace("\x00", " ")
+                        for tag in (271, 272)).lower()
+        if any(hint in text for hint in _DRONE_MAKE_HINTS):
+            return True
+        gps = exif.get_ifd(0x8825) or {}
+        return bool(gps.get(6))                   # GPSAltitude（无人机必带）
+    except Exception:
+        return False
+
+
 def _apply_orientation(image: Image.Image, frames: int = 1) -> Image.Image:
     """按 EXIF Orientation 转正像素（手机照片常见 3/6/8）。
 
@@ -430,11 +565,17 @@ class ImageParser(registry.Parser):
 
     def parse(self, path: Path, ctx: ParseContext) -> Document:
         path = Path(path)
+        drone_photo = False
+        cleanup_flags: dict = {}
+        meta_items: list[dict] = []
         try:
             with Image.open(path) as image:
                 pil_format = (image.format or "").upper()
                 mode = image.mode
                 frames = int(getattr(image, "n_frames", 1) or 1)
+                drone_photo = _is_drone_photo(image)
+                cleanup_flags = _exif_cleanup_flags(image)
+                meta_items = _meta_masked_items(image)
                 # 手机照片 EXIF Orientation=6/8 很常见：先在像素上转正，OCR/人脸/
                 # 导出坐标才会和用户看到的画面一致；导出重编码不写 EXIF，不转正
                 # 成品会横躺（实测用户测试集 82 号照片即此问题）。
@@ -449,6 +590,18 @@ class ImageParser(registry.Parser):
             meta={"format": pil_format, "size": [int(width), int(height)], "mode": mode,
                   "ocr_pages": 1},
         )
+        if cleanup_flags:
+            doc.meta.update(cleanup_flags)
+        if meta_items:
+            doc.meta["meta_items"] = meta_items
+        if drone_photo:
+            # 2026-10-25 无人机航拍实测：20MP 航拍图上视觉小目标（人/车/牌）误检多、
+            # 漏检也多，产品自检只能复检已检出实体，发现不了漏检。必须明确提示。
+            doc.meta["drone_photo"] = True
+            doc.warnings.append(
+                "检测到无人机航拍影像（EXIF 含无人机机型/海拔）：画面小目标"
+                "（人员/车辆/车牌）视觉检测可靠性有限，建议整图涂黑或逐张人工"
+                "复核后交付")
         if frames > 1:
             doc.warnings.append(f"图片包含 {frames} 帧，仅处理第 1 帧")
         page = Page(index=0, width=width, height=height)
@@ -464,7 +617,8 @@ class ImageParser(registry.Parser):
                               for b in page.blocks if b.bbox]
                 marks, scan_warns = mediascan.analyze(
                     rgb, page=0, dpi=0.0,
-                    options={"text_boxes": text_boxes, "fmt": "image"})
+                    options={"text_boxes": text_boxes, "fmt": "image",
+                             "drone": bool(drone_photo)})
                 doc.visual_marks.extend(mediascan.to_visual_marks(marks))
                 doc.warnings.extend(scan_warns)
         except Exception as exc:      # 扩展扫描失败不能带崩主流程
