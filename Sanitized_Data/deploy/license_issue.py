@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import sys
 from pathlib import Path
@@ -61,7 +62,12 @@ def main() -> int:
     try:
         key = serialization.load_pem_private_key(key_path.read_bytes(), password=password)
     except TypeError:
-        raise SystemExit(f"私钥已加密，请设置 {args.password_env}")
+        # 加密私钥：交互输入，避免口令出现在命令历史/进程环境里
+        try:
+            password = getpass.getpass("私钥口令（不会回显）: ").encode("utf-8")
+            key = serialization.load_pem_private_key(key_path.read_bytes(), password=password)
+        except Exception as exc:
+            raise SystemExit(f"私钥读取失败：{exc}")
     except Exception as exc:
         raise SystemExit(f"私钥读取失败：{exc}")
 

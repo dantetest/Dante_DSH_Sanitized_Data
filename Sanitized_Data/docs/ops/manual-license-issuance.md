@@ -7,24 +7,99 @@
 
 ## 0. 先做一次密钥仪式（只做一次）
 
+### 0.1 口令怎么定
+
+推荐：
+
+- 用 **密码管理器**（1Password/Bitwarden/KePass 等）生成 **24–32 位随机口令**；
+- 不要用公司名、生日、`123456`、和软件登录密码相同的口令；
+- 口令**只存密码管理器**，再写一份纸质密封件放保险柜/抽屉；
+- **不要把口令写进**：仓库、`.env`、微信、邮件、脚本注释、截图、工单。
+
+### 0.2 生成密钥（交互输入口令，不进命令历史）
+
 ```powershell
-# 口令自己设置并离线保管；不要写进仓库、聊天记录
-$env:LICENSE_KEY_PASSWORD = '<至少 8 位，自己记住>'
-python deploy/license_keygen.py --key-id prod-2026 --out-dir "$env:USERPROFILE\.sanitized-data-license-keys"
+python deploy/license_keygen.py --key-id prod-2026
 ```
 
-会生成：
+它会提示：
 
-- `license_signing_ed25519.pem`：**私钥**，加密保存，只能在本机/签发机使用；
-- `public_keys.json`：公钥片段，格式 `{ "prod-2026": "..." }`。
+```text
+设置私钥口令（至少 8 位，建议 24 位以上；不会回显）:
+再输入一次:
+```
 
-然后：
+输出目录默认 `%USERPROFILE%\.sanitized-data-license-keys\`，生成：
 
-1. 把 `public_keys.json` 的内容**合并**到
+- `license_signing_ed25519.pem`：**加密私钥**；
+- `public_keys.json`：公钥片段；
+- `key_info.txt`：key_id、创建时间、公钥 SHA-256 指纹（备份核对用）。
+
+> 已有私钥时脚本默认拒绝覆盖；确需重建才用 `--force`。  
+> **不要为了“重新生成一下”随手覆盖**：旧授权仍有效，但以后新授权只能用新 key_id。
+
+### 0.3 备份怎么做（至少两份，异地）
+
+需要备份的只有三个文件：
+
+```text
+license_signing_ed25519.pem   # 加密私钥
+public_keys.json              # 公钥，可公开
+key_info.txt                  # 指纹/创建时间，便于核对
+```
+
+推荐方案：
+
+1. **副本 A**：U 盘/移动硬盘，放在家里/办公室安全处；
+2. **副本 B**：另一块 U 盘或离线加密盘，放在不同地点（父母家/保险柜/银行保管箱）；
+3. 口令单独存密码管理器 + 一份纸质密封件；
+4. **不要把口令和私钥放在同一个 U 盘/同一个压缩包里**；
+5. 私钥本身已用口令加密；如介质丢失，仍有口令保护。
+
+Windows 上建议把目录权限收紧（当前用户可读写，其他用户不可读）：
+
+```powershell
+$keydir = "$env:USERPROFILE\.sanitized-data-license-keys"
+icacls $keydir /inheritance:r
+icacls $keydir /grant:r "$env:USERNAME:(OI)(CI)F"
+```
+
+### 0.4 做一次恢复演练（卖第一单前必须做）
+
+```powershell
+# 1) 把备份的 3 个文件复制到一个临时目录
+$restore = "$env:TEMP\license-key-restore"
+New-Item -ItemType Directory -Force $restore | Out-Null
+Copy-Item "E:\SanitizedDataKeys\prod-2026\*" $restore
+
+# 2) 用恢复出来的私钥签一张测试 license
+python deploy/license_issue.py `
+  --private-key "$restore\license_signing_ed25519.pem" `
+  --key-id prod-2026 --sku personal `
+  --machine-code K7Q2-9WXM-4TRB-EFGH `
+  --order-id ord_restore_drill `
+  --out "$restore\drill-license.json"
+
+# 3) 核对 key_info.txt 的公钥指纹是否一致
+Get-Content "$restore\key_info.txt"
+```
+
+能签出 license、指纹一致，说明备份可用。演练完成后删除临时目录里的测试 license。
+
+### 0.5 合并公钥并重新打包
+
+1. 把 `public_keys.json` 内容合并到
    `app/server/yinzhan/licensing/public_keys.json`（只放公钥）；
-2. 备份私钥到离线介质（U 盘/密码管理器），记录口令位置；
-3. 重新打包安装包（公钥才会进产品）；
-4. **私钥丢失 = 无法再签发/续费**；私钥泄露 = 需要停用 `prod-2026`、换新 key_id 并重签。
+2. 重新构建 v1.3.0 正式包；
+3. 用测试 license 验证导入，再用 `prod-2026` 签第一张真实 license；
+4. 把 `key_info.txt` 的指纹记录到运营台账。
+
+### 0.6 丢失/泄露预案
+
+- **私钥丢失**：已发出的 license 仍可用；但无法再签发/续费。需要生成新 key_id、更新产品公钥、重新签发后续授权。
+- **口令丢失**：私钥无法解密，等同丢失。
+- **私钥泄露**：停用旧 key_id，生成新 key_id，重新签发；离线无法远程吊销旧 license，只能靠后续更新/服务约束。
+- 建议每 **6 个月**做一次恢复演练，并检查备份介质是否可读。
 
 > 仓库里的 `public_keys.json` 默认为空，拒绝任何真实授权导入；这是故意的安全默认。
 
@@ -63,7 +138,7 @@ YINZHAN_PURCHASE_URL=https://你的购买页地址
 ### 个人版（1 台，1 年）
 
 ```powershell
-$env:LICENSE_KEY_PASSWORD = '<口令>'
+# 运行后会提示“私钥口令（不会回显）”，输入即可；口令不进入命令历史
 python deploy/license_issue.py `
   --private-key "$env:USERPROFILE\.sanitized-data-license-keys\license_signing_ed25519.pem" `
   --key-id prod-2026 `
