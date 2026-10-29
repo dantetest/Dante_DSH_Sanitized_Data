@@ -55,7 +55,7 @@ powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1 -TestMode
 
 ## 三、已知限制
 
-1. **生产公钥尚未生成**：`public_keys.json` 默认为空；测试构建为了验证导入使用测试公钥。正式发包前必须执行密钥仪式并合并生产公钥。
+1. **生产公钥已生成并合并**：key_id=`prod-2026`；正式包已内嵌生产公钥。测试构建曾使用测试公钥，测试包不对外发布。
 2. **购买入口 URL 尚未配置**：`/pricing` 显示参考价；配置 `YINZHAN_PURCHASE_URL` 后才打开购买页。
 3. **无自动支付/自动开票**：微信/支付宝、回调、订单后台、退款/发票自动化属于 W4b，等 ICP/商户号。
 4. **未做代码签名/Apple 公证**：SmartScreen 可能提示未知发布者；按既定决策等真流水后补签。
@@ -64,10 +64,14 @@ powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1 -TestMode
 
 ## 四、产物
 
-> 构建完成后回填。测试构建与正式构建分开命名，测试包不进入 Gitea/GitHub/CKA。
+> 正式包已构建；测试构建与正式构建分开命名，测试包不进入 Gitea/GitHub/CKA。
 
 | 文件 | 大小 | SHA-256 |
 |---|---|---|
-| TestMode `Sanitized_Data_Setup_1.3.0_x64_TEST.exe` | 195,471,877 B | `998201AF18E9C8031BBBBF6D890074F14219E2828E6F9B45837ABE9CDDF059B3` |
-| TestMode `Sanitized_Data-1.3.0-win64-portable_TEST.zip` | 219,846,903 B | `7702108628D96228F4EFB0927BDFCE7BC4D86B99B9A23AD6E7FC7E8A91B1775D` |
-| 正式 v1.3.0 产物 | 待测通/密钥仪式后构建 | 待回填 |
+| `Sanitized_Data_Setup_1.3.0_x64.exe` | 195,507,112 B（186.5 MiB） | `2B64B63A251C41BC0FE13E83F250A36591603B1888B8DC64762453E2389B7213` |
+| `Sanitized_Data-1.3.0-win64-portable.zip` | 219,895,506 B（209.7 MiB） | `B3FF708CD3AA34A418A3513B03E9F4AFA4F807E943B0501E6444A3508524DDC8` |
+| `Sanitized_Data_dsh-plugin_1.3.0.zip`（DSH 插件，可选） | 12,748 B | `D3D5F6A78703D49CE434054CC9A2CEEEC9168E33ED00C3B45D9EB8C3A6B3460E` |
+| `SHA256SUMS-v1.3.0.txt` | 356 B | 见文件内 |
+
+> 产物目录：`out/v130_release/`。  
+> TestMode 测试包仅内部使用，不随正式 v1.3.0 发布；其哈希见 QA 报告。
