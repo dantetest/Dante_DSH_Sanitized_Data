@@ -177,6 +177,7 @@ const state = {
   screen: 'drop',
   health: null,
   license: null,
+  update: null,
   uploadId: null,
   fileName: '',
   jobId: null,
@@ -357,6 +358,152 @@ function openLicenseLimit(err) {
 }
 function closeLicenseLimit() {
   if (ui.modalLicense) ui.modalLicense.classList.remove('open');
+}
+
+/* ─────────────── 客户端更新（提示/下载/安装重启，不静默） ─────────────── */
+let updatePollTimer = null;
+
+function updateBytes(n) {
+  const v = Number(n || 0);
+  if (v >= 1048576) return (v / 1048576).toFixed(1) + ' MB';
+  if (v >= 1024) return (v / 1024).toFixed(0) + ' KB';
+  return v + ' B';
+}
+
+function closeUpdateModal() {
+  if (ui.modalUpdate) ui.modalUpdate.classList.remove('open');
+}
+
+function laterUpdate() {
+  try { localStorage.setItem('yz_update_later_until', String(Date.now() + 24 * 3600 * 1000)); } catch (e) {}
+  closeUpdateModal();
+}
+
+function showUpdateModal(data) {
+  state.update = data;
+  const has = !!data.available;
+  ui.btnCheckUpdate.classList.toggle('has-update', has);
+  ui.btnCheckUpdate.textContent = has ? '发现新版本' : '检查更新';
+  if (!has) return;
+  ui.updateTitle.textContent = '发现新版本 v' + (data.version || '');
+  ui.updateText.textContent = '当前 v' + (data.current_version || '') +
+    ' → 新版本 v' + (data.version || '') + '。更新会关闭并重启程序，本机文件不受影响。';
+  ui.updateNotes.textContent = String(data.notes || '').slice(0, 4000);
+  ui.updateProgressWrap.hidden = true;
+  ui.updateBar.style.width = '0%';
+  ui.updateProgressText.textContent = '准备下载…';
+  ui.btnUpdateNow.disabled = false;
+  ui.btnUpdateNow.textContent = '立即更新';
+  ui.modalUpdate.classList.add('open');
+}
+
+async function checkUpdate(manual = false) {
+  if (state.update && state.update.phase === 'checking') return;
+  ui.btnCheckUpdate.disabled = true;
+  try {
+    const data = await api('/api/update/check', { method: 'POST' });
+    state.update = data;
+    showUpdateModal(data);
+    if (data.available) {
+      // 有更新：直接弹窗；用户点「立即更新」才下载
+    } else if (manual) {
+      if (data.phase === 'no_update') toast('已是最新版本 v' + (data.current_version || ''));
+      else toast(data.error || '暂时无法检查更新');
+    }
+  } catch (err) {
+    if (manual) toast((err && err.human) || '暂时无法检查更新');
+  } finally {
+    ui.btnCheckUpdate.disabled = false;
+  }
+}
+
+function renderUpdateProgress(data) {
+  state.update = data;
+  ui.btnCheckUpdate.classList.toggle('has-update', !!data.available);
+  const pct = Math.max(0, Math.min(100, Number(data.progress || 0)));
+  ui.updateProgressWrap.hidden = false;
+  ui.updateBar.style.width = pct + '%';
+  if (data.phase === 'downloading') {
+    ui.updateProgressText.textContent = `正在下载更新包… ${pct}% · ${updateBytes(data.downloaded)} / ${updateBytes(data.total)}`;
+    ui.btnUpdateNow.disabled = true;
+    ui.btnUpdateNow.textContent = '下载中…';
+  } else if (data.phase === 'ready') {
+    ui.updateProgressText.textContent = `下载完成 · ${updateBytes(data.downloaded)} · 校验通过`;
+    ui.btnUpdateNow.disabled = false;
+    ui.btnUpdateNow.textContent = '安装并重启';
+  } else if (data.phase === 'installing') {
+    ui.updateProgressText.textContent = '正在安装，程序即将重启…';
+    ui.btnUpdateNow.disabled = true;
+    ui.btnUpdateNow.textContent = '正在重启…';
+  } else if (data.phase === 'error') {
+    ui.updateProgressText.textContent = data.error || '更新失败';
+    ui.btnUpdateNow.disabled = false;
+    ui.btnUpdateNow.textContent = '重试';
+  } else if (data.phase === 'available') {
+    ui.updateProgressText.textContent = '准备下载…';
+    ui.btnUpdateNow.disabled = false;
+    ui.btnUpdateNow.textContent = '立即更新';
+  }
+}
+
+function pollUpdate() {
+  clearTimeout(updatePollTimer);
+  updatePollTimer = setTimeout(async () => {
+    try {
+      const data = await api('/api/update/status');
+      renderUpdateProgress(data);
+      if (data.phase === 'downloading' || data.phase === 'installing') pollUpdate();
+    } catch (err) {
+      ui.updateProgressText.textContent = '读取更新状态失败，请稍后重试。';
+    }
+  }, 700);
+}
+
+async function startUpdateDownload() {
+  ui.btnUpdateNow.disabled = true;
+  ui.btnUpdateNow.textContent = '准备下载…';
+  try {
+    const data = await api('/api/update/download', { method: 'POST' });
+    renderUpdateProgress(data);
+    if (data.phase === 'downloading') pollUpdate();
+  } catch (err) {
+    ui.updateProgressWrap.hidden = false;
+    ui.updateProgressText.textContent = (err && err.human) || '下载失败，请稍后重试。';
+    ui.btnUpdateNow.disabled = false;
+    ui.btnUpdateNow.textContent = '重试';
+  }
+}
+
+async function installUpdate() {
+  ui.btnUpdateNow.disabled = true;
+  ui.btnUpdateNow.textContent = '正在准备重启…';
+  try {
+    const data = await api('/api/update/install', { method: 'POST' });
+    renderUpdateProgress(data);
+  } catch (err) {
+    ui.updateProgressWrap.hidden = false;
+    ui.updateProgressText.textContent = (err && err.human) || '安装失败，请稍后重试。';
+    ui.btnUpdateNow.disabled = false;
+    ui.btnUpdateNow.textContent = '重试';
+  }
+}
+
+function onUpdateNow() {
+  const data = state.update || {};
+  if (data.phase === 'ready') installUpdate();
+  else if (data.phase === 'available' || data.phase === 'error') startUpdateDownload();
+  else if (data.phase === 'downloading' || data.phase === 'installing') {
+    // 等待当前过程
+  } else {
+    checkUpdate(true);
+  }
+}
+
+function autoCheckUpdate() {
+  let until = 0;
+  try { until = Number(localStorage.getItem('yz_update_later_until') || 0); } catch (e) {}
+  if (Date.now() < until) return;
+  checkUpdate(false);
 }
 function makeDocNo() {
   const d = new Date();
@@ -2173,6 +2320,9 @@ function cacheDom() {
     'btnCloseModal', 'toast', 'toastMsg', 'toastActions',
     'licenseChip', 'licenseChipText', 'modalLicense', 'licenseLimitTitle',
     'licenseLimitText', 'licenseLimitBuy', 'btnLicenseLimitClose',
+    'btnCheckUpdate', 'modalUpdate', 'updateTitle', 'updateText', 'updateNotes',
+    'updateProgressWrap', 'updateBar', 'updateProgressText',
+    'btnUpdateNow', 'btnUpdateLater', 'btnUpdateClose',
   ].forEach((id) => { ui[id] = document.getElementById(id); });
   ui.rail = $('.rail');
 }
@@ -2212,6 +2362,7 @@ function bindConsole() {
       if (state.selectMode) setSelectMode(false);
       if (ui.modalExport.classList.contains('open')) closeExportModal();
       if (ui.modalLicense && ui.modalLicense.classList.contains('open')) closeLicenseLimit();
+      if (ui.modalUpdate && ui.modalUpdate.classList.contains('open')) closeUpdateModal();
       if (state.markDraft) {
         state.markDraft = null;
         document.body.classList.remove('selecting');
@@ -2239,6 +2390,13 @@ function bindModal() {
   if (ui.btnLicenseLimitClose) ui.btnLicenseLimitClose.addEventListener('click', closeLicenseLimit);
   if (ui.modalLicense) ui.modalLicense.addEventListener('click', (ev) => {
     if (ev.target === ui.modalLicense) closeLicenseLimit();
+  });
+  if (ui.btnCheckUpdate) ui.btnCheckUpdate.addEventListener('click', () => checkUpdate(true));
+  if (ui.btnUpdateNow) ui.btnUpdateNow.addEventListener('click', onUpdateNow);
+  if (ui.btnUpdateLater) ui.btnUpdateLater.addEventListener('click', laterUpdate);
+  if (ui.btnUpdateClose) ui.btnUpdateClose.addEventListener('click', closeUpdateModal);
+  if (ui.modalUpdate) ui.modalUpdate.addEventListener('click', (ev) => {
+    if (ev.target === ui.modalUpdate) closeUpdateModal();
   });
   $$('.card[data-export]').forEach((card) => {
     card.addEventListener('click', () => onExportCard(card));
@@ -2290,6 +2448,8 @@ function init() {
   setScreen('drop');
   loadHealth();
   loadLicenseStatus();
+  // 启动后自动检查一次；不自动下载/安装，用户点按钮才继续。
+  setTimeout(autoCheckUpdate, 4000);
   if (new URLSearchParams(window.location.search).get('job')) resumeJobFromQuery();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

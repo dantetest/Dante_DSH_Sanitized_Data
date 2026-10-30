@@ -25,6 +25,12 @@ except Exception:
 # 仅用于「部署后确认是不是新包」：/api/health 原样返回；不参与业务逻辑。
 BUILD_ID = "20261030-consistency"
 
+# 更新检查：只在用户点“检查更新”或启动后显式检查时访问；文件处理引擎不联网。
+# 留空则禁用更新检查；默认用 CKA 静态清单。
+UPDATE_MANIFEST_URL = (os.environ.get("YINZHAN_UPDATE_URL")
+                       or "https://cka.blctek.com:8443/updates/latest.json").strip()
+UPDATE_TIMEOUT = 8.0
+
 # 资源（只读）：源码运行时是 app/，打包后是 sys._MEIPASS
 APP_DIR = paths.resource_root()
 PRODUCT_DIR = APP_DIR.parent

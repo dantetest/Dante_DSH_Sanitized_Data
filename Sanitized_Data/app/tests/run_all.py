@@ -131,6 +131,8 @@ def _specs() -> list[dict]:
          "label": "MCP 回件还原工具（restore_sanitize_file）自测"},
         {"key": "licensing", "file": TESTS / "test_licensing.py", "timeout": 120,
          "label": "离线授权 W1（机器码/Ed25519/trial/时钟回拨/错机/过期）"},
+        {"key": "updater", "file": TESTS / "test_updater.py", "timeout": 120,
+         "label": "客户端更新（版本/清单下载/SHA256/源码模式拒绝）"},
         {"key": "licenseissue", "file": TESTS / "test_license_issue.py", "timeout": 120,
          "label": "W4a 人工签发（payload/签名/导入/团队/买断）"},
         {"key": "quota", "file": TESTS / "test_quota.py", "timeout": 120,

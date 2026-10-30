@@ -217,3 +217,13 @@ build → tests → tag/Gitea Release → 上传安装包/绿色版/SHA256SUMS
   （例如 `/sanitized-data-updates/`）或提供部署/上传方式；
   否则无法放 `latest.json` 和安装包，客户端仍没有可用更新源。
 - B（Gitea 公开仓库）仍被实例级“必须登录”拦截，暂不作为首选。
+
+---
+
+## 13 实现状态（2026-10-31）
+
+- 已实现：updater.py + /api/update/* + 顶栏检查/更新弹窗；
+- 更新方式：**绿色版 zip 自替换**（绕开当前 Inno 安装器问题），SHA-256/大小校验；
+- 交互：启动后自动检查一次，只有用户点「立即更新」才下载；「稍后」24h；手动检查始终可用；
+- 测试：	est_updater.py 5/5，API 本地 manifest 下载/校验/源码模式拒绝通过；
+- 未完成：v1.3.4 构建、CKA latest.json 发布、安装器修复。

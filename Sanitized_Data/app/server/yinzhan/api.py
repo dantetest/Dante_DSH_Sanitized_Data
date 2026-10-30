@@ -17,7 +17,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import audit, logging_setup, quota, registry, restore as restore_mod, vault
+from . import audit, logging_setup, quota, registry, restore as restore_mod, updater, vault
 from .config import (BUILD_CHANNEL, BUILD_ID, DATA_DIR, MAX_UPLOAD, PAYWALL_ENABLED,
                      PURCHASE_URL, UPLOAD_DIR, VERSION, WEB_DIR)
 from .jobs import MANAGER
@@ -397,6 +397,26 @@ def license_import(ctx):
 @route("POST", r"/api/trial/start")
 def trial_start(ctx):
     return _license_call(LICENSE.start_trial)
+
+
+@route("GET", r"/api/update/status")
+def update_status(ctx):
+    return updater.UPDATE.status()
+
+
+@route("POST", r"/api/update/check")
+def update_check(ctx):
+    return updater.UPDATE.check()
+
+
+@route("POST", r"/api/update/download")
+def update_download(ctx):
+    return updater.UPDATE.start_download()
+
+
+@route("POST", r"/api/update/install")
+def update_install(ctx):
+    return updater.UPDATE.install()
 
 
 @route("GET", r"/api/license/file")
