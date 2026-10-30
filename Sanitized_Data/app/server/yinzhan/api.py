@@ -9,6 +9,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sys
 import time
 import traceback
@@ -16,14 +17,14 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import audit, logging_setup, quota, registry, vault
+from . import audit, logging_setup, quota, registry, restore as restore_mod, vault
 from .config import (BUILD_CHANNEL, BUILD_ID, DATA_DIR, MAX_UPLOAD, PAYWALL_ENABLED,
                      PURCHASE_URL, UPLOAD_DIR, VERSION, WEB_DIR)
 from .jobs import MANAGER
 from .licensing import LicenseError
 from .ocr import get_ocr
 from .udm import YinzhanError
-from .utils import safe_name, sha256_bytes
+from .utils import safe_name, sha256_bytes, sha256_file
 
 # license / quota 共用同一个 service，避免状态文件锁和计数各算各的
 LICENSE = quota.SERVICE
@@ -273,6 +274,78 @@ def packs(ctx):
     return {"packs": visible, "detail": detail}
 
 
+# ══════════════════ AI 回件还原（大模型交回的文件 → 真值） ══════════════════
+# 设计见 docs/impl/restore.md：本地解密映射、实体级回写、报告含真值但不外发。
+
+def _restore_error(exc) -> ApiError:
+    return ApiError(exc.message, exc.code, exc.status)
+
+
+@route("GET", r"/api/restore/mappings")
+def restore_mappings(ctx):
+    items = restore_mod.list_mapping_infos()
+    return {"mappings": items, "count": len(items)}
+
+
+@route("POST", r"/api/restore/upload")
+def restore_upload(ctx):
+    name = urllib.parse.unquote(ctx.headers.get("X-Filename", "回件.bin"))
+    data = ctx.body
+    if not data:
+        raise ApiError("空文件", "bad_request", 400)
+    if len(data) > MAX_UPLOAD:
+        raise ApiError("文件太大，超过本机处理上限", "too_large", 413)
+    rid = "r_" + os.urandom(6).hex()
+    folder = restore_mod.RESTORE_DIR / rid
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / safe_name(name or "回件.bin")
+    path.write_bytes(data)
+    try:
+        prepared = restore_mod.RESTORE_MANAGER.prepare(rid, path, name or path.name)
+    except restore_mod.RestoreError as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise _restore_error(exc)
+    except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(folder, ignore_errors=True)
+        log_error("回件读取失败 %s\n%s" % (path.name, traceback.format_exc()))
+        raise ApiError(f"读取回件失败：{exc}", "restore_failed", 400)
+    return prepared.public()
+
+
+@route("POST", r"/api/restore/run")
+def restore_run(ctx):
+    body = ctx.json()
+    if not isinstance(body, dict):
+        raise ApiError("请求体必须是 JSON 对象")
+    rid = str(body.get("restore_id") or "").strip()
+    job_id = str(body.get("job_id") or "").strip()
+    if not rid or not job_id:
+        raise ApiError("缺少 restore_id 或 job_id")
+    try:
+        prepared, mapping, report = restore_mod.RESTORE_MANAGER.run(rid, job_id)
+    except restore_mod.RestoreError as exc:
+        raise _restore_error(exc)
+    except Exception as exc:  # noqa: BLE001
+        log_error("回件还原失败 rid=%s job=%s\n%s" % (rid, job_id, traceback.format_exc()))
+        raise ApiError(f"还原失败：{exc}", "restore_failed", 500)
+    restore_mod.RESTORE_MANAGER.attach_report(prepared, report)
+    restore_mod.record_audit(mapping, prepared.path, report)
+    payload = report.public()
+    payload.update({"restore_id": rid, "job_id": mapping.job_id,
+                    "job_name": mapping.name, "seal": mapping.seal})
+    payload["outputs"] = [{
+        "kind": artifact.kind,
+        "name": artifact.name,
+        "bytes": artifact.path.stat().st_size,
+        "sha256": sha256_file(artifact.path),
+        "url": f"/api/restore/file?rid={urllib.parse.quote(rid)}"
+               f"&kind={urllib.parse.quote(artifact.kind)}",
+    } for artifact in report.artifacts]
+    # 结果页左右对照预览：回件 ↔ 还原稿（PDF/图片支持）
+    payload["preview"] = restore_mod.RESTORE_MANAGER.preview_meta(rid)
+    return payload
+
+
 def _license_call(fn):
     try:
         return fn()
@@ -500,6 +573,8 @@ class Handler(BaseHTTPRequestHandler):
         "license/": "license.html",
         "pricing": "pricing.html",
         "pricing/": "pricing.html",
+        "restore": "restore.html",
+        "restore/": "restore.html",
     }
 
     def _static(self, path: str) -> bool:
@@ -577,6 +652,39 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, p.read_bytes(), "application/octet-stream",
                            filename=rec["name"])
             except Exception as exc:
+                self._err(exc)
+            return
+
+        if path == "/api/restore/file" and method == "GET":
+            q = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
+            try:
+                artifact = restore_mod.RESTORE_MANAGER.artifact(
+                    str(q.get("rid") or ""), str(q.get("kind") or "main"))
+                if not artifact.path.is_file():
+                    raise ApiError("还原文件已被移动或删除", "gone", 404)
+                self._send(200, artifact.path.read_bytes(),
+                           "application/octet-stream", filename=artifact.name)
+            except Exception as exc:
+                self._err(exc)
+            return
+
+        if path == "/api/restore/render" and method == "GET":
+            q = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
+            try:
+                page = int(q.get("page") or 0)
+            except (TypeError, ValueError):
+                page = 0
+            try:
+                data, pages = restore_mod.RESTORE_MANAGER.preview_png(
+                    str(q.get("rid") or ""), str(q.get("side") or "input"), page)
+                self._send(200, data, "image/png",
+                           extra={"Cache-Control": "no-store",
+                                  "X-Preview-Pages": str(pages)})
+            except restore_mod.RestoreError as exc:
+                self._err(_restore_error(exc))
+            except Exception as exc:  # noqa: BLE001
+                log_error("回件预览渲染失败 rid=%s side=%s\n%s"
+                          % (q.get("rid"), q.get("side"), traceback.format_exc()))
                 self._err(exc)
             return
 

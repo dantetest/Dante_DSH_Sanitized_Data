@@ -250,6 +250,7 @@ class ReplaceContext:
     etype: str = ""
     label: str = ""
     seed: int = 0
+    facts: Any = None             # 文档级一致性事实（dict；如年龄/性别）
 
 
 @dataclass

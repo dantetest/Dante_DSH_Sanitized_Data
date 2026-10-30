@@ -8,7 +8,7 @@
 
 | 形态 | 说明 |
 |---|---|
-| `app/server/mcp_server.py` | MCP 2024-11-05 / 2025-06-18 stdio 服务，15 个工具、4 类资源模板、2 个 prompt |
+| `app/server/mcp_server.py` | MCP 2024-11-05 / 2025-06-18 stdio 服务，16 个工具、4 类资源模板、2 个 prompt |
 | `Sanitized_Data_MCP.exe` | PyInstaller 双入口之一（console 子系统，stdout 只走 JSON-RPC），随 Windows 安装包/绿色版分发 |
 | 源码运行 | `python -X utf8 app/server/mcp_server.py`，适合开发和 DSH `--patch` 联调 |
 
@@ -22,16 +22,19 @@
 - 内部走 JobManager：创建 `origin=mcp` 任务 → 等 ready → human/ai 导出；审计、映射、
   失败删除成品、`data/out` 输出与工作台同源。
 
-**新增 11 个 `sanitize_*` 工具**：`sanitize_file`、`get_sanitize_job`、`list_sanitize_jobs`、
+**新增 11 个 `sanitize_*` 工具 + 1 个 `restore_*` 工具**：`sanitize_file`、`get_sanitize_job`、`list_sanitize_jobs`、
 `get_sanitize_entities`、`update_sanitize_entity`、`mark_sanitize_region`、
 `accept_all_sanitize_entities`、`export_sanitize_job`、`get_sanitize_audit`、
-`rehydrate_sanitize_text`、`open_sanitize_workbench`。
+`rehydrate_sanitize_text`、`open_sanitize_workbench`、`restore_sanitize_file`。
 
 - 实体清单默认**不回原值**（只回 id/label/etype/status/value_len/spans/level）；
   `update`/`replace` 使用显式 replacement；`rehydrate` 仅本机显式调用。
 - `export_sanitize_job` 对等 `POST /api/jobs/{id}/export`；`get_sanitize_audit` 支持
   `job_id` 过滤 + `audit.verify_chain()`。
 - `open_sanitize_workbench` 返回 `http://127.0.0.1:<runtime端口>/console?job=<id>`。
+- `restore_sanitize_file` 对本地回件做文件级还原（docx/xlsx/pptx/pdf 文本层/图片
+  OCR）；默认只回统计与本机成品路径，`include_originals=true` 才回 fake→orig
+  明细（MCP 客户端可能是云端模型，默认不把真值带进对话）。
 
 ## 3. 资源与 prompts
 
@@ -95,7 +98,7 @@ args/cwd 留空即可。DSH 侧工具名为 `mcp__sanitized-data__<tool>`。
 | 组件 | 作用 |
 |---|---|
 | `lib/index.js` | host 代理：同源 `/sanitized-data/api/*` → `127.0.0.1:<port>/api/*`；含本地工作台 `POST /start` 自动拉起（白名单），不外呼 |
-| `lib/client.js` | 15 个工具卡（自检/计数/job/按钮、image content 缩略图）+ 完成态 footer 最近 Job 徽标 + 侧边栏「数据隐站工作台」入口（DSH 原生 browser tab；不再注册仿制面板）。左下角入口默认打开**空白工作台**，不自动挑最近 job，避免展示上一次样例/测试数据；真实工具结果仍用对应 job 深链 |
+| `lib/client.js` | 16 个工具卡（自检/计数/job/按钮、image content 缩略图）+ 完成态 footer 最近 Job 徽标 + 侧边栏「数据隐站工作台」入口（DSH 原生 browser tab；不再注册仿制面板）。左下角入口默认打开**空白工作台**，不自动挑最近 job，避免展示上一次样例/测试数据；真实工具结果仍用对应 job 深链 |
 | `cordis.patch.yml` | `- insert:` 数据隐站插件 bundle |
 | `install.ps1` | 复制包内容、更新 profile bundles、自动追加 MCP client patch（`-SkipMcp` 可跳过）；`-Uninstall` 卸载插件 |
 

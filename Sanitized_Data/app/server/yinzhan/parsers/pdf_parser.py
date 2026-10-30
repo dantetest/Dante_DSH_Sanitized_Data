@@ -1233,6 +1233,17 @@ def _span_rects_from_block(block: Block, span: Span) -> list[Box]:
     return _span_rects_from_chars(chars, start, end)
 
 
+def _sort_ops_for_text_order(ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按页面视觉顺序（先 y 后 x）排列操作，改善 AI 文本抽取顺序。
+
+    P1-2 阶段 1：替换文字是 ``insert_text`` 追加到内容流末尾的，若不排序，
+    抽取顺序会跟着实体处理顺序走（实测 D01：USCC→金额→人名，与版面相反）。
+    排序只改变插入顺序，不改变任何矩形/文字；黑框顺序无影响。
+    """
+    return sorted(ops, key=lambda op: (round(op["rect"][1], 1),
+                                       round(op["rect"][0], 1)))
+
+
 def _collect_ops(doc: Document, entities: Iterable[Entity] | None,
                  decisions: dict[str, Decision] | None,
                  warnings: list[str]) -> dict[int, list[dict[str, Any]]]:
@@ -2477,6 +2488,7 @@ class PdfParser(registry.Parser):
                         and (udm_page.ref or {}).get("scanned"))
                     replacements: list[tuple[fitz.Rect, str]] = []
                     ops = _merge_ops(ops_by_page.get(page_no, []), warnings)
+                    ops = _sort_ops_for_text_order(ops)
                     for op in ops:
                         rect = _to_pdf_space(op["rect"], page)
                         rect.normalize()

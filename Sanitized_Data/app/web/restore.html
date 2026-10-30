@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 回件还原 · 数据隐站</title>
+<meta name="description" content="大模型交回的文件，在本机把假名换回真名。全程本机处理、不联网；报告含真值，请勿回传云端模型。">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="restore.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+</head>
+<body class="restore-body">
+<div class="restore-app">
+
+  <!-- ───────── 顶栏（与控制台一致） ───────── -->
+  <header class="topbar">
+    <a class="homelink" href="/" title="回到首页">
+      <img class="brandmark" src="/logo.svg" width="38" height="38" alt="" aria-hidden="true">
+      <span class="brand">数据隐站<small>SANITIZED_DATA</small></span>
+    </a>
+    <div class="docno" id="pageNo">RESTORE · 回件还原</div>
+    <div class="spacer"></div>
+    <nav class="topnav" aria-label="站点导航">
+      <a href="/restore" class="on" aria-current="page">回件还原</a>
+      <a href="/console">控制台</a>
+      <a href="/download">下载</a>
+      <a href="/pricing">价格</a>
+      <a href="/mcp">MCP 接入</a>
+      <a href="/">首页</a>
+    </nav>
+    <a class="license-chip" id="licenseChip" href="/license" title="授权状态" hidden>
+      <span class="lc-dot" aria-hidden="true"></span><span id="licenseChipText">授权</span>
+    </a>
+    <div class="netbadge off" id="netBadge"><span class="dot" aria-hidden="true"></span><span id="netText">本机处理 · 不联网</span></div>
+  </header>
+
+  <main class="restore-main">
+
+    <!-- ───────── 标题区 ───────── -->
+    <section class="page-head" aria-labelledby="pageTitle">
+      <div class="eyebrow">RESTORE · 本机回填</div>
+      <h1 id="pageTitle">AI 回件还原</h1>
+      <p class="page-sub">大模型交回的文件，在本机把假名换回真名。</p>
+      <p class="page-privacy">本机处理 · 不联网 · 报告含真值，勿回传云端模型</p>
+    </section>
+
+    <!-- ───────── 三步条 ───────── -->
+    <nav class="steps rp-steps" id="steps" aria-label="还原流程">
+      <div class="step active" data-step="1" aria-current="step"><span class="n">1</span>投放回件</div>
+      <div class="step" data-step="2"><span class="n">2</span>选映射</div>
+      <div class="step" data-step="3"><span class="n">3</span>结果</div>
+    </nav>
+
+    <!-- 服务降级 / 空映射提示 -->
+    <div class="rp-notice" id="serviceNotice" role="status" hidden>
+      <div class="notice-main">
+        <b class="notice-title" id="serviceNoticeTitle">本机服务版本较旧</b>
+        <span class="notice-text" id="serviceNoticeText">请升级后再用回件还原；页面其余部分仍可用。</span>
+      </div>
+      <a class="btn ghost sm" href="/download">前往下载 / 升级 →</a>
+    </div>
+    <div class="rp-notice quiet" id="emptyNotice" role="status" hidden>
+      <div class="notice-main">
+        <b class="notice-title">还没有可还原的映射</b>
+        <span class="notice-text">先用「换名版」把文件交付给 AI；AI 交回后到这里换回真值。</span>
+      </div>
+      <a class="btn ghost sm" href="/console">去导出换名版 →</a>
+    </div>
+
+    <!-- ───────── 第 1 步：投放回件 ───────── -->
+    <section class="panel" id="panelDrop" aria-labelledby="dropTitle">
+      <div class="panel-head">
+        <h2 id="dropTitle"><span class="pn">01</span>投放回件</h2>
+        <p class="panel-hint">把大模型交回的文件拖进来。只在本机解析，不上传。</p>
+      </div>
+
+      <div class="drop-layout">
+        <div class="drop-main">
+          <div class="dropzone rp-drop" id="dropzone" role="button" tabindex="0"
+               aria-label="拖拽回件到此，或按回车键选择文件">
+            <div class="paperstack" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="drop-cta">拖拽回件到此，或点击选择</div>
+            <div class="drop-formats">Word · PDF · Excel · PPT · 图片 · TXT / JSON / CSV</div>
+            <input type="file" id="fileInput" hidden
+                   accept=".docx,.pdf,.xlsx,.pptx,.txt,.md,.json,.csv,.log,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff">
+          </div>
+          <div class="drop-actions">
+            <button class="btn ghost" id="btnChoose" type="button">选择文件</button>
+            <span class="drop-note">本机处理 · <b>不联网</b> · 映射只留在本机</span>
+          </div>
+
+          <div class="upload-state" id="uploadState" role="status" aria-live="polite" hidden>
+            <div class="upload-line">
+              <span class="spin" aria-hidden="true"></span>
+              <span id="uploadText">正在读取回件并匹配映射…</span>
+            </div>
+            <div class="upload-sub" id="uploadSub">图片 / 扫描件需要 OCR，可能要等几秒。</div>
+          </div>
+          <div class="rp-error" id="dropError" role="alert" hidden></div>
+        </div>
+
+        <aside class="drop-side" aria-label="使用说明">
+          <div class="side-card">
+            <div class="side-title">怎么走完这一步</div>
+            <ol class="side-steps">
+              <li>把原件导出成 <b>换名版</b>，交给 AI</li>
+              <li>AI 改完，交回一个新文件</li>
+              <li>把回件放进这里，换回真值</li>
+            </ol>
+          </div>
+          <div class="side-card">
+            <div class="side-title">能还原什么</div>
+            <ul class="side-note">
+              <li>正文 / 表格 / 页眉页脚里的假值</li>
+              <li>精确匹配 + 常见变体（金额、大小写、空格）</li>
+              <li>PDF 文本层重绘（版式可能位移）；扫描件走 OCR</li>
+            </ul>
+          </div>
+          <div class="side-card warn">
+            <div class="side-title">还原不了什么</div>
+            <ul class="side-note">
+              <li>涂黑区域、图片内文字、手写</li>
+              <li>AI 自己改写 / 重算 / 编造的内容</li>
+              <li>AI 新算出的合计、税额需人工核对</li>
+            </ul>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ───────── 第 2 步：选映射 ───────── -->
+    <section class="panel" id="panelMap" aria-labelledby="mapTitle" hidden>
+      <div class="panel-head">
+        <h2 id="mapTitle"><span class="pn">02</span>选映射</h2>
+        <p class="panel-hint">回件里的假值来自哪一次「换名版」导出，就选哪条映射。</p>
+        <button class="btn ghost panel-reset" id="btnBackDrop" type="button">换一份回件</button>
+      </div>
+
+      <div class="file-card">
+        <div class="file-main">
+          <div class="file-name" id="fileName">—</div>
+          <div class="file-meta" id="fileMeta"></div>
+        </div>
+        <button class="btn ghost sm" id="btnTogglePreview" type="button"
+                aria-expanded="false" aria-controls="previewBox" hidden>看提取预览</button>
+      </div>
+      <div class="preview-box" id="previewBox" hidden>
+        <div class="preview-note">回件提取文本预览（前 800 字 · 仅本机显示）</div>
+        <pre class="preview-text" id="previewText"></pre>
+      </div>
+
+      <div class="map-empty" id="mapEmpty" hidden>
+        <div class="empty-title">没有找到命中的映射</div>
+        <p>回件里可能没有出现映射中的假值。请展开「全部映射」手动选择。</p>
+      </div>
+
+      <div class="map-head">
+        <h3>候选映射 <span class="count" id="candCount">0</span></h3>
+        <p class="map-tip">按覆盖率从高到低排序，已预选最匹配的一条。</p>
+      </div>
+      <div class="map-grid" id="candList" role="radiogroup" aria-label="候选映射"></div>
+
+      <div class="map-all">
+        <button class="btn ghost" id="btnToggleAll" type="button"
+                aria-expanded="false" aria-controls="allWrap"><span id="allToggleText">展开全部映射</span> <span id="allCount"></span></button>
+        <div class="all-wrap" id="allWrap" hidden>
+          <label class="search-line" for="mapSearch">
+            <span class="mono">搜索</span>
+            <input type="search" id="mapSearch" placeholder="原名 / 封条号 / job_id" autocomplete="off">
+          </label>
+          <div class="all-list" id="allList"></div>
+          <div class="all-empty" id="allEmpty" hidden>没有匹配的映射</div>
+        </div>
+      </div>
+
+      <div class="run-bar">
+        <div class="picked" id="pickedInfo" role="status" aria-live="polite">还没有选择映射</div>
+        <div class="run-actions">
+          <span class="rp-error inline" id="mapError" role="alert" hidden></span>
+          <button class="btn primary" id="btnRun" type="button" disabled>开始还原</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────── 第 3 步：结果 ───────── -->
+    <section class="panel" id="panelResult" aria-labelledby="resultTitle" hidden>
+      <div class="panel-head">
+        <h2 id="resultTitle" tabindex="-1"><span class="pn">03</span>结果</h2>
+        <p class="panel-hint" id="resultHead">已在本机完成还原。</p>
+        <button class="btn ghost panel-reset" id="btnAgainTop" type="button">再还原一份</button>
+      </div>
+
+      <div class="result-layout">
+        <div class="result-main">
+          <div class="summary" aria-live="polite">
+            <div class="sum-cell">
+              <b id="sumReplaced">0</b><span>已还原处数</span>
+            </div>
+            <div class="sum-cell">
+              <b id="sumUnique">0</b><span>涉及假值</span>
+            </div>
+            <div class="sum-cell">
+              <b id="sumWarn">0</b><span>告警</span>
+            </div>
+            <div class="sum-cell">
+              <b id="sumElapsed">—</b><span>用时</span>
+            </div>
+          </div>
+
+          <div class="rp-compare" id="compareBox" hidden aria-labelledby="compareTitle">
+            <div class="cmp-head">
+              <h3 id="compareTitle">左右对照预览 <span class="cmp-sub">AI 回件 ↔ 还原稿</span></h3>
+              <div class="cmp-actions">
+                <button class="btn ghost sm" id="cmpPrev" type="button">‹ 上一页</button>
+                <span class="cmp-page" id="cmpPage">1 / 1</span>
+                <button class="btn ghost sm" id="cmpNext" type="button">下一页 ›</button>
+                <a class="btn dl-btn primary cmp-dl" id="cmpDownload" href="#" download>下载还原稿</a>
+              </div>
+            </div>
+            <div class="cmp-grid">
+              <figure class="cmp-pane">
+                <figcaption><span class="cmp-tag">左</span>AI 回件（交付给 AI 的版本）</figcaption>
+                <div class="cmp-stage" id="cmpLeft"><div class="cmp-hint">载入中…</div></div>
+              </figure>
+              <figure class="cmp-pane">
+                <figcaption><span class="cmp-tag tag-red">右</span>还原稿（本机真值版）</figcaption>
+                <div class="cmp-stage" id="cmpRight"><div class="cmp-hint">载入中…</div></div>
+              </figure>
+            </div>
+            <p class="cmp-note" id="cmpNote" hidden></p>
+          </div>
+
+          <div class="type-chips" id="typeChips" aria-label="按类型统计"></div>
+
+          <div class="truth-note" id="truthNote" role="note">以下为本机真值，仅限本机查看，请勿回传云端模型。</div>
+          <div class="table-wrap">
+            <table class="repl-table" id="replTable">
+              <caption class="sr-only">假值换回真值的替换明细</caption>
+              <thead>
+                <tr>
+                  <th scope="col">类型</th>
+                  <th scope="col">假值</th>
+                  <th scope="col">真值</th>
+                  <th scope="col" class="num">次数</th>
+                </tr>
+              </thead>
+              <tbody id="replBody"></tbody>
+            </table>
+            <div class="table-empty" id="replEmpty" hidden>这次没有替换任何假值。</div>
+          </div>
+
+          <section class="warn-box" id="warnBox" hidden aria-labelledby="warnTitle">
+            <h3 id="warnTitle">需要留意 <span class="warn-count" id="warnCount"></span></h3>
+            <ul id="warnList"></ul>
+          </section>
+        </div>
+
+        <aside class="result-side" aria-label="下载与本次映射">
+          <div class="side-card">
+            <div class="side-title">成品下载</div>
+            <div class="out-list" id="outList"></div>
+            <div class="out-note">成品已写到本机 <span class="mono">data/out/</span>，请自行保管。</div>
+          </div>
+          <div class="side-card">
+            <div class="side-title">本次映射</div>
+            <dl class="kv">
+              <dt>回件</dt><dd id="metaFile">—</dd>
+              <dt>映射原名</dt><dd id="metaJob">—</dd>
+              <dt>封条号</dt><dd id="metaSeal">—</dd>
+              <dt>格式</dt><dd id="metaFormat">—</dd>
+              <dt>策略</dt><dd id="metaStrategy">—</dd>
+            </dl>
+          </div>
+          <div class="side-card stay">
+            <div class="side-title">报告含真值</div>
+            <p class="side-note">本页报告只在本机浏览器显示；关闭页面后不留存报告内容。</p>
+            <button class="btn ghost" id="btnAgain" type="button">再还原一份</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="statusbar">
+    <span class="netdot" id="footDot"></span>
+    <span id="footNet">本机处理 · 不联网</span>
+    <span class="spacer"></span>
+    <span class="foot-meta">数据隐站 · 回件还原 · 报告含真值，勿回传云端</span>
+  </footer>
+</div>
+
+<div id="toast" role="status" aria-live="polite"><span id="toastMsg"></span><span class="toast-actions" id="toastActions"></span></div>
+<script src="restore.js" defer></script>
+</body>
+</html>

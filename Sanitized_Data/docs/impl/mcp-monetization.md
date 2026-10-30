@@ -29,7 +29,7 @@
 | 层 | 内容 | 商业含义 |
 |---|---|---|
 | **基础工具（4）** | `sanitize_document`、`redact_text`、`check_support`、`list_rules` | 只读/轻量入口：`list_rules`/`check_support` 可免费用；`redact_text` 可给免费小额度；`sanitize_document` 是文件写操作，归付费 |
-| **L2 工具（11）** | `sanitize_file`、`get_sanitize_job`、`list_sanitize_jobs`、`get_sanitize_entities`、`update_sanitize_entity`、`mark_sanitize_region`、`accept_all_sanitize_entities`、`export_sanitize_job`、`get_sanitize_audit`、`rehydrate_sanitize_text`、`open_sanitize_workbench` | **核心付费面**：可控 Job、人在环复核、工作台深链、导出档位、还原、审计 |
+| **L2 工具（12）** | `sanitize_file`、`get_sanitize_job`、`list_sanitize_jobs`、`get_sanitize_entities`、`update_sanitize_entity`、`mark_sanitize_region`、`accept_all_sanitize_entities`、`export_sanitize_job`、`get_sanitize_audit`、`rehydrate_sanitize_text`、`restore_sanitize_file`、`open_sanitize_workbench` | **核心付费面**：可控 Job、人在环复核、工作台深链、导出档位、还原、审计 |
 | **资源（4 模板 + 1 列表）** | `sanitize://jobs`（列表）、`sanitize://jobs/{id}`、`.../entities`、`.../audit`、`.../pages/{n}` | 与 L2 同权；免费不给 |
 | **Prompts（2）** | `review-before-export`、`workbench-fallback` | 仅引导文案、不含任务数据；**免费可用**（帮助用户理解复核流程） |
 | **交付形态** | `Sanitized_Data_MCP.exe`、源码 stdio、DSH 插件 | **授权在引擎/服务端**，不能只靠 DSH 插件（卸载插件不能绕过/失去授权） |
@@ -48,7 +48,7 @@
 | `list_rules` / `check_support` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `redact_text`（小文本） | 有限额（建议 20 次/天） | ✓ | ✓ | ✓ | ✓ |
 | `sanitize_document`（文件脱敏，一调完成） | ✗ | ✗ | ✓ | ✓ | ✓ |
-| L2 11 个工具（Job/复核/导出/还原/审计/工作台深链） | ✗ | ✗ | ✓ | ✓ | ✓ |
+| L2 12 个工具（Job/复核/导出/还原/回件还原/审计/工作台深链） | ✗ | ✗ | ✓ | ✓ | ✓ |
 | 资源（jobs/entities/audit/pages PNG） | ✗ | ✗ | ✓ | ✓ | ✓ |
 | Prompts（复核/回退引导） | ✓ | ✓ | ✓ | ✓ | ✓ |
 | 工作台深链（`open_sanitize_workbench`） | ✗ | ✗ | ✓ | ✓ | ✓ |
@@ -123,7 +123,7 @@
 
 | 位置 | 做什么 | 失败行为 |
 |---|---|---|
-| `mcp_server.py` 工具分发（`_handle_tools_call` 里用 `PAID_TOOLS` 集合统一检查；`_tool_guard` 保持异常包装） | 对 **12 个付费工具**（`sanitize_document` + 11 个 L2：`sanitize_file`/`get_sanitize_job`/`list_sanitize_jobs`/`get_sanitize_entities`/`update_sanitize_entity`/`mark_sanitize_region`/`accept_all_sanitize_entities`/`export_sanitize_job`/`get_sanitize_audit`/`rehydrate_sanitize_text`/`open_sanitize_workbench`）检查 `licensing.require("mcp")` | 返回 `isError` + `{ok:false,error,code:"license_required",...}`（不执行任何文件操作） |
+| `mcp_server.py` 工具分发（`_handle_tools_call` 里用 `PAID_TOOLS` 集合统一检查；`_tool_guard` 保持异常包装） | 对 **13 个付费工具**（`sanitize_document` + 12 个 L2：`sanitize_file`/`get_sanitize_job`/`list_sanitize_jobs`/`get_sanitize_entities`/`update_sanitize_entity`/`mark_sanitize_region`/`accept_all_sanitize_entities`/`export_sanitize_job`/`get_sanitize_audit`/`rehydrate_sanitize_text`/`restore_sanitize_file`/`open_sanitize_workbench`）检查 `licensing.require("mcp")` | 返回 `isError` + `{ok:false,error,code:"license_required",...}`（不执行任何文件操作） |
 | 资源列表 `resources/list` 与 `sanitize://jobs` | 付费/试用才返回 job 列表；免费返回空列表或引导 | **不泄露任务名/数量/URI** |
 | 资源读取 `resources/read`（jobs/{id}/entities/audit/pages） | 同上；免费返回 **JSON-RPC error**（如 -32002 资源不可用/-32001 未授权），不是"错误资源内容" | 不泄露任务数据 |
 | Prompts（`review-before-export`/`workbench-fallback`） | 只是引导文案、不含任务数据，**免费/试用/付费都可用** | — |
@@ -136,7 +136,7 @@
 
 ### 4.3 工具可见性策略
 
-- **建议**：`tools/list` 仍返回全部 15 个工具（附描述"需要专业版"），调用时返回 `license_required`。理由：Agent 能发现能力、用户能看到升级路径；隐藏工具会让 Agent 不知道有 L2 能力。
+- **建议**：`tools/list` 仍返回全部 16 个工具（附描述"需要专业版"），调用时返回 `license_required`。理由：Agent 能发现能力、用户能看到升级路径；隐藏工具会让 Agent 不知道有 L2 能力。
 - 可选优化（P1）：`initialize` 的 `instructions` 带一句"文件写工具需专业版，可提示用户升级"；DSH 卡片显示锁标记。
 - 不要返回"假成功"或静默降级（MCP 已有 `_tool_guard` 错误结构可复用）。
 

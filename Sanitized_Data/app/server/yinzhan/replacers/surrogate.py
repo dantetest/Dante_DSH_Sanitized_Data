@@ -28,6 +28,7 @@ import hashlib
 import random
 import re
 import threading
+from datetime import date, timedelta
 
 from ..registry import register_replacer
 from ..udm import Decision, ReplaceContext, Rule
@@ -617,36 +618,115 @@ def _pick_area(rng: random.Random, digits: int) -> tuple[str, int]:
     return rng.choice(options)
 
 
+def _known_area_prefix(digits: str, count: int) -> str:
+    """固话保留原区号：命中已知号段且本地号长度合理时返回原区号。"""
+    candidates = [a for a in (*_AREAS_3, *_AREAS_4)
+                  if digits.startswith(a) and 7 <= count - len(a) <= 8]
+    return max(candidates, key=len) if candidates else ""
+
+
 def _fake_phone(value: str, rng: random.Random, attempt: int = 0) -> str:
-    """电话：生成格式合法的新号码（手机 1[3-9] 开头 11 位；固话保留号段风格）。"""
+    """电话：生成格式合法的新号码（手机 1[3-9] 开头 11 位；固话保留区号）。"""
     label, body = _split_label(value)
     digits = re.sub(r"\D", "", body)
     count = len(digits)
     if count == 11 and digits.startswith("1"):
         new = "1" + rng.choice("3456789") + _digits(rng, 9)
     elif count >= 10 and digits.startswith("0"):
-        area, local_len = _pick_area(rng, count)
-        if not area:
-            new = "0" + _digits(rng, count - 1)
+        # 固话：保留原区号（与文档保留的城市/地址一致），只换本地号
+        area = _known_area_prefix(digits, count)
+        if area:
+            new = area + _nonzero_digits(rng, count - len(area))
         else:
-            new = area + _nonzero_digits(rng, local_len)
+            area, local_len = _pick_area(rng, count)
+            if not area:
+                new = "0" + _digits(rng, count - 1)
+            else:
+                new = area + _nonzero_digits(rng, local_len)
     else:
         new = _nonzero_digits(rng, max(1, count))
     return label + _reinject(body, new)
 
 
-def _fake_id(value: str, rng: random.Random, attempt: int = 0) -> str:
-    """身份证：同省前 6 位、随机合理生日、随机顺序码、重算 GB 11643 校验位。"""
+def _birth_date_for_age(ref: date, age: int, rng: random.Random) -> date | None:
+    """在 ref 这一天恰好 age 周岁的生日区间里随机选一天。
+
+    区间 1：birth_year = ref.year - age，生日 <= ref（今年生日已过）
+    区间 2：birth_year = ref.year - age - 1，生日 > ref（今年生日未到）
+    """
+    ranges: list[tuple[date, date]] = []
+    y1 = ref.year - age
+    if y1 >= 1900:
+        try:
+            end1 = date(y1, ref.month, ref.day)
+        except ValueError:                       # 2 月 29 日落在非闰年
+            end1 = date(y1, ref.month, 28)
+        ranges.append((date(y1, 1, 1), end1))
+    y2 = ref.year - age - 1
+    if y2 >= 1900:
+        try:
+            start = date(y2, ref.month, ref.day) + timedelta(days=1)
+        except ValueError:
+            start = date(y2, ref.month, 28) + timedelta(days=1)
+        end = date(y2, 12, 31)
+        if start <= end:
+            ranges.append((start, end))
+    if not ranges:
+        return None
+    total = sum((end - start).days + 1 for start, end in ranges)
+    pick = rng.randrange(total)
+    for start, end in ranges:
+        span = (end - start).days + 1
+        if pick < span:
+            return start + timedelta(days=pick)
+        pick -= span
+    return None
+
+
+def _fake_id(value: str, rng: random.Random, attempt: int = 0,
+             ctx: ReplaceContext | None = None) -> str:
+    """身份证：同省前 6 位、生日/性别与文档保留信息一致、GB 11643 校验位。
+
+    P1-1：如果文档里能可靠提取到唯一年龄/性别（D12 这类单证件文档），
+    生日按文档“事件日期”（入院/就诊等）反推、顺序码奇偶匹配性别，保证
+    AI 从假身份证推生日/性别时不会与文档里的“67 岁/女”矛盾；提取不到时
+    退回原随机策略。
+    """
     label, body = _split_label(value)
     text = body.strip().upper()
     if not re.fullmatch(r"\d{17}[\dX]", text):
         return label + _fake_generic(body, rng)
     region = text[:6]
-    year = rng.randint(1950, 2005)
-    month = rng.randint(1, 12)
-    day = rng.randint(1, 28)
-    sequence = rng.randint(0, 999)
-    body17 = f"{region}{year:04d}{month:02d}{day:02d}{sequence:03d}"
+    facts = getattr(ctx, "facts", None) or {}
+    age = facts.get("age")
+    gender = facts.get("gender")
+    use_facts = (isinstance(age, int) and 0 <= age <= 120
+                 and gender in ("男", "女")
+                 and int(facts.get("id_count", 1)) <= 1)
+    birth: date | None = None
+    if use_facts:
+        ref_raw = facts.get("ref_date")
+        ref: date | None = None
+        if isinstance(ref_raw, (list, tuple)) and len(ref_raw) == 3:
+            try:
+                ref = date(int(ref_raw[0]), int(ref_raw[1]), int(ref_raw[2]))
+            except (TypeError, ValueError):
+                ref = None
+        birth = _birth_date_for_age(ref or date.today(), int(age), rng)
+    if use_facts and birth is not None:
+        sequence = rng.randint(0, 999)
+        if gender == "男" and sequence % 2 == 0:
+            sequence = sequence + 1 if sequence < 999 else sequence - 1
+        if gender == "女" and sequence % 2 == 1:
+            sequence = sequence + 1 if sequence < 999 else sequence - 1
+        body17 = (f"{region}{birth.year:04d}{birth.month:02d}"
+                  f"{birth.day:02d}{sequence:03d}")
+    else:
+        year = rng.randint(1950, 2005)
+        month = rng.randint(1, 12)
+        day = rng.randint(1, 28)
+        sequence = rng.randint(0, 999)
+        body17 = f"{region}{year:04d}{month:02d}{day:02d}{sequence:03d}"
     return label + body17 + _id_check_digit(body17)
 
 
@@ -783,12 +863,23 @@ def _fake_license(value: str, rng: random.Random, attempt: int = 0) -> str:
 
 
 def _fake_uscc_body(text: str, rng: random.Random) -> str:
-    """生成 18 位统一社会信用代码：结构合法 + GB 32100 校验位正确。"""
-    first = text[:1] if text[:1].isdigit() and text[:1] != "0" else rng.choice("91234")
-    second = rng.choice("123456789")
-    region = _digits(rng, 6)
+    """生成 18 位统一社会信用代码：结构合法 + GB 32100 校验位正确。
+
+    P1-1：保留前 8 位（登记管理部门/类别 + 6 位地区码），与文档保留的
+    公司/地址城市一致；只随机化组织机构代码段并重算校验位。
+    """
+    text = (text or "").upper()
+    prefix = text[:8]
+    if len(prefix) == 8 and all(ch in _USCC_CHARSET for ch in prefix):
+        first8 = prefix
+    else:
+        first = text[:1] if text[:1].isdigit() and text[:1] != "0" else rng.choice("91234")
+        second = rng.choice("123456789")
+        first8 = first + second + _digits(rng, 6)
     main = "".join(rng.choice(_USCC_CHARSET[10:]) for _ in range(9))
-    body17 = first + second + region + main
+    body17 = first8 + main
+    if body17 == text[:17]:                       # 极小概率完全同前缀，换一位
+        body17 = body17[:8] + rng.choice(_USCC_CHARSET[10:]) + body17[9:]
     return body17 + _uscc_check_digit(body17)
 
 
@@ -996,7 +1087,11 @@ def _generate(ctx: ReplaceContext, etype: str, value: str,
     rng = _rng_for(ctx, etype, value)
     needle = (value or "").strip()
     for _attempt in range(256):
-        candidate = factory(value, rng, _attempt)
+        if etype == "ID_CARD":
+            # 身份证需要文档级年龄/性别（P1-1）；其余工厂保持原签名
+            candidate = factory(value, rng, _attempt, ctx)
+        else:
+            candidate = factory(value, rng, _attempt)
         if not candidate or candidate == value:
             continue
         # 隐私不变量：假值绝不能完整包含原文值（如地址只剩省市区层级时

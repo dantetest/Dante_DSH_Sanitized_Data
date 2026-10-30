@@ -25,8 +25,9 @@ L2（M2-M4 server 侧）设计要点：
   （不再在 MCP 层 parse/export，也不再用 Path.cwd()）。
   ai 模式的「假值→原值」映射由 Web/JobManager 的 export 统一
   vault.save_mapping() 落盘，MCP 不再自行生成 mapping_id。
-- 新增 11 个 sanitize_* 工具（job 化、实体复核、框选、导出、审计、还原、
-  打开工作台）+ resources（JSON 快照/实体/审计、页面 PNG）+ prompts。
+- 新增 12 个 sanitize_*/restore_* 工具（job 化、实体复核、框选、导出、审计、
+  还原、回件还原、打开工作台）+ resources（JSON 快照/实体/审计、页面 PNG）
+  + prompts。
 - 实体清单默认脱敏：只回 value_len/spans/level/etype/label/status，绝不回原值。
 - 协议版本按客户端请求协商；客户端请求不受支持时回最高支持版本。
 """
@@ -55,7 +56,7 @@ os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "disabled")
 os.environ.setdefault("OPENCV_OPENCL_DEVICE", "disabled")
 os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
 
-from yinzhan import audit, pipeline, quota, registry, vault   # noqa: E402
+from yinzhan import audit, pipeline, quota, registry, restore, vault   # noqa: E402
 from yinzhan.config import PORT, RUNTIME_PATH, VERSION        # noqa: E402
 from yinzhan.jobs import MANAGER, _load_rules                 # noqa: E402
 from yinzhan.ocr import get_ocr                               # noqa: E402
@@ -944,7 +945,8 @@ TOOLS = [
         "description": "列出本机可用的脱敏规则包与规则条目。",
         "inputSchema": {"type": "object", "properties": {}},
     },
-    # ── 新增 11 个工具：job 化 / 实体复核 / 框选 / 导出 / 审计 / 还原 / 深链 ──
+    # ── 新增 12 个工具：job 化 / 实体复核 / 框选 / 导出 / 审计 / 还原 /
+    #    回件还原 / 深链 ──
     {
         "name": "sanitize_file",
         "description": ("创建一个 MCP 脱敏任务（Job），返回 job_id/stage/workbench_url。"
@@ -1108,6 +1110,29 @@ TOOLS = [
                 "text": {"type": "string", "description": "含假值、待还原的文本"},
             },
             "required": ["text"],
+        },
+    },
+    {
+        "name": "restore_sanitize_file",
+        "description": ("本机还原：把大模型交回来的文件的假值，按换名导出时保存的"
+                        "本机映射换回真值；支持 txt/md/csv/json/docx/xlsx/pptx/"
+                        "pdf（文本层）/图片（OCR）。还原产物写到本机 out 目录，"
+                        "返回报告与产物路径；默认不返回原值明细。"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "本地回件文件绝对路径"},
+                "job_id": {"type": "string",
+                           "description": "换名导出时返回的任务号（映射库 key）"},
+                "out_dir": {"type": "string",
+                            "description": "成品输出目录；缺省用本机默认 out 目录"},
+                "include_originals": {
+                    "type": "boolean", "default": False,
+                    "description": ("是否在返回里附带 fake→orig 替换明细；"
+                                    "MCP 客户端可能是云端模型，默认不带"),
+                },
+            },
+            "required": ["path", "job_id"],
         },
     },
     {
@@ -1537,6 +1562,47 @@ def tool_rehydrate_sanitize_text(args: dict) -> dict:
 
 
 @_tool_guard
+def tool_restore_sanitize_file(args: dict) -> dict:
+    """本机回件还原：本地回件 + 本机映射 → ``*_还原.*`` 成品（不经过上传会话）。"""
+    src = args.get("path")
+    if not isinstance(src, str) or not src.strip():
+        raise ToolError("path 不能为空（需要本地回件文件的绝对路径）", "bad_request")
+    job_id = args.get("job_id")
+    if not isinstance(job_id, str) or not job_id.strip():
+        raise ToolError("job_id 不能为空（换名导出时返回的任务号）", "bad_request")
+    raw_out_dir = args.get("out_dir")
+    if raw_out_dir is not None and not isinstance(raw_out_dir, str):
+        raise ToolError("out_dir 必须是字符串（成品输出目录）", "bad_request")
+    out_dir = (raw_out_dir or "").strip() or None
+    include_originals = _as_bool(args.get("include_originals"))
+    job_id = job_id.strip()
+    try:
+        # 先取映射信息：任务号无效时立即失败（也用于报告里的 job_name/seal）
+        mapping = restore.load_mapping_info(job_id)
+        result = restore.run_path(src.strip(), job_id, out_dir=out_dir)
+    except restore.RestoreError as exc:
+        # 可预期的还原失败沿用 MCP 统一 isError 语义，code/message 与 HTTP API 一致
+        raise ToolError(exc.message, exc.code) from exc
+    report = {
+        "job_id": job_id,
+        "job_name": mapping.name,
+        "seal": mapping.seal,
+        "format": result.get("format"),
+        "strategy": result.get("strategy"),
+        "counts": result.get("counts") or {},
+        "by_type": result.get("by_type") or {},
+        "warnings": list(result.get("warnings") or []),
+        "outputs": list(result.get("artifacts") or []),
+        "elapsed_ms": result.get("elapsed_ms", 0),
+    }
+    # 报告含真实值：MCP 客户端可能是云端模型，默认只回统计与产物路径；
+    # 只有显式 include_originals=true 才附带 fake→orig 替换明细。
+    if include_originals:
+        report["replacements"] = list(result.get("replacements") or [])
+    return _text_result({"ok": True, "restore": report})
+
+
+@_tool_guard
 def tool_open_sanitize_workbench(args: dict) -> dict:
     job_id = str(args.get("job_id") or "").strip() or None
     backend = _resolve_backend()
@@ -1569,7 +1635,7 @@ HANDLERS = {
     "redact_text": tool_redact_text,
     "check_support": tool_check_support,
     "list_rules": tool_list_rules,
-    # 新增 11 工具
+    # 新增 12 工具
     "sanitize_file": tool_sanitize_file,
     "get_sanitize_job": tool_get_sanitize_job,
     "list_sanitize_jobs": tool_list_sanitize_jobs,
@@ -1580,6 +1646,7 @@ HANDLERS = {
     "export_sanitize_job": tool_export_sanitize_job,
     "get_sanitize_audit": tool_get_sanitize_audit,
     "rehydrate_sanitize_text": tool_rehydrate_sanitize_text,
+    "restore_sanitize_file": tool_restore_sanitize_file,
     "open_sanitize_workbench": tool_open_sanitize_workbench,
 }
 

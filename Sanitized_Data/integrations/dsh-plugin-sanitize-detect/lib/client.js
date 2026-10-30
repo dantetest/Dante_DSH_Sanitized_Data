@@ -20,6 +20,7 @@ window.__ModuleLoader__.load({
       'list_sanitize_jobs', 'get_sanitize_entities', 'update_sanitize_entity',
       'mark_sanitize_region', 'accept_all_sanitize_entities', 'export_sanitize_job',
       'get_sanitize_audit', 'rehydrate_sanitize_text', 'open_sanitize_workbench',
+      'restore_sanitize_file',
     ];
 
     // 工具卡完成后把最近 job 留在 footer，避免 DSH 折叠过程后看不到结果。
@@ -193,6 +194,7 @@ window.__ModuleLoader__.load({
         update_sanitize_entity: '更新实体', mark_sanitize_region: '框选补漏',
         accept_all_sanitize_entities: '全部接受', export_sanitize_job: '导出成品',
         get_sanitize_audit: '审计链', rehydrate_sanitize_text: '本机还原',
+        restore_sanitize_file: '回件还原',
         open_sanitize_workbench: '工作台深链', check_support: '格式检查',
         list_rules: '规则包',
       };

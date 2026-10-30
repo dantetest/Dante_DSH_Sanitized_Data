@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-from . import registry
+from . import quality, registry
 from .config import LEVEL_RANK, STRICTNESS
 from .ocr import get_ocr
 from .udm import (
@@ -181,6 +181,8 @@ class Session:
     def __init__(self) -> None:
         self.map: dict[tuple[str, str], str] = {}
         self.used: dict[str, set[str]] = {}
+        # 文档级一致性事实（年龄/性别等），供 surrogate 生成语义一致的假值
+        self.facts: dict = {}
 
     def to_dict(self) -> dict:
         out: dict[str, dict[str, str]] = {}
@@ -212,7 +214,9 @@ def decide(entities: list[Entity], rules: dict[str, Rule], session: Session) -> 
             e.decision = Decision(strategy="surrogate", replacement=session.map[key])
             continue
         strategy = spec.get("strategy", "mask")
-        ctx = ReplaceContext(session=session, etype=e.etype, label=e.label, seed=len(session.map))
+        ctx = ReplaceContext(session=session, etype=e.etype, label=e.label,
+                             seed=len(session.map),
+                             facts=getattr(session, "facts", {}) or {})
         try:
             decision = _build_replacement(strategy, rule, e, ctx)
         except Exception:
@@ -434,15 +438,23 @@ def _org_alias_place_word(core: str) -> bool:
 
 
 def _org_alias_similar(a: str, b: str) -> bool:
-    """ORG 简称别名：较短 core 是较长 core 的前缀（含相等），且短 core 不是误检词。"""
+    """ORG 简称别名：较短 core 是较长 core 的前缀（含相等），且短 core 不是误检词。
+
+    P0-1 收紧：机构类别不同直接拒绝；纯行政区 core 不算简称；OCR/句子噪声
+    前缀先剥离再比较。
+    """
+    if not quality.org_categories_compatible(a, b):
+        return False
     core_a, core_b = _org_core(a), _org_core(b)
+    core_a = quality.strip_org_noise(core_a)
+    core_b = quality.strip_org_noise(core_b)
     if len(core_a) > len(core_b):
         core_a, core_b = core_b, core_a
     if len(core_a) < ORG_MIN_CORE_LEN or not core_b.startswith(core_a):
         return False
     if core_a in ORG_ALIAS_STOPWORDS or core_b in ORG_ALIAS_STOPWORDS:
         return False
-    if _org_alias_place_word(core_a):
+    if _org_alias_place_word(core_a) or quality.admin_only_core(core_a):
         return False
     return True
 
@@ -451,6 +463,8 @@ def _consolidate_pair(a: str, b: str, etype: str) -> bool:
     """按实体类型分派同簇判据（两个参数都已规范化）。"""
     if a == b:
         return True
+    if etype == "ORG" and not quality.org_categories_compatible(a, b):
+        return False
     if etype == "ADDRESS":
         return _address_similar(a, b)
     if _consolidate_similar(a, b):
@@ -498,7 +512,8 @@ def consolidate_surrogates(entities: list[Entity], rules: dict[str, Rule] | None
         items.append((entity, norm))
 
     total = len(items)
-    stats = {"candidates": total, "groups": 0, "members": 0, "changed": 0}
+    stats = {"candidates": total, "groups": 0, "members": 0, "changed": 0,
+             "review_groups": 0, "review_members": 0}
     if total < 2:
         return stats
 
@@ -533,6 +548,29 @@ def consolidate_surrogates(entities: list[Entity], rules: dict[str, Rule] | None
         canonical_i = max(
             idxs, key=lambda k: (len(items[k][1]), len(items[k][0].value), -k))
         canonical = items[canonical_i][0]
+        etype = canonical.etype
+        # P0-1 安全阀：超大簇不自动合并（宁可让 AI 看到多个假名，不可错并）。
+        max_members = quality.MERGE_LIMITS.get(etype, 6)
+        if len(idxs) > max_members:
+            stats["review_groups"] += 1
+            stats["review_members"] += len(idxs)
+            continue
+        # ORG 额外复核：类别必须一致，且每个成员与 canonical 直接满足同簇判据
+        # （仅靠 A~B、B~C 链式传递可能把法院/学校/公司串成一簇）。
+        if etype == "ORG":
+            cats = {quality.org_category(items[k][0].value)
+                    for k in idxs if quality.org_category(items[k][0].value)}
+            if len(cats) > 1:
+                stats["review_groups"] += 1
+                stats["review_members"] += len(idxs)
+                continue
+            bad = [k for k in idxs
+                   if k != canonical_i and not _consolidate_pair(
+                       items[k][1], items[canonical_i][1], "ORG")]
+            if bad:
+                stats["review_groups"] += 1
+                stats["review_members"] += len(idxs)
+                continue
         replacement = canonical.decision.replacement
         if not replacement:                      # 防御：canonical 没有假值则整簇跳过
             continue

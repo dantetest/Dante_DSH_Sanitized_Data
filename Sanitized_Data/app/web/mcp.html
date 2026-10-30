@@ -38,12 +38,12 @@
       MCP 是 Agent 调用外部工具的通用协议。装好这个服务之后，
       <b>WorkBuddy、Codex、Claude Desktop、Cursor</b> 等支持本地 MCP 的客户端，
       在把文件交给模型之前会先调用本机的脱敏工具 —— 模型拿到的永远是处理过的那一份。
-      <br><span class="muted">2026-10-23 实测：WorkBuddy 5.8.4 与 Codex 已跑通「发现 15 工具 → 真实脱敏 → 导出」。</span>
+      <br><span class="muted">2026-10-23 实测：WorkBuddy 5.8.4 与 Codex 已跑通「发现 15 工具 → 真实脱敏 → 导出」；2026-10-29 新增回件还原，工具数 16。</span>
     </p>
     <div class="chips">
       <span class="chip">stdio 本地进程</span>
       <span class="chip">不经网络</span>
-      <span class="chip">15 个工具 + 资源</span>
+      <span class="chip">16 个工具 + 资源</span>
       <span class="chip">WorkBuddy / Codex 已实测</span>
       <span class="chip">无需账号</span>
     </div>
@@ -55,7 +55,7 @@
 
   <section>
     <h2>它提供什么工具</h2>
-    <p class="muted" style="margin-bottom:24px">Agent 能调用 15 个工具（4 个基础 + 11 个复核/Job），全部在本机执行</p>
+    <p class="muted" style="margin-bottom:24px">Agent 能调用 16 个工具（4 个基础 + 11 个复核/Job + 1 个回件还原），全部在本机执行</p>
     <div class="grid g2">
       <div class="card">
         <div class="ico">TOOL 01</div>
@@ -91,7 +91,7 @@
   <section>
     <h2>L2：Job 化复核 + 工作台深链</h2>
     <p class="muted" style="max-width:820px">
-      除了四个基础工具，L2 还提供 11 个 <code>sanitize_*</code> 工具：先建 Job（不重复解析），
+      除了四个基础工具，L2 还提供 11 个 <code>sanitize_*</code> 工具和 1 个 <code>restore_sanitize_file</code> 回件还原工具：先建 Job（不重复解析），
       再查实体/接受/拒绝/替换/框选补漏，最后导出并查审计。所有操作和 Web 工作台共用同一个
       <code>j_*</code> 任务、审计链与 <code>data/out</code> 成品。
     </p>
@@ -119,6 +119,18 @@ get_sanitize_audit { "job_id": "..." }</pre>
   "workbench_available": true }</pre>
         <p>安装版/源码版都可以；Web 服务未启动时会返回 <code>no_workbench</code>
         启动引导，不会给出失效深链。MCP 与 Web 共用同一数据目录与审计。</p>
+      </div>
+      <div class="card">
+        <div class="ico">RESTORE</div>
+        <h3>回件还原：AI 交回的文件换回真值</h3>
+        <p>大模型拿着换名版干完活交回新文件后，用 <code>restore_sanitize_file</code>
+        在本机按同一 <code>job_id</code> 的映射把假值换回真值。默认只返回统计与
+        本机成品路径，<b>不把真值明细回给 Agent</b>；需要人工核对时到
+        <a href="/restore">回件还原</a>页查看替换明细。</p>
+        <pre style="margin-top:12px"><span class="c">// 回件：docx / xlsx / pptx / pdf（文本层）/ 图片</span>
+restore_sanitize_file { "path": "D:\\回件.docx",
+  "job_id": "j_ab12cd34", "include_originals": false }
+<span class="c">// 返回 counts / warnings / outputs（本机路径）</span></pre>
       </div>
     </div>
     <div class="note" style="margin-top:20px">
@@ -152,8 +164,8 @@ get_sanitize_audit { "job_id": "..." }</pre>
 
     <h3 style="margin-top:30px">兼容性一览（2026-10-23）</h3>
     <table class="spec">
-      <tr><th>WorkBuddy 5.8.4（Windows）</th><td><b>✅ 已真机实测</b>：配置在 <code>~/.workbuddy-ai/mcp.json</code>，首次接入需在 MCP 页面点「信任」；15 个工具全部发现，<code>list_rules</code> / <code>sanitize_file</code> / <code>export_sanitize_job</code> 真实调用通过。</td></tr>
-      <tr><th>Codex（CLI / Desktop）</th><td><b>✅ 已实测（含模型驱动）</b>：配置在 <code>~/.codex/config.toml</code>；Codex 自带 MCP 客户端发现 15 工具，<code>codex exec</code> 模型真实调用 <code>list_rules</code> 成功；默认超时 10s/60s，建议调 120/600；<b>非交互调用需放行审批</b>（否则报「MCP tool call requires approval」）。</td></tr>
+      <tr><th>WorkBuddy 5.8.4（Windows）</th><td><b>✅ 已真机实测</b>：配置在 <code>~/.workbuddy-ai/mcp.json</code>，首次接入需在 MCP 页面点「信任」；15 个工具全部发现（2026-10-29 起为 16），<code>list_rules</code> / <code>sanitize_file</code> / <code>export_sanitize_job</code> 真实调用通过。</td></tr>
+      <tr><th>Codex（CLI / Desktop）</th><td><b>✅ 已实测（含模型驱动）</b>：配置在 <code>~/.codex/config.toml</code>；Codex 自带 MCP 客户端发现 15 工具（2026-10-29 起为 16），<code>codex exec</code> 模型真实调用 <code>list_rules</code> 成功；默认超时 10s/60s，建议调 120/600；<b>非交互调用需放行审批</b>（否则报「MCP tool call requires approval」）。</td></tr>
       <tr><th>Claude Desktop / Claude Code</th><td><b>✅ 官方支持本地 stdio</b>：<code>claude_desktop_config.json</code> / <code>.mcp.json</code>（<code>claude mcp add</code>）。</td></tr>
       <tr><th>Cursor / Kimi Code CLI / Qwen Code / TRAE / Cherry Studio / Chatbox</th><td><b>✅ 官方文档支持本地 stdio</b>（本次未逐台真机验证；各客户端版本差异以对应官方文档为准）。</td></tr>
       <tr><th>VS Code（GitHub Copilot Chat 1.141+）</th><td><b>✅ 可配置（文档 + 本地 bundle 证据）</b>：命令面板 <code>MCP: Add Server → Command (stdio)</code>，或工作区 <code>.vscode/mcp.json</code>（根键是 <code>servers</code>）；需已登录 Copilot Chat。</td></tr>
@@ -161,7 +173,7 @@ get_sanitize_audit { "job_id": "..." }</pre>
       <tr><th>DSH（DeepSeek Harness）</th><td><b>✅ 原生集成</b>：随包插件提供工具卡与真实工作台深链；实测 MCP 工具链路 <b>4–427 ms</b>（小工具 4–93ms、list_rules 427ms），源码版冷启动 1–5s（生产建议安装版 exe），工具超时 600s。</td></tr>
     </table>
     <div class="note" style="margin-top:18px">
-      <b>一句话：</b>能装本地客户端就选「自动档」，只有网页/手机入口就选「手动档」。不确定时，先在客户端里问一句「列出 sanitized-data 的工具」，能看到 15 个工具就说明接入成功。
+      <b>一句话：</b>能装本地客户端就选「自动档」，只有网页/手机入口就选「手动档」。不确定时，先在客户端里问一句「列出 sanitized-data 的工具」，能看到 16 个工具就说明接入成功。
     </div>
   </section>
   <section id="config">
@@ -192,9 +204,9 @@ get_sanitize_audit { "job_id": "..." }</pre>
     <div class="note" style="margin-top:16px">
       <b>① 从哪进（5.8.4 实测路径）：</b>左侧「Experts · Skills · Connectors」→ 顶部「Connectors」→ 右上角「Custom connectors」→「MCP Server Management」。
       「+ Add MCP」打开的就是 <code>C:\Users\&lt;你&gt;\.workbuddy-ai\mcp.json</code>（页面会显式显示该路径），粘贴 JSON 后保存。
-      <br><b>② 怎么算成功：</b>列表里 <code>sanitized-data</code> 显示<b>绿点 + 15/15 tools enabled + 开关打开</b>；没有绿点就是没启动，先查 exe 路径/权限（首次接入需信任/启用，未信任时 WorkBuddy 会静默不启动）。
+      <br><b>② 怎么算成功：</b>列表里 <code>sanitized-data</code> 显示<b>绿点 + 16/16 tools enabled + 开关打开</b>；没有绿点就是没启动，先查 exe 路径/权限（首次接入需信任/启用，未信任时 WorkBuddy 会静默不启动）。
       <br><b>③ 路径注意：</b>5.8.4 实际读取 <code>~/.workbuddy-ai/mcp.json</code>；旧文档里的 <code>~/.workbuddy/mcp.json</code> 在该版本不生效。
-      <br><b>实测（2026-10-23）：</b>15 个工具全部发现，<code>list_rules</code>、<code>sanitize_file</code>（Job + 6 实体）、<code>export_sanitize_job</code>（成品 + 审计）真实跑通。
+      <br><b>实测（2026-10-23）：</b>15 个工具全部发现（2026-10-29 起为 16 个），<code>list_rules</code>、<code>sanitize_file</code>（Job + 6 实体）、<code>export_sanitize_job</code>（成品 + 审计）真实跑通。
     </div>
 
     <h3 style="margin-top:30px">Codex（OpenAI）· 已实测</h3>
@@ -332,7 +344,7 @@ python -X utf8 app/server/mcp_server.py
           <h3>在客户端里问一句</h3>
           <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
             重启客户端后，向 Agent 提问：<code>列出 sanitized-data 这个 MCP 提供的所有工具</code>。
-            期望看到 <b>15 个工具</b>（sanitize_document、redact_text、sanitize_file、export_sanitize_job 等）。
+            期望看到 <b>16 个工具</b>（sanitize_document、redact_text、sanitize_file、export_sanitize_job 等）。
           </p>
         </div>
       </div>
@@ -342,6 +354,17 @@ python -X utf8 app/server/mcp_server.py
           <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
             说：<code>用 sanitize_file 把 D:\合同.pdf 脱敏（mode=ai），再 export_sanitize_job，告诉我 job_id 和输出路径</code>。
             成功会返回 <code>job_id</code>、输出文件路径、实体数量与审计结果；可再用 <code>open_sanitize_workbench</code> 打开同一 Job 的工作台复核。
+          </p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>AI 交回文件后还原</h3>
+          <p class="muted" style="font:400 12.5px/1.9 var(--song);color:var(--ink-2)">
+            AI 拿着换名版干完活交回新文件后，说：
+            <code>用 restore_sanitize_file 把 D:\回件.docx 按 job_id j_... 还原成本机真值文件</code>。
+            工具默认只返回统计与成品路径（不把真值明细回给 Agent）；要看假值→真值明细、下载成品，打开
+            <a href="/restore">回件还原</a>页。
           </p>
         </div>
       </div>

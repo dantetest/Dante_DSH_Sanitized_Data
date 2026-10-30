@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from . import audit, logging_setup, pipeline, quota, registry, vault
+from . import (audit, consistency, logging_setup, pipeline, quality, quota,
+               registry, vault)
 from .config import OUTPUT_DIR, STRICTNESS, WORK_DIR
 from .licensing import LicenseError
 from .ocr import get_ocr
@@ -182,6 +183,9 @@ class Job:
     rules: dict[str, Rule] = field(default_factory=dict)
     session: pipeline.Session = field(default_factory=pipeline.Session)
     pack_label: str = ""
+    # 上游质量护栏（只含计数/掩码，不含原值）
+    quality_report: dict = field(default_factory=dict)
+    mapping_guard: dict = field(default_factory=dict)
 
     exports: dict[str, dict] = field(default_factory=dict)
     preview_doc: Document | None = None
@@ -235,6 +239,9 @@ class Job:
                 "minor_detected": self.minor_detected,
                 "minor_strict": self.minor_strict,
                 "combination_risk": self.combination_risk,
+                # 上游质量护栏（只含计数/类别/掩码，不含原值）
+                "quality_gate": self.quality_report or {},
+                "mapping_guard": self.mapping_guard or {},
                 "exports": {k: {kk: vv for kk, vv in v.items() if kk != "bytes"}
                             for k, v in self.exports.items()},
             }
@@ -372,6 +379,32 @@ class JobManager:
             except Exception as exc:
                 job.warnings.append(f"表单人名补充跳过：{exc}")
 
+            # P1-1 一致性：同值不同标签写法合并（D12「住院号：…」/「住院号 …」），
+            # 并提取文档级年龄/性别给身份证假值使用。
+            try:
+                labeled = consistency.merge_labeled_variants(job.entities)
+                msg = consistency.merge_warning(labeled)
+                if msg:
+                    job.warnings.append(msg)
+                facts = consistency.extract_facts(doc)
+                facts["id_count"] = sum(
+                    1 for e in job.entities
+                    if (e.etype or "").upper() == "ID_CARD"
+                    and e.status != "rejected")
+                job.session.facts = facts
+            except Exception as exc:
+                job.warnings.append(f"文档一致性处理跳过：{exc}")
+
+            # 上游质量闸门（默认 enforce；shadow 只统计、off 关闭；enforce 时只丢
+            # 高精度 PERSON/ORG，隐私关键类型不动）。必须在 decide 之前。
+            try:
+                job.quality_report = quality.apply_quality_gate(job.entities)
+                gate_msg = quality.quality_report_warning(job.quality_report)
+                if gate_msg:
+                    job.warnings.append(gate_msg)
+            except Exception as exc:
+                job.warnings.append(f"实体质量闸门跳过：{exc}")
+
             pipeline.decide(job.entities, job.rules, job.session)
 
             # 金额一致性（P0 财务）：同一勾稽组统一缩放因子、合计按分项重算，
@@ -397,6 +430,10 @@ class JobManager:
                     job.warnings.append(
                         f"近似实体假值归并 {merged['groups']} 组"
                         f"（{merged['members']} 个实体，统一 {merged['changed']} 个假值）")
+                if merged.get("review_groups"):
+                    job.warnings.append(
+                        f"另有 {merged['review_groups']} 组近似实体未自动归并"
+                        "（跨类别/超大簇，已保留原假值并标记人工复核）")
             except Exception as exc:
                 job.warnings.append(f"近似实体假值归并跳过：{exc}")
 
@@ -484,6 +521,16 @@ class JobManager:
                         "建议对场景照片整图涂黑或人工复核")
             except Exception as exc:
                 job.warnings.append(f"组合风险统计跳过：{exc}")
+
+            # 映射一致性护栏（P0-1 前哨）：同假值多原值 / 跨类别归并 / 超大簇。
+            # 默认只告警；YINZHAN_MAPPING_GUARD=block 时 AI 导出会被阻断（见 export）。
+            try:
+                job.mapping_guard = quality.check_mapping_guard(job.entities)
+                guard_msg = quality.guard_report_warning(job.mapping_guard)
+                if guard_msg:
+                    job.warnings.append(guard_msg)
+            except Exception as exc:
+                job.warnings.append(f"映射一致性检查跳过：{exc}")
 
             job.progress = 1.0
             job.note = ""
@@ -769,6 +816,20 @@ class JobManager:
             if job.stage != "ready" or job.doc is None:
                 raise YinzhanError("任务还没准备好")
             active = [e for e in job.entities if e.status != "rejected"]
+            # 上游质量护栏：导出前重新核对映射（人工确认/状态变化后再算一次）。
+            # warn=只提示；block=AI 导出前阻断（human 涂黑版不受影响）。
+            guard = quality.check_mapping_guard(job.entities)
+            job.mapping_guard = guard
+            guard_msg = quality.guard_report_warning(guard)
+            if guard_msg and guard_msg not in job.warnings:
+                job.warnings.append(guard_msg)
+            if (mode == "ai" and not guard.get("ok", True)
+                    and quality.guard_mode() == "block"):
+                err = YinzhanError(
+                    "映射一致性检查未通过：存在跨类别归并/超大簇，"
+                    "同假值还原可能覆盖多处；请先在对照台人工复核后再导出 AI 版")
+                err.code = "mapping_review_required"
+                raise err
             # 「仅清理」场景：没有可涂的实体，但文件里有必须剥离的元数据/地理参考
             # （典型：只有 Geo 标签、没有可 OCR 文字的正射影像）。以前会直接报
             # 「没有需要隐去的内容」，导致这类文件出不去。
@@ -814,7 +875,21 @@ class JobManager:
                         "office_media": office_media or {},
                         # PDF 隐藏数据（附件/批注/表单/JS）剥离/保留痕迹
                         "pdf_hidden": pdf_hidden or {},
-                        "keep_pdf_hidden": bool(options.get("keep_pdf_hidden"))},
+                        "keep_pdf_hidden": bool(options.get("keep_pdf_hidden")),
+                        # 上游质量护栏（只记计数/掩码，不记原值）
+                        "mapping_guard": {
+                            "ok": bool(guard.get("ok")),
+                            "hetero_category": (guard.get("counts") or {}).get(
+                                "hetero_category", 0),
+                            "oversized_cluster": (guard.get("counts") or {}).get(
+                                "oversized_cluster", 0),
+                        },
+                        "quality_gate": {
+                            "mode": job.quality_report.get("mode", ""),
+                            "dropped_total": job.quality_report.get("dropped_total", 0),
+                            "would_drop_total": job.quality_report.get(
+                                "would_drop_total", 0),
+                        }},
                 rule_pack=job.pack_label, mode=mode,
                 out_hash=out_hash, out_name=out.name,
             )
@@ -822,6 +897,9 @@ class JobManager:
                 # 映射库除文字实体图外，也保存解析器交出来的地理坐标变换参数
                 # （正射 TIF 中性化需要可还原；见 docs/red-lines.md E5）。
                 extra = {"name": job.name, "seal": seal}
+                if guard:
+                    # 导出时映射检查结果（只含计数/掩码），供回件还原报告核对
+                    extra["mapping_guard"] = guard
                 geo_params = (job.doc.extra or {}).get("geo_params") if job.doc else None
                 if geo_params:
                     extra["geo"] = geo_params
@@ -831,7 +909,11 @@ class JobManager:
                 "sha256": out_hash, "mode": mode,
                 "verify": result.get("verify", {}),
                 # 导出结果层同样统一去重（保留首次顺序 + 次数）
-                "warnings": _dedupe_warnings(result.get("warnings", [])),
+                "warnings": _dedupe_warnings(
+                    list(result.get("warnings", []))
+                    + ([guard_msg] if guard_msg else [])),
+                "mapping_guard": guard,
+                "quality_gate": job.quality_report or {},
                 "bytes": out.stat().st_size,
             }
             with job.lock:
