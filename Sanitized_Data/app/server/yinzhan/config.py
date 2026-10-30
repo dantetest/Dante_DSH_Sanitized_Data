@@ -8,7 +8,7 @@ from . import paths
 
 APP_NAME = "数据隐站"
 APP_NAME_EN = paths.APP_NAME_EN
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 # W3 购买入口：静态页只跳公网，不 fetch。未配置时页面显示“入口待接入”，不伪造链接。
 PURCHASE_URL = (os.environ.get("YINZHAN_PURCHASE_URL") or "").strip()
 # 收费门禁总开关：默认开；测试构建/内部试用可关闭（不阻塞朋友测试）。

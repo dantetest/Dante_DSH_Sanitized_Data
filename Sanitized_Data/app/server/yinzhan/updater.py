@@ -242,11 +242,11 @@ class UpdateManager:
             exe = Path(sys.executable).resolve()
             helper = config.DATA_DIR / "updates" / "apply_update.ps1"
             helper.parent.mkdir(parents=True, exist_ok=True)
-            helper.write_text(_HELPER, encoding="utf-8")
+            helper.write_text(_HELPER, encoding="utf-8-sig")
             log = config.DATA_DIR / "updates" / "update.log"
             flags = 0
             if os.name == "nt":
-                flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED | NEW_GROUP | NO_WINDOW
+                flags = 0x00000200 | 0x08000000  # NEW_GROUP | NO_WINDOW (DETACHED_PROCESS breaks PowerShell helper)
             try:
                 subprocess.Popen(
                     ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -276,13 +276,13 @@ function Log([string]$Text) {
 try {
   Log "wait for app to exit pid=$TargetPid"
   Start-Sleep -Seconds 2
-  for ($i = 0; $i -lt 40; $i++) {
+  for ($i = 0; $i -lt 4; $i++) {
     if (-not (Get-Process -Id $TargetPid -ErrorAction SilentlyContinue)) { break }
     Start-Sleep -Milliseconds 500
   }
   try { Stop-Process -Id $TargetPid -Force -ErrorAction SilentlyContinue } catch {}
   Start-Sleep -Seconds 2
-  $tmp = Join-Path $env:TEMP ("sanitized_data_update_" + [guid]::NewGuid().ToString("N"))
+  $tmp = Join-Path (Split-Path -Parent $ZipPath) ("extract_" + [guid]::NewGuid().ToString("N"))
   Expand-Archive -LiteralPath $ZipPath -DestinationPath $tmp -Force
   $src = Join-Path $tmp "Sanitized_Data"
   if (-not (Test-Path (Join-Path $src "Sanitized_Data.exe"))) {
@@ -292,14 +292,24 @@ try {
   New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
   Copy-Item (Join-Path $src "*") $AppDir -Recurse -Force
   Log "start $ExePath"
-  Start-Process -FilePath $ExePath -WorkingDirectory $AppDir
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $ExePath
+  $psi.WorkingDirectory = $AppDir
+  $psi.UseShellExecute = $false
+  [System.Diagnostics.Process]::Start($psi) | Out-Null
   Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item $ZipPath -Force -ErrorAction SilentlyContinue
   Log "done"
 } catch {
   Log ("ERROR: " + $_.Exception.Message)
-  # 失败时至少尝试启动旧程序，用户不会“消失”
-  try { Start-Process -FilePath $ExePath -WorkingDirectory $AppDir } catch {}
+  # fallback: restart old app if copy failed
+  try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $ExePath
+    $psi.WorkingDirectory = $AppDir
+    $psi.UseShellExecute = $false
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
+  } catch {}
 }
 """
 
