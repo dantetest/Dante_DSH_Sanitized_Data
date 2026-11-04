@@ -1,4 +1,4 @@
-﻿# 数据隐站 · Windows 打包脚本
+# 数据隐站 · Windows 打包脚本
 #   powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 #
 # 产物：
@@ -46,6 +46,13 @@ if ($buildExit -ne 0) { throw 'PyInstaller 失败' }
 
 Write-Host "`n[4/6] 补 VC++ 运行库 DLL（免装 VC++ 也能跑）" -ForegroundColor Cyan
 $dist = Join-Path $Root 'dist\Sanitized_Data'
+# PyInstaller 6 的 datas 会落到 _internal；客户端只认安装根目录/数据目录，
+# 这里把默认商业服务地址再复制到根目录（部署后可用同目录文件覆盖）。
+$commercialConfig = Join-Path $PSScriptRoot 'commercial.json'
+if (Test-Path $commercialConfig) {
+    Copy-Item $commercialConfig (Join-Path $dist 'commercial.json') -Force
+    "  + commercial.json（默认商业服务地址）"
+}
 # DSH 检测插件（工具卡 + 右侧面板）随绿色版/安装包分发；用户用 dsh-plugin\install.ps1 安装。
 $pluginSrc = Join-Path $Root 'integrations\dsh-plugin-sanitize-detect'
 if (Test-Path $pluginSrc) {
