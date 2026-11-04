@@ -1,5 +1,8 @@
 # 陌生客户交付、试用与授权收费 SOP（v1.3.1）
 
+> **2026-11-02 更新**：ICP 已下证；正式收款（对公/平台/微信支付宝）与「试用→付费→发码→续费」
+> 的全流程、话术与验收清单见 [正式收款与发码SOP-ICP后-v1.0.md](正式收款与发码SOP-ICP后-v1.0.md)。
+
 - 日期：2026-10-29
 - 适用：把「数据隐站」以 Windows EXE（安装包/绿色版）和 MCP（`Sanitized_Data_MCP.exe` + DSH 插件）交付给陌生客户
 - 依据：`docs/impl/licensing.md`、`docs/impl/free-tier.md`、`docs/impl/mcp-monetization.md`、`docs/research/13-MCP服务定价与收费管理系统调研.md`、`docs/research/14-结果付费方案设计与对比.md`、`deploy/license_issue.py`
