@@ -74,6 +74,13 @@ class ProxyHostTest(unittest.TestCase):
             host="cka.blctek.com:8443", xfh="cka.blctek.com", xff="1.2.3.4",
             origin="https://evil.example"))
 
+    def test_null_origin_is_rejected(self):
+        # sandboxed iframe / file:// 页面会发 Origin: null；不能放行写接口。
+        self.assertFalse(_handler(host="127.0.0.1:8760", origin="null"))
+        self.assertFalse(_handler(
+            host="cka.blctek.com:8443", xfh="cka.blctek.com", xff="1.2.3.4",
+            origin="null"))
+
     def test_allowed_hosts_env_fallback(self):
         with patch.dict(os.environ, {"YINZHAN_ALLOWED_HOSTS": "cka.blctek.com"}, clear=False):
             self.assertTrue(_handler(host="cka.blctek.com", origin=None))

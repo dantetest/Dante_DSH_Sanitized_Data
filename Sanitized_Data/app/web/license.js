@@ -88,6 +88,35 @@
       buy.href = '/pricing';
       $('buyHint').textContent = '购买入口尚未配置；可先查看价格页，或联系交付顾问人工开通。';
     }
+    // L3 扫码升级：本机购买页内完成支付宝支付 → 自动导入授权。
+    // 商业服务未配置时购买页会显示兜底（官网链接 / 人工联系），入口仍然可用。
+    const commercial = String(s.commercial_url || '').trim().replace(/\/+$/, '');
+    const hasCommercial = /^https?:\/\//i.test(commercial);
+    const scan = $('scanBuyLink');
+    if (scan) scan.href = hasCommercial ? '/purchase?from=license' : '/purchase';
+    if ($('scanHint')) {
+      $('scanHint').textContent = hasCommercial
+        ? '支付宝扫码支付成功后自动导入授权，不需要手动复制；本机文件不会上传。'
+        : '扫码升级需要先配置商业服务入口；未配置时请在购买页使用官网链接或联系交付顾问。';
+    }
+
+    // 已授权用户不再展示购买/升级入口，避免续费卡片干扰。
+    const paid = !testMode && st === 'paid';
+    const grid = document.querySelector('.license-grid');
+    if (grid) grid.classList.toggle('paid', paid);
+    const upgrade = document.querySelector('.license-upgrade');
+    if (upgrade) upgrade.style.display = paid ? 'none' : '';
+    document.querySelectorAll('.topnav a, .footer a').forEach((a) => {
+      if ((a.textContent || '').trim() === '价格') a.style.display = paid ? 'none' : '';
+    });
+    const statusCard = document.querySelector('.license-status');
+    if (statusCard && paid && !statusCard.querySelector('.paid-no-buy-note')) {
+      const note = document.createElement('p');
+      note.className = 'hint paid-no-buy-note';
+      note.style.marginTop = '10px';
+      note.textContent = '已购买用户不再显示购买入口；如需换机或续费，请联系交付顾问。';
+      statusCard.appendChild(note);
+    }
   }
 
   async function load() {

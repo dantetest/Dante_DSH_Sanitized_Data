@@ -1,0 +1,16 @@
+# 商业服务本地数据/密钥/缓存（不要提交）
+var/
+*.db
+*.db-wal
+*.db-shm
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp/
+*.log
+out/

@@ -19,7 +19,7 @@ button{font:inherit;cursor:pointer}
 .brand{font-weight:700;letter-spacing:.2em}
 .brand small{display:block;font:400 10px/1.5 var(--font-mono);letter-spacing:.14em;color:var(--ink-3)}
 .spacer{flex:1}
-.topnav{display:flex;gap:16px;font-size:13px;color:var(--ink-2)}
+.topnav{display:flex;gap:18px;font-size:14.5px;color:var(--ink-2)}
 .topnav a{color:var(--ink-2)}
 .topnav a:hover{color:var(--seal)}
 .hero{padding:28px 0 18px}
@@ -71,3 +71,51 @@ textarea:focus{outline:2px solid var(--seal);outline-offset:1px}
 .footer{border-top:1px solid var(--rule);margin-top:26px;padding-top:14px;font-size:11px;color:var(--ink-3);display:flex;gap:14px;flex-wrap:wrap}
 .sealbig{width:44px;height:44px;border:2px solid var(--seal);color:var(--seal);display:grid;place-items:center;transform:rotate(-6deg);font:700 12px/1.1 var(--font-song);margin-bottom:10px}
 @media(max-width:760px){.grid{grid-template-columns:1fr}.topnav{display:none}.wrap{padding:18px 14px 48px}h1{font-size:24px}}
+
+/* ── 授权页重排：状态 + 升级并列，导入双栏，FAQ/事件并列 ── */
+.license-hero{padding:30px 0 22px;border-bottom:1px solid var(--rule);margin-bottom:22px}
+.license-hero h1{font-size:34px;letter-spacing:.06em}
+.license-grid{display:grid;grid-template-columns:minmax(0,1.14fr) minmax(300px,.86fr);gap:18px;align-items:stretch}
+.license-grid.paid{grid-template-columns:1fr}
+.license-grid > .card{height:100%;display:flex;flex-direction:column}
+.license-status .status-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 2px}
+.license-status .status-line .hint{margin:0}
+.license-status .msg{margin:0;min-height:0;font-size:11.5px}
+.license-status .msg.err{color:var(--seal)}
+.trial-row{margin-top:14px}
+.license-upgrade .license-plan{
+  border:1px solid var(--rule);background:var(--paper-hi);
+  padding:15px 16px 13px;margin:2px 0 14px;border-radius:3px;
+}
+.plan-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.plan-kicker{font:400 10px/1.6 var(--font-mono);letter-spacing:.14em;color:var(--ink-3)}
+.plan-stamp{
+  border:1.5px solid var(--seal);color:var(--seal);
+  padding:4px 7px;transform:rotate(-7deg);
+  font:700 10.5px/1.1 var(--font-song);letter-spacing:.08em;
+}
+.license-price{display:flex;align-items:baseline;gap:6px;margin:10px 0 2px}
+.license-price b{font:700 42px/1 var(--font-mono);letter-spacing:-.05em}
+.license-price span{font:400 11px/1 var(--font-mono);color:var(--ink-3)}
+.upgrade-actions{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 8px}
+.upgrade-actions .btn{flex:1 1 150px}
+.license-upgrade #buyHint,.license-upgrade #scanHint{font-size:10.5px;line-height:1.7;margin-top:2px}
+.upgrade-foot{margin-top:auto;padding-top:12px;border-top:1px dotted var(--rule);font-size:10.5px}
+.license-import{margin-top:18px}
+.import-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch;margin-top:8px}
+.import-grid .drop{display:flex;flex-direction:column;justify-content:center;min-height:132px}
+.paste-box{display:flex;flex-direction:column}
+.paste-box textarea{margin-top:0;flex:1;min-height:132px}
+.import-actions{margin-top:10px}
+.license-lower{margin-top:18px}
+.license-events .events{max-height:250px;flex:1}
+.license-events .hint{margin-bottom:4px}
+@media(max-width:900px){
+  .license-grid{grid-template-columns:1fr}
+  .import-grid{grid-template-columns:1fr}
+  .license-upgrade .license-plan{max-width:none}
+}
+@media(max-width:620px){
+  .license-hero h1{font-size:27px}
+  .license-price b{font-size:38px}
+}

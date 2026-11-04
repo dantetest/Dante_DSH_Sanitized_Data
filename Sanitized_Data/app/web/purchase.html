@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>扫码升级 · 数据隐站</title>
+<link rel="stylesheet" href="license.css">
+<link rel="stylesheet" href="purchase.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="topbar">
+  <a class="homelink" href="/">
+    <img src="/logo.svg" width="34" height="34" alt="" aria-hidden="true">
+    <span class="brand">数据隐站<small>PURCHASE</small></span>
+  </a>
+  <div class="spacer"></div>
+  <nav class="topnav" aria-label="导航">
+    <a href="/console">控制台</a>
+    <a href="/license">授权</a>
+    <a href="/pricing">价格</a>
+    <a href="/download">下载</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <div class="eyebrow">PURCHASE · 扫码升级</div>
+    <h1>支付宝扫码，自动解锁</h1>
+    <p class="lead">生成订单后打开支付宝收银台扫码支付；授权签发后自动导入本机，不需要手动复制授权码。
+      <span class="hint">只有订单信息（含本机识别码）会发送给商业服务；文件仍然只在本机处理，引擎不发起外呼。</span>
+    </p>
+  </div>
+
+  <section class="card" aria-label="当前授权状态">
+    <h2><span class="no">01</span>当前授权</h2>
+    <dl class="kv">
+      <dt>状态</dt><dd><span class="badge free" id="stateBadge">读取中…</span> <span id="stateText"></span></dd>
+      <dt>版本</dt><dd id="edition">—</dd>
+      <dt>到期</dt><dd id="expiresText">—</dd>
+      <dt>本机识别码</dt><dd><span class="mono" id="machineCode">—</span></dd>
+    </dl>
+    <p class="hint hidden" id="paidHint" style="margin-top:8px">当前已是授权版；如需续费或升级可直接下单，新授权会覆盖本机旧授权。</p>
+    <p class="hint hidden" id="paidNote" style="margin-top:8px">已购买用户不再显示购买入口；授权码已自动导入本机，无需重复购买。</p>
+    <div class="copyrow hidden" id="paidActions" style="margin-top:14px">
+      <a class="btn seal" href="/console">进入控制台</a>
+      <a class="btn ghost" href="/license">查看授权详情</a>
+    </div>
+    <div class="msg" id="statusMsg" role="status"></div>
+  </section>
+
+  <section class="card hidden" id="noCommercial" aria-label="购买入口未配置" style="margin-top:20px">
+    <h2><span class="no">02</span>购买入口尚未配置</h2>
+    <p>本机没有配置商业服务地址（环境变量 <code>YINZHAN_COMMERCIAL_URL</code>），暂时无法在本页直接下单。</p>
+    <div class="copyrow" style="margin-top:12px">
+      <a class="btn seal hidden" id="fallbackBuy" href="/pricing" target="_blank" rel="noopener">前往官网购买</a>
+      <a class="btn ghost" href="/pricing">查看价格</a>
+      <a class="btn ghost" href="/license">去授权页导入</a>
+    </div>
+    <p class="hint" id="fallbackHint" style="margin-top:10px">可联系交付顾问人工开通：把上方「本机识别码」发给顾问，收到授权文件后在授权页导入即可解锁。</p>
+    <div class="msg" id="fallbackMsg" role="status"></div>
+  </section>
+
+  <section class="card hidden" id="shopPanel" aria-label="选择版本并扫码支付" style="margin-top:20px">
+    <h2><span class="no">02</span>选择版本</h2>
+    <p class="hint" id="shopHint">价格以商业服务实时返回为准。点击「支付宝扫码」生成订单，再打开支付宝收银台扫码支付。</p>
+    <div class="sku-grid" id="skuList"><div class="loading">正在加载版本与价格…</div></div>
+    <div class="msg" id="catalogMsg" role="status"></div>
+    <div class="contact-card">
+      <div>
+        <b>团队版 / 机构版</b>
+        <div class="hint">按席位或内网私有化部署，需要人工开通。把「本机识别码」发给交付顾问即可。</div>
+      </div>
+      <a class="btn ghost" href="/pricing">查看价格</a>
+    </div>
+  </section>
+
+  <section class="card hidden" id="orderPanel" aria-label="支付宝扫码支付" style="margin-top:20px">
+    <h2><span class="no">03</span>支付宝扫码支付</h2>
+    <div class="order-grid">
+      <div class="qr-col">
+        <div class="qr-box" id="qrBox"><div class="qr-placeholder">订单生成后，点击下方按钮打开支付宝收银台</div></div>
+        <div class="hint" id="qrHint">支付宝收银台会显示二维码；扫码支付后本页自动查询并解锁。</div>
+        <a class="btn seal hidden" id="payUrlLink" href="/pricing" target="_blank" rel="noopener">打开支付宝收银台</a>
+      </div>
+      <div class="order-col">
+        <dl class="kv">
+          <dt>版本</dt><dd id="orderSku">—</dd>
+          <dt>金额</dt><dd id="orderAmount">—</dd>
+          <dt>订单号</dt><dd class="mono" id="orderNo">—</dd>
+          <dt>倒计时</dt><dd id="orderCountdown">—</dd>
+          <dt>状态</dt><dd id="orderStatus">—</dd>
+        </dl>
+        <div class="copyrow" style="margin-top:14px">
+          <button class="btn seal hidden" id="btnMockPay" type="button">演示：模拟支付</button>
+          <button class="btn ghost" id="btnCancelOrder" type="button">取消查询</button>
+          <button class="btn ghost hidden" id="btnResumePoll" type="button">继续查询</button>
+          <button class="btn hidden" id="btnRetryOrder" type="button">重新下单</button>
+        </div>
+        <div class="msg" id="orderMsg" role="status"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card hidden" id="successPanel" aria-label="解锁成功" style="margin-top:20px">
+    <h2><span class="no">04</span>已解锁</h2>
+    <p class="success-line" id="successLine">已解锁</p>
+    <dl class="kv">
+      <dt>版本</dt><dd id="successEdition">—</dd>
+      <dt>到期</dt><dd id="successExpires">—</dd>
+    </dl>
+    <div class="copyrow" style="margin-top:14px">
+      <a class="btn seal" href="/console">进入控制台</a>
+      <a class="btn ghost" href="/license">查看授权详情</a>
+    </div>
+  </section>
+
+  <section class="card hidden" id="manualPanel" aria-label="手动导入授权" style="margin-top:20px">
+    <h2><span class="no">05</span>手动导入（兜底）</h2>
+    <p class="hint">自动导入没有成功时，可复制授权码手动导入。授权文本只在本机校验，不会上传。</p>
+    <textarea id="manualText" placeholder="粘贴授权文本（license.json 内容）…" spellcheck="false" aria-label="授权文本"></textarea>
+    <div class="copyrow" style="margin-top:8px">
+      <button class="btn" id="btnManualImport" type="button">导入授权</button>
+      <button class="btn ghost" id="btnCopyLicense" type="button">复制授权码</button>
+      <span class="msg" id="manualMsg" role="status"></span>
+    </div>
+  </section>
+
+  <section class="card hidden" id="recentOrderPanel" aria-label="最近订单" style="margin-top:20px">
+    <h2><span class="no">06</span>最近订单 / 找回授权</h2>
+    <p class="hint">如果支付后没有自动解锁，可打开订单页查看并复制授权码，或把授权文件拖回「授权」页导入。查询令牌等同取货凭证，请勿转发给他人。</p>
+    <dl class="kv">
+      <dt>订单号</dt><dd class="mono" id="recentOrderNo">—</dd>
+      <dt>创建时间</dt><dd id="recentOrderTime">—</dd>
+    </dl>
+    <div class="copyrow" style="margin-top:12px">
+      <a class="btn seal" id="recentOrderLink" href="#" target="_blank" rel="noopener">查看订单 / 授权码</a>
+      <button class="btn ghost" id="btnCopyOrderLink" type="button">复制订单链接</button>
+      <button class="btn ghost" id="btnForgetOrder" type="button">清除本机记录</button>
+      <span class="msg" id="recentOrderMsg" role="status"></span>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <span>数据隐站 · 本机处理，不把文件上传到服务器</span>
+    <span>去标识化 ≠ 匿名化，不承诺合规结论</span>
+    <span><a href="/license">授权</a> · <a href="/pricing">价格</a> · <a href="/">首页</a></span>
+  </footer>
+</main>
+<script src="purchase.js"></script>
+</body>
+</html>

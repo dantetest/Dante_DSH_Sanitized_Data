@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>购买授权 · 数据隐站</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="page">
+  <header class="head">
+    <h1>数据隐站 · 购买授权<span id="mode-badge" class="badge mock hidden">演示模式</span></h1>
+    <p class="sub">扫码支付后自动签发授权码，授权绑定本机机器码。付款后本页会显示整行授权码，粘贴到软件「授权」页即可解锁。</p>
+  </header>
+
+  <section class="card">
+    <div class="field">
+      <label for="machine-code">本机机器码</label>
+      <input id="machine-code" type="text" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" maxlength="32">
+      <p class="hint">在软件「授权」页复制「本机识别码」（16 位，形如 <span class="mono">ZH39-7N5C-98CD-A8GB</span>）。授权只对这台电脑有效。</p>
+    </div>
+    <div class="field">
+      <label for="email">邮箱（可选，仅用于售后联系）</label>
+      <input id="email" type="email" placeholder="you@example.com" autocomplete="email" maxlength="200">
+    </div>
+  </section>
+
+  <h2>选择版本</h2>
+  <div id="sku-list" class="sku-list"><p class="muted">正在加载价格…</p></div>
+  <div id="contact-sales" class="notice info hidden"></div>
+  <div id="catalog-error" class="notice err hidden"></div>
+
+  <h2>支付方式</h2>
+  <div id="channel-list" class="channels"><p class="muted small">正在加载支付通道…</p></div>
+
+  <div class="btn-row">
+    <button id="submit-btn" class="btn" type="button" disabled>生成支付二维码</button>
+    <a class="btn ghost" href="/order.html">查询已有订单</a>
+  </div>
+  <div id="form-error" class="notice err hidden"></div>
+
+  <section id="pay-panel" class="panel hidden" aria-live="polite">
+    <div class="qr-wrap">
+      <div class="qr-box" id="qr-box"></div>
+      <div class="order-meta">
+        <div class="row"><span class="k">应付金额</span><span class="v amount" id="pay-amount">--</span></div>
+        <div class="row"><span class="k">订单号</span><span class="v mono" id="pay-order-no">--</span></div>
+        <div class="row"><span class="k">支付方式</span><span class="v" id="pay-channel">--</span></div>
+        <div class="row"><span class="k">剩余时间</span><span class="v" id="pay-countdown">--:--</span></div>
+        <p class="hint">请使用支付宝扫码支付；付款成功后本页会自动显示授权码，无需手动刷新。</p>
+        <div class="btn-row">
+          <button id="mock-pay-btn" class="btn ghost hidden" type="button">演示：模拟支付成功</button>
+          <a id="pay-url-link" class="btn ghost hidden" href="#" target="_blank" rel="noopener noreferrer">打开支付页</a>
+        </div>
+      </div>
+    </div>
+    <div id="pay-status" class="notice info">等待支付…</div>
+  </section>
+
+  <section id="done-panel" class="panel hidden" aria-live="polite">
+    <div class="notice ok">支付成功，授权已签发。请复制下面的整行授权码，粘贴到软件「授权」页；或下载 license.json 后拖入授权页。</div>
+    <div class="field">
+      <label for="license-text">授权码（一整行 JSON）</label>
+      <textarea id="license-text" readonly spellcheck="false"></textarea>
+    </div>
+    <div class="btn-row">
+      <button id="copy-license" class="btn" type="button">复制授权码</button>
+      <button id="download-license" class="btn ghost" type="button">下载 license.json</button>
+      <a class="btn ghost" href="/buy.html">再买一份</a>
+    </div>
+    <h2>如何解锁</h2>
+    <ol class="steps">
+      <li>打开数据隐站桌面版，进入「授权」页；</li>
+      <li>把整行授权码粘贴到输入框，点「导入授权」；</li>
+      <li>状态显示「已授权」即解锁成功。</li>
+    </ol>
+    <p class="hint">如果在软件内购买了授权，页面会自动导入；本页用于手动兜底。</p>
+  </section>
+
+  <footer class="foot">
+    <p>虚拟商品说明：本商品为软件授权（数字商品），付款后即时自动签发授权文件，不支持无理由退款。如支付后未收到授权，请保留订单号联系客服。</p>
+    <p>授权绑定本机机器码，换机请联系客服处理。数据隐站的文件处理全部在本机完成，不上传您的文件。</p>
+    <p>运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 增值电信业务经营许可证：川B2-20261782</p>
+  </footer>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/buy.js"></script>
+</body>
+</html>

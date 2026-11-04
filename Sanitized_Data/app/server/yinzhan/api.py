@@ -18,8 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import audit, logging_setup, quota, registry, restore as restore_mod, updater, vault
-from .config import (BUILD_CHANNEL, BUILD_ID, DATA_DIR, MAX_UPLOAD, PAYWALL_ENABLED,
-                     PURCHASE_URL, UPLOAD_DIR, VERSION, WEB_DIR)
+from .config import (BUILD_CHANNEL, BUILD_ID, COMMERCIAL_URL, DATA_DIR, MAX_UPLOAD,
+                     PAYWALL_ENABLED, PURCHASE_URL, UPLOAD_DIR, VERSION, WEB_DIR)
 from .jobs import MANAGER
 from .licensing import LicenseError
 from .ocr import get_ocr
@@ -360,6 +360,8 @@ def license_status(ctx):
         data["quota"] = LICENSE.quota_status()
         data["quota"]["enforced"] = quota.is_enforced()
         data["purchase_url"] = PURCHASE_URL
+        # L3 扫码升级：商业服务基址（浏览器购买页跨域访问）；空串表示未配置。
+        data["commercial_url"] = COMMERCIAL_URL
         data["pricing_url"] = "/pricing"
         data["paywall_enabled"] = PAYWALL_ENABLED
         data["build_channel"] = BUILD_CHANNEL
@@ -451,6 +453,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         self.send_header("Cache-Control", "no-store")
         if filename:
             quoted = urllib.parse.quote(filename)
@@ -541,7 +546,9 @@ class Handler(BaseHTTPRequestHandler):
             return True                     # 非浏览器（curl / MCP / 本地脚本）
         origin_host = _host_only(origin)
         if not origin_host or origin_host == "null":
-            return True
+            # Origin: null 来自 sandboxed iframe / file:// 页面，不能当成本地脚本；
+            # 拒绝它，避免跨站写接口（upload/jobs/export/update）被盲打。
+            return False
         candidates = []
         for key in ("X-Forwarded-Host", "Host", "X-Real-Host", "X-Forwarded-Server"):
             raw = self.headers.get(key)
@@ -593,6 +600,9 @@ class Handler(BaseHTTPRequestHandler):
         "license/": "license.html",
         "pricing": "pricing.html",
         "pricing/": "pricing.html",
+        # L3 扫码升级页：同源静态页，用户主动操作时才跨域访问商业服务
+        "purchase": "purchase.html",
+        "purchase/": "purchase.html",
         "restore": "restore.html",
         "restore/": "restore.html",
     }

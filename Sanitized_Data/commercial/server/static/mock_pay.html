@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>模拟支付（演示） · 数据隐站</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="page">
+  <header class="head">
+    <h1>模拟支付（演示）</h1>
+    <p class="sub">本页面仅用于本地演示与验收，点击按钮会直接把订单标记为已支付并签发授权，<strong>不会产生真实扣款</strong>。</p>
+  </header>
+
+  <section id="summary-panel" class="panel">
+    <div class="notice warn">演示模式：真实支付宝通道不会跳转到此页面。生产环境请将 <span class="mono">PAYMENT_PROVIDER=alipay</span> 并把 <span class="mono">PAYMENT_MOCK_ENABLED</span> 设为 false。</div>
+    <div class="order-meta">
+      <div class="row"><span class="k">订单号</span><span class="v mono" id="order-no">--</span></div>
+      <div class="row"><span class="k">应付金额</span><span class="v amount" id="pay-amount">--</span></div>
+      <div class="row"><span class="k">订单状态</span><span class="v" id="order-status">--</span></div>
+    </div>
+    <div class="btn-row">
+      <button id="mock-pay-btn" class="btn" type="button" disabled>模拟支付成功</button>
+      <a id="back-order" class="btn ghost" href="/order.html">返回订单页</a>
+    </div>
+    <div id="pay-notice" class="notice info hidden"></div>
+  </section>
+
+  <section id="done-panel" class="panel hidden" aria-live="polite">
+    <div class="notice ok">模拟支付成功，授权已签发。复制整行授权码到软件「授权」页即可解锁。</div>
+    <div class="field">
+      <label for="license-text">授权码（一整行 JSON）</label>
+      <textarea id="license-text" readonly spellcheck="false"></textarea>
+    </div>
+    <div class="btn-row">
+      <button id="copy-license" class="btn" type="button">复制授权码</button>
+      <button id="download-license" class="btn ghost" type="button">下载 license.json</button>
+      <a id="back-order-done" class="btn ghost" href="/order.html">返回订单页</a>
+    </div>
+  </section>
+
+  <div id="page-error" class="notice err hidden"></div>
+
+  <footer class="foot">
+    <p>演示页面：仅 PAYMENT_PROVIDER=mock 时可用；切换真实支付后 /api/mock/pay 会返回 403。</p>
+  </footer>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/mock_pay.js"></script>
+</body>
+</html>

@@ -610,36 +610,46 @@ def propagate_values(doc: Document, entities: list[Entity],
     完整值匹配不到时退一步用前缀匹配 —— 只对足够长的值这么做，避免误伤。
     """
     blocks = [(b.id, b.text) for page in doc.pages for b in page.blocks
-              if b.kind == "text" and b.text]
+              if b.text]
     added = 0
     for e in entities:
-        # 人名只有两三个字，但也得扩散（同一个名字在正文里还会出现），
-        # 只是不允许前缀匹配，免得「张伟」把「张伟明」也吃掉。
-        floor = 2 if e.etype == "PERSON" else min_len
+        # 人名/机构/金额短值也要扩散：P01 实测 5 字机构名只补了原始 span，
+        # 页眉/表格里另外 2 处原文残留，verify 会把整份成品拦下。
+        # 这类短值全部按精确值扩散；宁可多涂，也不能留原文。
+        floor = 2 if e.etype in ("PERSON", "ORG", "AMOUNT") else min_len
         if e.status == "rejected" or not e.value or len(e.value) < floor:
             continue
         covered = {(s.block_id, s.start, s.end) for s in e.spans if s.block_id}
         for bid, text in blocks:
-            pos, match_len = -1, 0
-            p = text.find(e.value)
-            if p >= 0:
-                pos, match_len = p, len(e.value)
-            elif len(e.value) >= min_prefix:
+            # 同一块内可能多次出现同名联系人/公司；逐个补 span，不能只补第一次。
+            offset = 0
+            block_found = False
+            while True:
+                pos = text.find(e.value, offset)
+                if pos < 0:
+                    break
+                block_found = True
+                match_len = len(e.value)
+                key = (bid, pos, pos + match_len)
+                if key not in covered:
+                    # 精确值出现即覆盖：即使与其它实体 span 相交也补上，
+                    # 由导出侧合并/涂黑处理；相交就不补会留下原文残留。
+                    e.spans.append(Span(block_id=bid, start=pos, end=pos + match_len))
+                    covered.add(key)
+                    added += 1
+                offset = pos + max(1, match_len)
+            # 长值保留原有「前缀命中」逻辑，兼容 OCR 把公司名切碎的块。
+            if not block_found and len(e.value) >= min_prefix:
                 for length in range(len(e.value) - 1, min_prefix - 1, -1):
                     q = text.find(e.value[:length])
-                    if q >= 0:
-                        pos, match_len = q, length
-                        break
-            if pos < 0:
-                continue
-            key = (bid, pos, pos + match_len)
-            if key in covered:
-                continue
-            if _span_taken(entities, bid, pos, pos + match_len, exclude=e.id):
-                continue
-            e.spans.append(Span(block_id=bid, start=pos, end=pos + match_len))
-            covered.add(key)
-            added += 1
+                    if q < 0:
+                        continue
+                    key = (bid, q, q + length)
+                    if key not in covered:
+                        e.spans.append(Span(block_id=bid, start=q, end=q + length))
+                        covered.add(key)
+                        added += 1
+                    break
     return added
 
 
@@ -1199,6 +1209,16 @@ def _safe_replacement_spans(text: str,
     return spans
 
 
+_ZERO_AMOUNT_RE = re.compile(r"^[¥￥]?\s*[0０]+(?:[.．][0０]+)?\s*元?$")
+
+# 这些是机构类型词，不是可识别特定主体的机构名；假值常保留同类后缀，
+# 不能因此把整份文件判成原文残留（P04 年报实测）。
+_GENERIC_ORG_VALUES = {
+    "会计事务所", "计师事务所", "会计师事务所", "律师事务所", "评审委员会",
+    "人民法院", "人民检察院", "有限公司", "股份有限公司",
+}
+
+
 def _is_numeric_fragment(text: str, pos: int, end: int, needle: str) -> bool:
     """命中是否是更长数字/金额 token 的一部分（避免「5万元」命中「25万元」这类假阳性）。
 
@@ -1266,6 +1286,12 @@ def verify(exported: Path, entities: list[Entity], parser: registry.Parser,
             continue
         checked += 1
         needle = e.value.strip()
+        # 零金额（0 元/0.00 元）不是可识别个人信息；金额假值里保留「0元」
+        # 片段会导致长文档误拦。真实非零金额仍严格拦截。
+        if e.etype == "AMOUNT" and _ZERO_AMOUNT_RE.match(needle):
+            continue
+        if e.etype == "ORG" and needle in _GENERIC_ORG_VALUES:
+            continue
         # 单字没法验（「方」在「甲方」里到处都是），只检查两个字符以上的值
         if len(needle) < 2:
             continue

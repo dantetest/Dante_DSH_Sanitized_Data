@@ -40,6 +40,8 @@ if str(APP / "server") not in sys.path:
 datas = [
     (str(APP / "web"), "web"),                                   # 前端
     (str(APP / "server" / "yinzhan" / "rules"), "yinzhan/rules"),  # 规则包
+    # L3：安装包内置默认商业服务地址（部署后可被同目录 commercial.json 覆盖）
+    (str(ROOT / "desktop" / "commercial.json"), "."),
     # YuNet 人脸检测模型（232KB，OpenCV Zoo MIT；随包离线推理）
     (str(APP / "server" / "yinzhan" / "models"), "yinzhan/models"),
     # W1 license 公钥注册表（只有公钥；私钥不进包）

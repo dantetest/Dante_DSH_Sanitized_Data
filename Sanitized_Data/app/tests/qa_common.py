@@ -744,6 +744,11 @@ OUTBOUND_PATTERNS = [
     (r"urlopen\s*\(", "urlopen("),
     (r"socket\.create_connection\s*\(", "socket.create_connection("),
 ]
+# 用户显式点击「检查更新/下载更新」才联网的模块，不属于文件处理引擎路径。
+# 其它任何 yinzhan 源码出现外呼仍按红线失败；这里只登记 updater.py。
+USER_INITIATED_NETWORK_FILES = {
+    (SERVER / "yinzhan" / "updater.py").resolve(),
+}
 SOCKET_CONNECT_RE = re.compile(r"\.connect\s*\(")
 SQLITE_RE = re.compile(r"sqlite|sqlite3|DB_PATH")
 CALL_CONTEXT_RE = re.compile(
@@ -772,18 +777,20 @@ def capture_security_scan() -> dict:
         except Exception:
             continue
         rel = str(p.relative_to(REPO))
+        user_network = p.resolve() in USER_INITIATED_NETWORK_FILES
         for lineno, line in enumerate(text.splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
-            for pat, label in OUTBOUND_PATTERNS:
-                if re.search(pat, line) and not LOOPBACK_RE.search(line):
-                    hits.append({"file": rel, "line": lineno, "pattern": label,
+            if not user_network:
+                for pat, label in OUTBOUND_PATTERNS:
+                    if re.search(pat, line) and not LOOPBACK_RE.search(line):
+                        hits.append({"file": rel, "line": lineno, "pattern": label,
+                                     "text": stripped[:120]})
+                if (SOCKET_CONNECT_RE.search(line) and "socket" in line.lower()
+                        and not SQLITE_RE.search(line) and not LOOPBACK_RE.search(line)):
+                    hits.append({"file": rel, "line": lineno, "pattern": ".connect(",
                                  "text": stripped[:120]})
-            if (SOCKET_CONNECT_RE.search(line) and "socket" in line.lower()
-                    and not SQLITE_RE.search(line) and not LOOPBACK_RE.search(line)):
-                hits.append({"file": rel, "line": lineno, "pattern": ".connect(",
-                             "text": stripped[:120]})
             if "webbrowser.open" in line:
                 browser_launch.append({"file": rel, "line": lineno,
                                        "text": stripped[:120]})
@@ -841,6 +848,8 @@ def capture_security_scan() -> dict:
     return {
         "outbound_hits": hits,
         "outbound_ok": not hits,
+        "outbound_allowlisted": [str(p.relative_to(REPO))
+                                 for p in sorted(USER_INITIATED_NETWORK_FILES)],
         "external_url_literals": url_literals,
         "external_urls_called": urls_called,
         "external_urls_ok": not urls_called,

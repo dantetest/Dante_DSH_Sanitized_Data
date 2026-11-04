@@ -24,89 +24,70 @@
 </header>
 
 <main class="wrap">
-  <div class="hero">
+  <div class="hero pricing-hero">
     <div class="eyebrow">PRICING · 价格</div>
-    <h1>多少钱，换文件放心出门</h1>
-    <p class="lead">免费版 3 份/天；个人版 ¥199/年（首发早鸟 ¥99/年）。<span class="hint">本地页为参考价，以官网为准；不加载外部资源。</span></p>
+    <h1>一份授权，换一年的安心</h1>
+    <p class="lead">个人版 ¥199/年，含税，1 台设备 · 1 年更新。<span class="hint">本地页为参考价，以官网为准；不加载外部资源。</span></p>
   </div>
 
-  <div class="pricing-grid">
-    <article class="price-card">
-      <h2>免费版</h2>
-      <div class="price"><b>¥0</b><span>/ 永久</span></div>
-      <p class="position">先试试，不花钱。</p>
-      <ul>
-        <li>每天 3 份</li>
-        <li>单份 ≤20 页</li>
-        <li>扫描件 ≤10 页/份</li>
-        <li>通用规则包</li>
-        <li>双出口 + 出口自检</li>
+  <section class="pricing-layout" aria-label="个人版价格">
+    <div class="price-intro">
+      <div class="eyebrow">PERSONAL · 个人版</div>
+      <h2>自己用，够用就好</h2>
+      <p class="intro-copy">不限份数、不限页数；合同、病历、对账单、证件、聊天截图都能在本机处理。文件不出电脑，结果自己校对。</p>
+      <ul class="benefit-list">
+        <li><b>不限份数 / 页数</b><span>想处理多少份就多少份，不按次计费。</span></li>
+        <li><b>全部行业规则包</b><span>法律、医疗、金融、个人信息、表格、外贸、地理等。</span></li>
+        <li><b>扫描件 OCR</b><span>扫描页、截图、照片里的字也能识别后处理。</span></li>
+        <li><b>TIF / 三维格式</b><span>正射影像、倾斜摄影等专业格式的有限清理。</span></li>
+        <li><b>1 台设备 · 1 年更新</b><span>授权绑定设备，离线导入；一年内免费更新。</span></li>
       </ul>
-      <a class="btn ghost" href="/download">免费下载</a>
-    </article>
+      <p class="hint">免费版每天 3 份、单份 20 页，可先下载试用；付费只保留个人版这一档。</p>
+    </div>
 
-    <article class="price-card featured">
-      <div class="stamp">推荐</div>
-      <h2>个人版</h2>
-      <div class="price"><b>¥199</b><span>/ 年</span></div>
-      <p class="early">首发早鸟 ¥99/年（限量 1,000 份）</p>
-      <p class="position">一个人，一年，文件随便发。</p>
-      <ul>
+    <aside class="plan-card" aria-label="个人版购买">
+      <div class="plan-top">
+        <span class="plan-kicker">PERSONAL · 个人版</span>
+        <span class="plan-stamp">推荐</span>
+      </div>
+      <div class="plan-price"><b>¥199</b><span>/ 年</span></div>
+      <p class="plan-sub">含税 · 1 台设备 · 1 年更新</p>
+      <ul class="plan-features">
         <li>不限份数 / 页数</li>
         <li>扫描件 OCR 不限页</li>
         <li>全部行业规则包</li>
         <li>TIF / 三维格式</li>
-        <li>1 台设备 · 1 年更新</li>
+        <li>双出口 + 出口自检</li>
+        <li>授权离线导入，无需账号</li>
       </ul>
       <a class="btn seal buy" data-sku="personal" href="/license">立即购买 / 授权</a>
-    </article>
-
-    <article class="price-card">
-      <h2>专业版</h2>
-      <div class="price"><b>¥499</b><span>/ 年</span></div>
-      <p class="early">早鸟 ¥299/年</p>
-      <p class="position">高频使用，要接 Agent。</p>
-      <ul>
-        <li>个人版全部</li>
-        <li>MCP 接入</li>
-        <li>批量处理（P1）</li>
-        <li>审计 / 复检报告导出（P1）</li>
-        <li>2 台设备</li>
-      </ul>
-      <a class="btn buy" data-sku="pro" href="/license">立即购买 / 授权</a>
-    </article>
-
-    <article class="price-card">
-      <h2>团队版</h2>
-      <div class="price"><b>¥1,999</b><span>/ 年 / 5 席</span></div>
-      <p class="early">3 席 ¥1,299 · 10 席 ¥3,499</p>
-      <p class="position">一个小团队，一起用。</p>
-      <ul>
-        <li>专业版全部 × 席位</li>
-        <li>团队管理台（P1）</li>
-        <li>共享规则包</li>
-        <li>发票 · 专属群</li>
-      </ul>
-      <a class="btn buy" data-sku="team" href="/license">购买团队版</a>
-    </article>
-  </div>
-
-  <section class="org" id="org">
-    <div>
-      <div class="eyebrow">ORG · 机构版</div>
-      <h2>内网部署，按机构交付</h2>
-      <p>内网私有化部署、50 席起、定制规则包、审计对接、SLA 与升级服务。¥3.88 万/年起（100 席 ¥5.88 万）。</p>
-    </div>
-    <a class="btn ghost" href="/license">先留机器码 / 联系交付</a>
+      <p class="hint plan-foot" id="buyNote">购买入口尚未配置；可先在授权页导入已有授权，或联系交付顾问人工开通。价格与活动以官网为准。</p>
+    </aside>
   </section>
 
-  <p class="buy-note" id="buyNote">购买入口尚未配置；可先在授权页导入已有授权，或联系交付顾问人工开通。价格与活动以官网为准。</p>
+  <section class="steps-row" aria-label="购买流程">
+    <article class="step">
+      <span class="step-no">01</span>
+      <h3>下载试用</h3>
+      <p>先装 Windows 版，用免费版或 14 天试用确认效果；购买不需要重装。</p>
+    </article>
+    <article class="step">
+      <span class="step-no">02</span>
+      <h3>购买授权</h3>
+      <p>在授权页点「查看价格 / 购买」，或直接使用支付宝扫码购买。</p>
+    </article>
+    <article class="step">
+      <span class="step-no">03</span>
+      <h3>导入解锁</h3>
+      <p>把授权码粘贴到「授权」页，显示「已授权」即解锁；建议备份授权。</p>
+    </article>
+  </section>
 
-  <section class="card" style="margin-top:20px">
+  <section class="card pricing-faq">
     <h2><span class="no">FAQ</span>常见问题</h2>
     <div class="faq">
       <details open><summary>免费版有什么限制？</summary><p>每天 3 份、单份最多 20 页、扫描件最多识别 10 页；可用 PDF / Word / Excel / 图片 / 文本和通用规则包。换名、涂黑、对照台、出口自检都能用，预览与成品都不加水印。</p></details>
-      <details><summary>授权绑定设备吗？换电脑怎么办？</summary><p>一台设备一个授权（专业版 2 台，团队版按席位）。换电脑联系我们重签，12 个月内首次免费，之后 ¥50/次。</p></details>
+      <details><summary>授权绑定设备吗？换电脑怎么办？</summary><p>一台设备一个授权。换电脑联系我们重签，12 个月内首次免费，之后 ¥50/次。</p></details>
       <details><summary>文件会上传到你们服务器吗？</summary><p>不会。产品只监听本机 127.0.0.1，引擎不发起任何外呼；购买只涉及订单信息，不涉及文件。</p></details>
       <details><summary>可以开发票吗？</summary><p>支持电子普通发票和增值税专用发票，具体以购买时填写的信息为准。</p></details>
       <details><summary>买完能退款吗？</summary><p>未绑定设备/未生成授权文件 7 天内可无理由退款；已生成/已激活授权作为数字化商品不支持无理由退款。购买前建议先用免费版或 14 天试用验证。</p></details>
@@ -117,6 +98,9 @@
     <span>数据隐站 · 本机处理，不把文件上传到服务器</span>
     <span>去标识化 ≠ 匿名化，不承诺合规结论</span>
     <span><a href="/license">授权</a> · <a href="/download">下载</a> · <a href="/">首页</a></span>
+    <span style="flex-basis:100%;margin-top:4px;padding-top:8px;border-top:1px solid var(--rule);font:400 11px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.06em">
+      运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 增值电信业务经营许可证：川B2-20261782
+    </span>
   </footer>
 </main>
 <script src="pricing.js"></script>

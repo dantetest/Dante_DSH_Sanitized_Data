@@ -63,6 +63,7 @@ chmod +x start.sh && ./start.sh
 | `/restore` | 回件还原 | 大模型交回的文件 → 本机换回真值（报告含真值，勿回传云端） |
 | `/download` | 下载 | Windows 桌面安装包 / 绿色版、校验值、部署说明（源码包已下架） |
 | `/mcp` | MCP 接入 | 让 Claude Desktop / Cursor 等 Agent 自动脱敏 |
+| `/purchase` | 扫码升级 | L3：支付宝扫码 → 支付回调 → 自动导入授权并解锁（需配置商业服务；引擎仍零外呼） |
 
 左上角的印章和「数据隐站」是回到首页的链接，控制台顶栏也有「首页 / 下载 / MCP 接入」导航。
 
@@ -74,6 +75,33 @@ chmod +x start.sh && ./start.sh
 PORT=9000 ./start.sh                  # 指定端口
 BIND_HOST=0.0.0.0 ./start.sh          # 也可用环境变量
 ```
+
+---
+
+## L3 扫码付费解锁（商业服务）
+
+产品内 `授权` / `价格` 页的「扫码升级」进入本机 `/purchase`：显示支付宝二维码 → 用户手机扫码支付 → 商业服务收到异步通知并自动签发 Ed25519 授权 → 本机页面轮询到已支付后**自动导入并解锁**。文件处理引擎仍零外呼；只有购买页在用户主动点击时访问商业服务。
+
+```powershell
+# 1) 本地演示（mock 支付，不需要真实支付宝）
+cd Sanitized_Data
+powershell -ExecutionPolicy Bypass -File commercial\scripts\demo_up.ps1
+# 自动打开 http://127.0.0.1:8799/purchase → 点「演示：模拟支付」→ 显示已解锁
+
+# 2) 商业服务单独启动（生产：--provider alipay + commercial/.env 填商户密钥）
+python commercial\scripts\run_dev.py --provider mock
+# 商业站：http://127.0.0.1:8787/buy.html
+
+# 3) 端到端验收（23 检查点）
+python -X utf8 commercial\scripts\e2e_demo.py
+```
+
+- 本机怎么找到商业服务：环境变量 `YINZHAN_COMMERCIAL_URL`，或安装目录/数据目录 `commercial.json`（`{"commercial_url":"https://buy.example.com"}`）；不用重新打包。
+- 商业服务部署/配置：[commercial/README.md](commercial/README.md)
+- 支付宝申请/密钥/沙箱/真实 0.01 元验收：[commercial/docs/alipay-setup.md](commercial/docs/alipay-setup.md)
+- 测试与验收记录：[commercial/QA.md](commercial/QA.md)、总控：[docs/plans/09-正式上线总控-ICP后-2026-11-02.md](docs/plans/09-正式上线总控-ICP后-2026-11-02.md)
+
+> 真实收款前必须：支付宝商户号/APPID/应用私钥/支付宝公钥、公网 HTTPS `notify_url`、协议三件套；先按 alipay-setup §6 用 0.01 元实测再切 `PAYMENT_PROVIDER=alipay`。
 
 ---
 

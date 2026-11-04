@@ -603,10 +603,10 @@ main{flex:1; min-height:0; position:relative;}
 .homelink:hover{background:rgba(178,58,46,.07)}
 .homelink:hover .brand{color:var(--seal)}
 .homelink:hover .brandmark{transform:scale(1.05)}
-.topnav{display:flex; gap:2px; margin-right:6px}
+.topnav{display:flex; gap:4px; margin-right:6px}
 .topnav a{
-  font:400 11px/1 var(--font-mono); letter-spacing:.1em; color:var(--ink-3);
-  padding:8px 10px; border-radius:2px; text-decoration:none; transition:.16s;
+  font:400 14px/1 var(--font-mono); letter-spacing:.1em; color:var(--ink-2);
+  padding:9px 12px; border-radius:2px; text-decoration:none; transition:.16s;
 }
 .topnav a:hover{background:rgba(178,58,46,.08); color:var(--seal)}
 @media (max-width:820px){ .topnav{display:none} }
