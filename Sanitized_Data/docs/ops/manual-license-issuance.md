@@ -1,5 +1,8 @@
 # W4a 人工签发与购买入口 A（操作手册）
 
+> **2026-11-04 密钥轮换**：新签发使用 `prod-2026b`；旧 `prod-2026` 公钥继续保留，仅用于旧授权验签。
+> 新私钥/新口令部署见 [生产License密钥部署手册](生产License密钥部署手册.md)。
+
 > **2026-11-02 更新**：ICP 已下证；「正式收款 + 试用→付费→发码」全流程见
 > [正式收款与发码SOP-ICP后-v1.0.md](正式收款与发码SOP-ICP后-v1.0.md)（含一键发码脚本 `deploy/issue_order.py`）。
 > 本文保留为密钥仪式/签发命令的底层参考。
@@ -23,7 +26,7 @@
 ### 0.2 生成密钥（交互输入口令，不进命令历史）
 
 ```powershell
-python deploy/license_keygen.py --key-id prod-2026
+python deploy/license_keygen.py --key-id prod-2026b
 ```
 
 它会提示：
@@ -74,12 +77,12 @@ icacls $keydir /grant:r "$env:USERNAME:(OI)(CI)F"
 # 1) 把备份的 3 个文件复制到一个临时目录
 $restore = "$env:TEMP\license-key-restore"
 New-Item -ItemType Directory -Force $restore | Out-Null
-Copy-Item "E:\SanitizedDataKeys\prod-2026\*" $restore
+Copy-Item "E:\SanitizedDataKeys\prod-2026b\*" $restore
 
 # 2) 用恢复出来的私钥签一张测试 license
 python deploy/license_issue.py `
   --private-key "$restore\license_signing_ed25519.pem" `
-  --key-id prod-2026 --sku personal `
+  --key-id prod-2026b --sku personal `
   --machine-code K7Q2-9WXM-4TRB-EFGH `
   --order-id ord_restore_drill `
   --out "$restore\drill-license.json"
@@ -95,7 +98,7 @@ Get-Content "$restore\key_info.txt"
 1. 把 `public_keys.json` 内容合并到
    `app/server/yinzhan/licensing/public_keys.json`（只放公钥）；
 2. 重新构建 v1.3.0 正式包；
-3. 用测试 license 验证导入，再用 `prod-2026` 签第一张真实 license；
+3. 用测试 license 验证导入，再用 `prod-2026b` 签第一张真实 license；
 4. 把 `key_info.txt` 的指纹记录到运营台账。
 
 ### 0.6 丢失/泄露预案
@@ -145,7 +148,7 @@ YINZHAN_PURCHASE_URL=https://你的购买页地址
 # 运行后会提示“私钥口令（不会回显）”，输入即可；口令不进入命令历史
 python deploy/license_issue.py `
   --private-key "$env:USERPROFILE\.sanitized-data-license-keys\license_signing_ed25519.pem" `
-  --key-id prod-2026 `
+  --key-id prod-2026b `
   --sku personal `
   --machine-code K7Q2-9WXM-4TRB-EFGH `
   --order-id ord_20261025_0001 `
@@ -158,7 +161,7 @@ python deploy/license_issue.py `
 ```powershell
 python deploy/license_issue.py `
   --private-key "$env:USERPROFILE\.sanitized-data-license-keys\license_signing_ed25519.pem" `
-  --key-id prod-2026 --sku pro `
+  --key-id prod-2026b --sku pro `
   --machine-code K7Q2-9WXM-4TRB-EFGH `
   --machine-code P8R3-1ABC-2DEF-3GHJ `
   --order-id ord_20261025_0002 `
@@ -170,7 +173,7 @@ python deploy/license_issue.py `
 ```powershell
 python deploy/license_issue.py `
   --private-key "$env:USERPROFILE\.sanitized-data-license-keys\license_signing_ed25519.pem" `
-  --key-id prod-2026 --sku team --seats 5 --team-id team_acme_001 `
+  --key-id prod-2026b --sku team --seats 5 --team-id team_acme_001 `
   --machine-code AAAA-BBBB-CCCC-DDDD `
   --machine-code EEEE-FFFF-GGGG-HHHH `
   --machine-code JJJJ-KKKK-LLLL-MMMM `
@@ -217,3 +220,4 @@ python deploy/license_issue.py ... --expires-at 2027-12-31T23:59:59+08:00 --out 
 - 购买页自动绑定/下载 license
 
 这些等 ICP/商户号/公网购买服务到位后再做；当前人工闭环可以先收对公/早鸟。
+

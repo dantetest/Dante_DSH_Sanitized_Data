@@ -1,8 +1,14 @@
-# 数据隐站 · 生产 License 密钥部署手册
+# 数据隐站 · 生产 License 密钥部署手册（prod-2026b）
 
 > 适用：把**生产授权签名密钥**从本机交接给服务器部署同事，并配置商业服务签发真实 License。
 > 目标服务器：`sd.blctek.com:8443` 背后的商业服务（只监听 `127.0.0.1:8787`）。
 > 安全等级：**生产密钥，仅限授权运维人员操作；口令与私钥分开保管、分开传递。**
+>
+> **2026-11-04 已完成 key rotation：**
+> - 新签发使用 **`prod-2026b`**（本手册默认）；
+> - 旧 `prod-2026` 公钥继续保留，**旧授权仍可正常验证**；
+> - 不要把旧 `prod-2026` 私钥用于新签发；
+> - 新私钥、新口令、备份位置见 §2。
 
 ---
 
@@ -15,7 +21,7 @@
 - 私钥文件是**用口令加密**的；
 - 服务器上的 `LICENSE_KEY_PASSWORD` 必须等于**当初生成私钥时设置的那个口令**；
 - 服务器重新生成一个新口令，无法解开这把私钥；
-- 生产服务器也不需要重新生成密钥，只需要**使用同一把** `prod-2026` 私钥。
+- 生产服务器也不需要重新生成密钥，只需要**使用同一把** `prod-2026b` 私钥。
 
 正确交接内容：
 
@@ -33,23 +39,31 @@
 
 ## 2. 本机现有生产密钥
 
-本机路径（Windows）：
+本机路径（Windows，密钥轮换后）：
 
 ```text
 C:\Users\Dante\.sanitized-data-license-keys\
-  license_signing_ed25519.pem   ← 加密生产私钥
-  public_keys.json              ← 公钥（已内置客户端）
-  key_info.txt                  ← 指纹/创建时间
+  prod-2026b\license_signing_ed25519.pem   ← 新加密生产私钥
+  prod-2026b\public_keys.json              ← 新公钥片段
+  prod-2026b\key_info.txt                  ← key_id / 指纹
+  prod-2026b-PASSWORD.txt                  ← 新口令（仅本机 600，转存密码管理器后删除）
+  license_signing_ed25519.pem              ← 旧 prod-2026 私钥（保留，仅用于旧授权/应急）
+  public_keys.json                         ← 旧公钥（客户端仍保留）
 ```
 
 核对信息：
 
 ```text
-key_id=prod-2026
-public_sha256=654C7BF4FB68844B4DAFCEFD6CD9C29C6104606A4414AD764E1A1A0ED88DE732
+key_id=prod-2026b
+public_sha256=5AF45CB58A885ECF1F2A40DC744211A2EB35447D14C5B30CAAB97E7D2EEF0872
 ```
 
-客户端内置公钥（`app/server/yinzhan/licensing/public_keys.json`）必须与这把私钥匹配；**部署时不要替换客户端公钥**。
+客户端内置公钥（`app/server/yinzhan/licensing/public_keys.json`）同时包含：
+
+- `prod-2026`：旧授权验签，继续保留；
+- `prod-2026b`：新授权签发/验签。
+
+**部署时不要删除旧 `prod-2026` 公钥**，否则旧客户授权会失效。
 
 测试密钥（`commercial/var/test_keys/`）无口令，**不能用于生产**，也不要拷到生产服务器。
 
@@ -110,7 +124,7 @@ PAYMENT_MOCK_ENABLED=false
 
 # License 签发
 LICENSE_PRIVATE_KEY_PATH=/etc/sanitized-data/license_signing_ed25519.pem
-LICENSE_KEY_ID=prod-2026
+LICENSE_KEY_ID=prod-2026b
 LICENSE_KEY_PASSWORD_ENV=LICENSE_KEY_PASSWORD
 ```
 
@@ -178,7 +192,7 @@ curl -I https://sd.blctek.com:8443/healthz
 cd /opt/sanitized-data
 python deploy/issue_order.py \
   --private-key /etc/sanitized-data/license_signing_ed25519.pem \
-  --key-id prod-2026 \
+  --key-id prod-2026b \
   --sku personal \
   --machine-code "TEST-0000-0000-0000" \
   --order-id TEST-LICENSE-001 \
@@ -189,7 +203,7 @@ python deploy/issue_order.py \
 
 - 私钥文件正确；
 - 口令正确；
-- `prod-2026` key_id 正确。
+- `prod-2026b` key_id 正确。
 
 如果报：
 
@@ -205,7 +219,7 @@ SignerError: license_key_invalid
 签发出来的 License 在测试客户端导入应显示“已授权”；或核对：
 
 ```bash
-python -X utf8 -c "import json; print(json.load(open('app/server/yinzhan/licensing/public_keys.json'))['prod-2026'])"
+python -X utf8 -c "import json; print(json.load(open('app/server/yinzhan/licensing/public_keys.json'))['prod-2026b'])"
 ```
 
 应包含 `ukCCU+OZM9wSPF1FxJ2VTmMRhq0WQVOsV+DWHLKVpFI=`。
@@ -246,8 +260,8 @@ key_info.txt
 如果确实找不到：
 
 1. **不要覆盖旧私钥**；
-2. 用新 key_id（例如 `prod-2026b`）生成新密钥、新口令；
-3. 在 `app/server/yinzhan/licensing/public_keys.json` **追加**新公钥，保留旧 `prod-2026`；
+2. 再轮换时用新 key_id（例如 `prod-2026c`）生成新密钥、新口令；
+3. 在 `app/server/yinzhan/licensing/public_keys.json` **追加**新公钥，保留 `prod-2026b` 与 `prod-2026`；
 4. 重新打包客户端；
 5. 商业服务切换到新 key_id / 新私钥 / 新口令；
 6. 新授权用新 key 签发，旧授权继续用旧公钥验证。
@@ -262,7 +276,7 @@ key_info.txt
 |---|---|---|
 | `license_key_invalid 口令与私钥不匹配` | 口令错/私钥错 | 核对密码管理器与私钥来源，不要猜 |
 | 启动正常但发码失败 | 服务未注入 `LICENSE_KEY_PASSWORD` | 检查 systemd `EnvironmentFile` |
-| 客户端“授权无效” | 客户端公钥与签发 key 不匹配 | 确认打包公钥为 `prod-2026`，未设置测试公钥环境变量 |
+| 客户端“授权无效” | 客户端公钥与签发 key 不匹配 | 确认打包公钥为 `prod-2026b`，未设置测试公钥环境变量 |
 | 签出来的 License 过期 | key_id/有效期不对 | 检查 `--days`/`--term` 和系统时间 |
 | 服务日志出现密钥内容 | 配置错误/调试代码 | 立即停服、轮换密钥，检查日志权限 |
 
@@ -301,3 +315,4 @@ issue_order 测试签发: 成功
 
 > 本手册是运维文档，不包含真实口令或私钥内容。
 > 如口令来源不确定，先暂停部署并核对，不要重新生成密钥覆盖旧密钥。
+

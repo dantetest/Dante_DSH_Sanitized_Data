@@ -1,4 +1,4 @@
-# 正式收款 + 发授权码 完整 SOP（ICP 已下 · v1.0）
+﻿# 正式收款 + 发授权码 完整 SOP（ICP 已下 · v1.0）
 
 > 日期：2026-11-02 · 适用：数据隐站 v1.3.4+ 桌面版（已含 licensing 门禁）· 状态：**可执行**
 > 前置文档：[客户交付与授权SOP.md](客户交付与授权SOP.md)、[manual-license-issuance.md](manual-license-issuance.md)、
@@ -256,7 +256,7 @@ YINZHAN_PURCHASE_URL=https://你的购买页地址
 
 - [ ] 私钥存在：`%USERPROFILE%\.sanitized-data-license-keys\license_signing_ed25519.pem`；
 - [ ] 私钥口令在密码管理器里；离线备份 2 份（异地）；做过一次恢复演练（见 manual-license-issuance.md §0）；
-- [ ] 安装包内置公钥 `prod-2026`（v1.3.0+ 已内置；`public_keys.json` 非空）；
+- [ ] 安装包内置公钥 `prod-2026b`（v1.3.0+ 已内置；`public_keys.json` 非空）；
 - [ ] 本机 Python 可用（`python --version`），已装 `cryptography`；
 - [ ] `out/licenses/` 目录可写、`orders.csv` 台账已建。
 
@@ -267,7 +267,7 @@ cd D:\DSH_DESKTOP_WORKSPACE\Sanitized_Data
 
 python -X utf8 deploy\issue_order.py `
   --private-key "$env:USERPROFILE\.sanitized-data-license-keys\license_signing_ed25519.pem" `
-  --key-id prod-2026 `
+  --key-id prod-2026b `
   --sku pro `
   --machine-code "ZH39-7N5C-98CD-A8GB" `
   --order-id ord_20261102_0001 `
@@ -326,7 +326,7 @@ python -X utf8 deploy\issue_order.py `
 
 | 报错/现象 | 原因 | 处理 |
 |---|---|---|
-| `授权文件签名无效` | 文件被改动 / 不是本产品授权 / 用了测试密钥签的文件 | 重新发原件；确认签发 key_id 与包内公钥一致（`prod-2026`） |
+| `授权文件签名无效` | 文件被改动 / 不是本产品授权 / 用了测试密钥签的文件 | 重新发原件；确认签发 key_id 与包内公钥一致（`prod-2026b`） |
 | `授权文件版本不支持，请升级软件` | 客户端太旧 | 升级到 v1.3.0+ |
 | `授权文件不适用于本机` | 机器码抄错 / 客户换了机器 | 让客户重新复制机器码 → 重签（换机走 §7） |
 | `授权已到期，请续费` | 年费过期且过宽限期 | 续费重签 |
@@ -457,7 +457,7 @@ python -X utf8 deploy\issue_order.py `
 ## 9. 上线前验收清单（首单前逐项打勾）
 
 - [ ] CKA 已切正式门禁：`paywall_enabled=true`、`quota.enforced=true`、`build_channel=release`
-- [ ] `public_keys.json` 非空（`prod-2026`），且与安装包一致
+- [ ] `public_keys.json` 非空（`prod-2026b`），且与安装包一致
 - [ ] 安装包/绿色版为正式构建（非 TestMode），SHA256 已发布、交付说明已更新
 - [ ] 官网/购买页：价格、交付方式、客服、退款政策、协议、备案号、公安备案号齐全
 - [ ] 对公收款信息已确认（户名/账号/开户行/税号），报价单/合同模板就位
@@ -614,3 +614,4 @@ python -X utf8 deploy\issue_order.py --help
 客服微信：〔〕｜邮箱：〔〕｜服务时间：工作日 9:30–18:30
 主体：四川步络骞科技有限公司｜ICP 备案号：〔〕｜公安备案号：〔〕
 ```
+

@@ -1,4 +1,4 @@
-# L3 付费解锁 · 实施契约（Lead 维护，2026-11-02）
+﻿# L3 付费解锁 · 实施契约（Lead 维护，2026-11-02）
 
 > 目标：用户在本机「购买页」看到支付宝二维码 → 手机扫码支付 → 商业服务收到回调 → 自动签发 **Ed25519 license** → 本机页面轮询拿到授权 → 自动调用本地 `/api/license/import` → **直接解锁**。
 > 约束：本机引擎（Python）仍然**零外呼**；只有购买页（浏览器 JS，用户主动点击）访问商业服务。文件处理全程本机。
@@ -63,7 +63,7 @@ ALIPAY_APP_ID_CHECK=1
 # 授权签发（私钥只放商业服务机器；不要进仓库/安装包）
 LICENSE_PRIVATE_KEY_PATH=%USERPROFILE%\.sanitized-data-license-keys\license_signing_ed25519.pem
 LICENSE_KEY_PASSWORD_ENV=LICENSE_KEY_PASSWORD
-LICENSE_KEY_ID=prod-2026
+LICENSE_KEY_ID=prod-2026b
 
 # 价格（分；默认正式价，早鸟价改这里）
 COMMERCIAL_PRICE_PERSONAL_CENTS=19900
@@ -208,7 +208,7 @@ events(id INTEGER PRIMARY KEY AUTOINCREMENT, order_no TEXT, kind TEXT, detail TE
 - 复用 `app/server/yinzhan/licensing/issue.py`：把 `Sanitized_Data/app/server` 加入 `sys.path`，`from yinzhan.licensing.issue import build_payload, sign_license`。
 - `build_payload(sku=order.sku, machine_codes=[order.machine_code], order_id=order.order_no, days=365, notes="online")`；`sign_license(payload, key, LICENSE_KEY_ID)`；`license.text = json.dumps(container, ensure_ascii=False, separators=(",", ":"))`。
 - 私钥读取：`serialization.load_pem_private_key(path.read_bytes(), password=os.environ.get(env_var).encode() or None)`；失败给明确错误，不打印私钥/口令。
-- 测试用 `test-2026` 测试密钥；生产用 `prod-2026`。
+- 测试用 `test-2026` 测试密钥；生产用 `prod-2026b`。
 
 ## 7. 本机客户端改动（T3）
 
@@ -258,3 +258,4 @@ events(id INTEGER PRIMARY KEY AUTOINCREMENT, order_no TEXT, kind TEXT, detail TE
 3. **M3**（T3）：本机购买页 + 轮询自动导入 + 配置/路由 + 页面单测。
 4. **M4**（T4）：E2E + demo 脚本 + QA 报告。
 5. **M5**（Lead）：集成、跑全量测试、最终验收与说明。
+

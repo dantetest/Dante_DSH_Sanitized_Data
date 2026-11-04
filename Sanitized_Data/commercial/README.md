@@ -1,4 +1,4 @@
-# 数据隐站 · L3 商业服务（commercial/）
+﻿# 数据隐站 · L3 商业服务（commercial/）
 
 本目录是「购买 → 扫码支付 → 自动签发 Ed25519 授权 → 本机解锁」链路中的**商业服务端**：
 FastAPI + SQLite（WAL），默认 mock 支付通道用于本地演示，真实收款走支付宝（T2 适配器）。
@@ -268,7 +268,7 @@ CLI 以「能读本地 DB 文件」为管理员权限；`COMMERCIAL_ADMIN_TOKEN`
 | 下单 503 `payment_create_failed` | 看服务日志：支付宝配置/密钥/网络，或 `PAYMENT_PROVIDER` 指向 alipay 但 `payments/alipay.py` 缺失 |
 | 模拟支付 503 `license_key_missing` | 配置 `LICENSE_PRIVATE_KEY_PATH`（生产）或测试私钥（测试）；`admin.py check` 可看 `signer` 状态 |
 | 扫码后一直 pending | 支付宝回调是否可达（公网 HTTPS/域名/防火墙），`admin.py order` 看 events |
-| 客户导入授权提示签名无效 | 签发 key_id 与产品内置公钥是否匹配（生产密钥签 → `prod-2026`） |
+| 客户导入授权提示签名无效 | 签发 key_id 与产品内置公钥是否匹配（生产密钥签 → `prod-2026b`） |
 | 页面 404 | 是否用 `run_dev.py` 启动（静态目录随仓库提供）；是否部署了 `server/static/` |
 | `run_dev.py --reload` 报 `multiprocessing ... CreateNamedPipe PermissionError` | 受限沙箱（如 DSH 工具沙箱）禁止命名管道；用**不带 `--reload`** 的启动方式即可，正常本地终端可用 `--reload` |
 
@@ -277,3 +277,4 @@ CLI 以「能读本地 DB 文件」为管理员权限；`COMMERCIAL_ADMIN_TOKEN`
 - 商业服务只负责「卖授权」；本机自动导入、轮询解锁由 T3 的购买页实现，端到端演示脚本由 T4 提供。
 - 单机 SQLite + 内存限流适合当前规模（日均几十单）；多实例部署需换共享 DB/限流/任务队列。
 - 不支持退款/续费/发票流程的自动化（人工处理）。
+
