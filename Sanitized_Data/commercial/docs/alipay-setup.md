@@ -175,10 +175,10 @@ ALIPAY_GATEWAY=https://openapi.alipay.com/gateway.do
 ALIPAY_PAY_MODE=precreate
 
 # 异步通知地址：必须公网 HTTPS、能被支付宝服务器访问（不填则用 COMMERCIAL_BASE_URL + /notify/alipay）
-ALIPAY_NOTIFY_URL=https://buy.example.com/notify/alipay
+ALIPAY_NOTIFY_URL=https://sd.blctek.com:8443/notify/alipay
 
 # 公网基础地址（用于拼默认 notify_url 与回跳页）
-COMMERCIAL_BASE_URL=https://buy.example.com
+COMMERCIAL_BASE_URL=https://sd.blctek.com:8443
 
 # 可选：校验异步通知 app_id（默认 1=校验，务必保持开启）
 ALIPAY_APP_ID_CHECK=1
