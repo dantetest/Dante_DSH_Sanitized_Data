@@ -1,4 +1,4 @@
-# 数据隐站 · Sanitized_Data
+﻿# 数据隐站 · Sanitized_Data
 
 > 把敏感抹掉，让文件放行。
 
@@ -96,7 +96,7 @@ python commercial\scripts\run_dev.py --provider mock
 python -X utf8 commercial\scripts\e2e_demo.py
 ```
 
-- 本机怎么找到商业服务：环境变量 `YINZHAN_COMMERCIAL_URL`，或安装目录/数据目录 `commercial.json`（`{"commercial_url":"https://sd.blctek.com:8443"}`）；不用重新打包。
+- 本机怎么找到商业服务：环境变量 `YINZHAN_COMMERCIAL_URL`，或安装目录/数据目录 `commercial.json`（`{"commercial_url":"https://buysd.blctek.com:8443"}`）；不用重新打包。
 - 商业服务部署/配置：[commercial/README.md](commercial/README.md)
 - 支付宝申请/密钥/沙箱/真实 0.01 元验收：[commercial/docs/alipay-setup.md](commercial/docs/alipay-setup.md)
 - 测试与验收记录：[commercial/QA.md](commercial/QA.md)、总控：[docs/plans/09-正式上线总控-ICP后-2026-11-02.md](docs/plans/09-正式上线总控-ICP后-2026-11-02.md)
@@ -606,3 +606,5 @@ v1.1.2 起扫描件导出后的**自检不再整册重跑 OCR**：改用低 DPI 
 **浏览器报 WinError 10054？**
 那是浏览器先断开（刷新、关页、等不及）造成的，不是服务出错。已静音处理，
 真正的服务端异常会写到 `data/logs/server.log`（`[ERROR]` 行 + 堆栈）。
+
+

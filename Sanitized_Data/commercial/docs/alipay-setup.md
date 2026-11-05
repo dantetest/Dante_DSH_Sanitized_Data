@@ -1,4 +1,4 @@
-# 支付宝接入配置指南（数据隐站 L3 付费解锁）
+﻿# 支付宝接入配置指南（数据隐站 L3 付费解锁）
 
 本文面向**运维 / 开发**，说明商业服务（`commercial/`）接入真实支付宝需要做的全部事情：
 申请签约、密钥配置、两种 PayMode（当面付扫码 / 电脑网站支付）的差异与选择、沙箱联调、
@@ -175,10 +175,10 @@ ALIPAY_GATEWAY=https://openapi.alipay.com/gateway.do
 ALIPAY_PAY_MODE=precreate
 
 # 异步通知地址：必须公网 HTTPS、能被支付宝服务器访问（不填则用 COMMERCIAL_BASE_URL + /notify/alipay）
-ALIPAY_NOTIFY_URL=https://sd.blctek.com:8443/notify/alipay
+ALIPAY_NOTIFY_URL=https://buysd.blctek.com:8443/notify/alipay
 
 # 公网基础地址（用于拼默认 notify_url 与回跳页）
-COMMERCIAL_BASE_URL=https://sd.blctek.com:8443
+COMMERCIAL_BASE_URL=https://buysd.blctek.com:8443
 
 # 可选：校验异步通知 app_id（默认 1=校验，务必保持开启）
 ALIPAY_APP_ID_CHECK=1
@@ -498,3 +498,5 @@ SELECT license_id, order_no, machine_code, sku, issued_at FROM licenses ORDER BY
 > 文档中的产品入口与链接可能随开放平台改版变化；以登录后控制台实际展示为准。
 > 真实支付宝尚未在本项目联调（当前只有基于测试密钥的单元测试），首次上线请严格按
 > 第 6 节清单完成沙箱 + 真实 0.01 元验收。
+
+
