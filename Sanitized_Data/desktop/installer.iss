@@ -5,7 +5,7 @@
 ; 编译：iscc desktop\installer.iss
 #define MyAppName "数据隐站"
 #define MyAppNameEn "Sanitized_Data"
-#define MyAppVersion "1.3.8"
+#define MyAppVersion "1.3.9"
 #define MyAppPublisher "BLCTEK"
 #define MyAppExeName "Sanitized_Data.exe"
 
