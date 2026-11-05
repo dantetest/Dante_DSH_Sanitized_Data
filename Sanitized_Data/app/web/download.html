@@ -33,7 +33,7 @@
     <h1 style="font-size:clamp(26px,3.4vw,36px)">下载数据隐站</h1>
     <p class="lead">Windows 10/11 x64 · 离线安装 · 无需 Python</p>
     <div class="chips">
-      <span class="chip">v1.5.2</span>
+      <span class="chip" id="dlVersion">读取中…</span>
       <span class="chip">Windows x64</span>
     </div>
   </section>
@@ -42,36 +42,37 @@
     <div class="dl-grid">
       <div class="dl">
         <div class="os">WINDOWS · x64 · 安装包</div>
-        <div class="file">Sanitized_Data_Setup_1.5.2_x64.exe</div>
-        <div class="size">165.1 MiB · 双击安装</div>
+        <div class="file" id="installerName">读取中…</div>
+        <div class="size" id="installerSize">—</div>
         <div class="act">
-          <a class="btn primary" href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/download/v1.5.2/Sanitized_Data_Setup_1.5.2_x64.exe">下载安装包 ↓</a>
+          <a class="btn primary" id="installerLink" href="#" hidden>下载安装包 ↓</a>
         </div>
       </div>
       <div class="dl">
         <div class="os">WINDOWS · x64 · 绿色版</div>
-        <div class="file">Sanitized_Data-1.5.2-win64-portable.zip</div>
-        <div class="size">213.6 MiB · 解压即用</div>
+        <div class="file" id="portableName">读取中…</div>
+        <div class="size" id="portableSize">—</div>
         <div class="act">
-          <a class="btn primary" href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/download/v1.5.2/Sanitized_Data-1.5.2-win64-portable.zip">下载绿色版 ↓</a>
+          <a class="btn primary" id="portableLink" href="#" hidden>下载绿色版 ↓</a>
         </div>
       </div>
     </div>
 
     <table class="spec">
       <tr><th>SHA-256</th><td>
-        <div><code>1B006BB956BDBE8DF0DA5A16EEDB90664A37B862C0DCA2587B60A94FE5E3D9E1</code> · 安装包</div>
-        <div><code>0AF2A4C3C9638021B3432A6AD62FAE01308A72727CFA076C4063FF8ACFDD6040</code> · 绿色版</div>
+        <div><code id="installerSha">—</code> · 安装包</div>
+        <div><code id="portableSha">—</code> · 绿色版</div>
       </td></tr>
     </table>
 
+    <p class="muted" id="dlError" hidden></p>
     <p class="muted" style="margin-top:18px">macOS 暂未发布。Linux / 服务器部署请从源码仓库获取。</p>
   </section>
 </main>
 
 <footer>
   <div class="wrap inner">
-    <span>数据隐站 · Sanitized_Data v1.5.2</span>
+    <span>数据隐站 · Sanitized_Data</span>
     <span>·</span>
     <span>本机处理 · 不联网 · 不留存</span>
     <span style="margin-left:auto">
@@ -85,5 +86,40 @@
   </div>
 </footer>
 
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => {
+    n = Number(n);
+    return Number.isFinite(n) && n > 0 ? (n / 1048576).toFixed(1) + ' MiB' : '—';
+  };
+  const set = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+  function fill(prefix, asset) {
+    if (!asset || !asset.name || !asset.url) return false;
+    set(prefix + 'Name', asset.name);
+    set(prefix + 'Size', fmt(asset.size));
+    set(prefix + 'Sha', asset.sha256 || '—');
+    const link = $(prefix + 'Link');
+    link.href = asset.url;
+    link.hidden = false;
+    return true;
+  }
+  fetch('/updates/latest.json', { cache: 'no-store' })
+    .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+    .then((data) => {
+      set('dlVersion', 'v' + (data.version || '—'));
+      const assets = data.assets || {};
+      const okInstaller = fill('installer', assets.windows_installer);
+      const okPortable = fill('portable', assets.windows_portable);
+      if (!okInstaller || !okPortable) throw new Error('配置缺少 Windows 安装包/绿色版');
+    })
+    .catch((err) => {
+      const el = $('dlError');
+      el.hidden = false;
+      el.textContent = '下载配置暂不可用：' + err.message;
+      set('dlVersion', '未配置');
+    });
+})();
+</script>
 </body>
 </html>
