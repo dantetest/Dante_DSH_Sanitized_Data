@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="icon-title">
+  <title id="icon-title">数据隐站 Sanitized_Data</title>
+  <!--
+    数据隐站 Sanitized_Data 项目图标（唯一图源，32 viewBox，颜色为字面值）
+    图形语言沿用「金粒」图标：纸色圆角卡片、内框、三条数据格、右下红点。
+    本批只做两类修改：
+      1. 颜色换成项目设计令牌的字面值，映射表见 docs/research/06 文档；
+      2. 为 16px 小尺寸可辨识性微调几何：内框内移并加宽到 1.5，红点半径 2.6 改 2.8。
+    颜色必须写成字面值：不引 CSS 变量，不依赖外部字体与外部文件，保证浏览器、
+    resvg、canvas 三类栅格器渲染结果一致（详见 06 文档「为什么是字面值」）。
+    本注释内不得出现连续两个短横：XML 注释会提前终止，整份 SVG 解析失败。
+    派生资产：desktop/assets 下的 app.ico、app.png、app.icns，以及 app/web 下的
+    favicon.svg、favicon.ico、apple-touch-icon.png。
+  -->
+  <rect x="0" y="0" width="32" height="32" rx="7" fill="#FBF7EC"/>
+  <rect x="3" y="3" width="26" height="26" rx="6" fill="none" stroke="#CFC3A9" stroke-width="1.5"/>
+  <rect x="7" y="7" width="7.5" height="3" rx="1.5" fill="#B23A2E"/>
+  <rect x="7" y="12.5" width="12" height="3" rx="1.5" fill="#574F44"/>
+  <rect x="7" y="18" width="9" height="3" rx="1.5" fill="#8C8272"/>
+  <circle cx="24" cy="23.5" r="2.8" fill="#B23A2E"/>
+</svg>

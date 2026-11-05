@@ -26,7 +26,6 @@
     paidAtRow: YZ.$("#paid-at-row"),
     paidAt: YZ.$("#paid-at"),
     statusNotice: YZ.$("#status-notice"),
-    mockPayBtn: YZ.$("#mock-pay-btn"),
     buyAgain: YZ.$("#buy-again"),
     licensePanel: YZ.$("#license-panel"),
     licenseText: YZ.$("#license-text"),
@@ -66,7 +65,6 @@
     YZ.show(el.statusPanel);
     YZ.show(el.entryPanel);
     YZ.hide(el.buyAgain);
-    YZ.hide(el.mockPayBtn);
     YZ.hide(el.licensePanel);
 
     if (order.status === "paid") {
@@ -96,9 +94,6 @@
     updateCountdown();
     if (!state.tickTimer) {
       state.tickTimer = setInterval(updateCountdown, 1000);
-    }
-    if (order.mock_available) {
-      YZ.show(el.mockPayBtn);
     }
     YZ.setNotice(el.statusNotice,
       "等待支付…（本页每 2 秒自动查询；支付成功后立即显示授权码）", "info");
@@ -168,29 +163,10 @@
     fetchOrder();
   }
 
-  function mockPay() {
-    if (!state.order) {
-      return;
-    }
-    el.mockPayBtn.disabled = true;
-    YZ.setNotice(el.statusNotice, "正在模拟支付…", "info");
-    YZ.postJson("/api/mock/pay", {
-      order_no: state.order.order_no,
-      token: state.token
-    }).then(function (order) {
-      el.mockPayBtn.disabled = false;
-      renderOrder(order);
-    }).catch(function (err) {
-      el.mockPayBtn.disabled = false;
-      YZ.setNotice(el.statusNotice, "模拟支付失败：" + err.message, "err");
-    });
-  }
-
   function init() {
     state.orderNo = YZ.query("order_no") || YZ.query("orderNo") || "";
     state.token = YZ.query("token") || "";
     el.entrySubmit.addEventListener("click", submitEntry);
-    el.mockPayBtn.addEventListener("click", mockPay);
     el.copyLicense.addEventListener("click", function () {
       YZ.copyText(el.licenseText.value).then(function () {
         YZ.setText(el.copyLicense, "已复制");

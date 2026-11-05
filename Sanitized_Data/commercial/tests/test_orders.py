@@ -438,6 +438,15 @@ def test_static_pages_are_local_only(client):
     assert "noindex" in page.text
 
 
+def test_public_checkout_pages_are_production_copy(client):
+    """购买/订单页不得出现测试、演示、模拟支付等上线前文案。"""
+    for path in ("/buy.html", "/order.html"):
+        html = client.get(path).text
+        assert not re.search(r"测试|演示|模拟支付|mock|测试用例", html, re.I), path
+        assert "static/logo.svg" in html
+        assert "static/favicon.svg" in html
+
+
 # ── 支付宝回调路由（适配器由 T2 提供；此用例不依赖其配置） ──
 def test_notify_alipay_route_rejects_invalid_form(client):
     response = client.post("/notify/alipay", data={"out_trade_no": "x"})

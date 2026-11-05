@@ -27,11 +27,9 @@
   };
 
   var el = {
-    modeBadge: YZ.$("#mode-badge"),
     machineCode: YZ.$("#machine-code"),
     email: YZ.$("#email"),
     skuList: YZ.$("#sku-list"),
-    contactSales: YZ.$("#contact-sales"),
     catalogError: YZ.$("#catalog-error"),
     channelList: YZ.$("#channel-list"),
     submitBtn: YZ.$("#submit-btn"),
@@ -43,12 +41,16 @@
     payChannel: YZ.$("#pay-channel"),
     payCountdown: YZ.$("#pay-countdown"),
     payStatus: YZ.$("#pay-status"),
-    mockPayBtn: YZ.$("#mock-pay-btn"),
+    payStatusPill: YZ.$("#pay-status-pill"),
     payUrlLink: YZ.$("#pay-url-link"),
     donePanel: YZ.$("#done-panel"),
     licenseText: YZ.$("#license-text"),
     copyLicense: YZ.$("#copy-license"),
-    downloadLicense: YZ.$("#download-license")
+    downloadLicense: YZ.$("#download-license"),
+    summarySku: YZ.$("#summary-sku"),
+    summaryPrice: YZ.$("#summary-price"),
+    summaryTerm: YZ.$("#summary-term"),
+    summaryMachine: YZ.$("#summary-machine")
   };
 
   function featureList(features) {
@@ -81,19 +83,22 @@
     }
   }
 
-  function renderContactSales(catalog) {
-    var info = catalog.contact_sales;
-    if (!info || !info.message) {
-      YZ.hide(el.contactSales);
-      return;
+  function updateSummary() {
+    var sku = null;
+    if (state.catalog) {
+      (state.catalog.skus || []).forEach(function (item) {
+        if (item.id === state.skuId) {
+          sku = item;
+        }
+      });
     }
-    var extras = [];
-    var prices = info.reference_prices_cents || {};
-    if (prices.team) {
-      extras.push("团队版参考价 " + YZ.money(prices.team));
+    if (sku) {
+      YZ.setText(el.summarySku, sku.name);
+      YZ.setText(el.summaryPrice, YZ.money(sku.price_cents));
+      YZ.setText(el.summaryTerm, "/ " + (TERM_LABELS[sku.term] || sku.term || "年"));
     }
-    el.contactSales.textContent = info.message + (extras.length ? "（" + extras.join("；") + "）" : "");
-    YZ.show(el.contactSales);
+    var code = YZ.normalizeMachineCode(el.machineCode.value || "");
+    YZ.setText(el.summaryMachine, code || "未填写");
   }
 
   function selectSku(skuId) {
@@ -101,33 +106,35 @@
     YZ.$all(".sku", el.skuList).forEach(function (node) {
       node.classList.toggle("selected", node.getAttribute("data-sku") === skuId);
     });
+    updateSummary();
     updateSubmitState();
   }
 
   function renderChannels(catalog) {
     el.channelList.innerHTML = "";
-    var channels = catalog.channels || [];
+    var channels = (catalog.channels || []).filter(function (channel) {
+      return channel.enabled;
+    });
     var firstEnabled = "";
     channels.forEach(function (channel) {
       var button = document.createElement("button");
       button.type = "button";
       button.className = "channel";
       button.setAttribute("data-channel", channel.id);
-      button.textContent = channel.label + (channel.enabled ? "" : "（未启用）");
-      button.disabled = !channel.enabled;
+      button.textContent = channel.label;
       button.addEventListener("click", function () {
         selectChannel(channel.id);
       });
       el.channelList.appendChild(button);
-      if (channel.enabled && !firstEnabled) {
+      if (!firstEnabled) {
         firstEnabled = channel.id;
       }
     });
     if (!channels.length) {
-      el.channelList.innerHTML = '<p class="muted small">暂无可用支付方式，请联系客服。</p>';
+      el.channelList.innerHTML = '<p class="muted small">暂无可用支付方式，请联系交付顾问。</p>';
     }
     var wanted = YZ.query("channel");
-    if (wanted && channels.some(function (c) { return c.id === wanted && c.enabled; })) {
+    if (wanted && channels.some(function (c) { return c.id === wanted; })) {
       selectChannel(wanted);
     } else if (firstEnabled) {
       selectChannel(firstEnabled);
@@ -170,11 +177,6 @@
     if (order.qr_svg) {
       el.qrBox.innerHTML = order.qr_svg; /* 只信任本商业服务返回的内联 SVG */
     }
-    if (order.mock_available) {
-      YZ.show(el.mockPayBtn);
-    } else {
-      YZ.hide(el.mockPayBtn);
-    }
     var payUrl = String(order.pay_url || "");
     if (/^https?:\/\//.test(payUrl)) {
       el.payUrlLink.setAttribute("href", payUrl);
@@ -183,6 +185,8 @@
       YZ.hide(el.payUrlLink);
     }
     YZ.show(el.payPanel);
+    YZ.setText(el.payStatusPill, "等待支付");
+    el.payStatusPill.className = "status-pill pending";
     YZ.setNotice(el.payStatus, "等待支付…（本页每 2 秒自动检测，付款成功后立即显示授权码）", "info");
     startTimers();
   }
@@ -278,38 +282,13 @@
     });
   }
 
-  function mockPay() {
-    if (!state.order) {
-      return;
-    }
-    el.mockPayBtn.disabled = true;
-    YZ.setNotice(el.payStatus, "正在模拟支付…", "info");
-    YZ.postJson("/api/mock/pay", {
-      order_no: state.order.order_no,
-      token: state.order.order_token
-    }).then(function (order) {
-      el.mockPayBtn.disabled = false;
-      if (order.status === "paid") {
-        showDone(order);
-      } else {
-        YZ.setNotice(el.payStatus, "模拟支付未完成，请重试。", "warn");
-      }
-    }).catch(function (err) {
-      el.mockPayBtn.disabled = false;
-      YZ.setNotice(el.payStatus, "模拟支付失败：" + err.message, "err");
-    });
-  }
-
   function loadCatalog() {
     YZ.apiFetch("/api/catalog").then(function (catalog) {
       state.catalog = catalog;
       renderSkus(catalog);
-      renderContactSales(catalog);
       renderChannels(catalog);
+      updateSummary();
       updateSubmitState();
-      if (catalog.provider === "mock" || catalog.mock_available) {
-        YZ.show(el.modeBadge);
-      }
       var wanted = YZ.query("sku");
       if (wanted && catalog.skus.some(function (sku) { return sku.id === wanted; })) {
         selectSku(wanted);
@@ -328,7 +307,11 @@
       el.machineCode.value = YZ.normalizeMachineCode(prefill);
     }
     el.submitBtn.addEventListener("click", createOrder);
-    el.mockPayBtn.addEventListener("click", mockPay);
+    el.machineCode.addEventListener("input", updateSummary);
+    el.machineCode.addEventListener("blur", function () {
+      el.machineCode.value = machineCodeValue();
+      updateSummary();
+    });
     el.copyLicense.addEventListener("click", function () {
       YZ.copyText(el.licenseText.value).then(function () {
         YZ.setText(el.copyLicense, "已复制");
@@ -351,3 +334,5 @@
     init();
   }
 })();
+
+

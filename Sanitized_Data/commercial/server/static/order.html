@@ -4,70 +4,108 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>订单状态 · 数据隐站</title>
+  <meta name="description" content="数据隐站订单查询：查看支付状态、下载授权码。">
+  <title>订单查询 · 数据隐站</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<main class="page">
-  <header class="head">
-    <h1>数据隐站 · 订单状态</h1>
-    <p class="sub">支付完成后本页会自动更新并显示授权码；也可以把授权码复制到软件「授权」页手动导入。</p>
-  </header>
+<header class="sitebar">
+  <div class="inner">
+    <a class="logo" href="/buy.html">
+      <img class="brandmark" src="/static/logo.svg" width="36" height="36" alt="数据隐站">
+      <span class="name">数据隐站<small>ORDER LOOKUP</small></span>
+    </a>
+    <nav aria-label="站点导航">
+      <a href="/buy.html">购买授权</a>
+      <a href="/order.html" class="on">订单查询</a>
+      <a href="https://sd.blctek.com:8443/">返回主站</a>
+    </nav>
+  </div>
+</header>
 
-  <section id="entry-panel" class="card hidden">
-    <h2>查询订单</h2>
-    <p class="hint">请使用下单时返回的完整订单链接（含查询令牌），或手工粘贴订单号与令牌。</p>
-    <div class="field">
-      <label for="entry-order-no">订单号</label>
-      <input id="entry-order-no" type="text" placeholder="ord_20261102180000_ab12cd34" autocomplete="off" spellcheck="false" maxlength="64">
+<main class="wrap">
+  <section class="checkout-hero">
+    <div class="eyebrow">ORDER LOOKUP · 订单状态</div>
+    <h1>查询订单</h1>
+    <p class="lead">使用下单时返回的完整链接，或手工输入订单号与查询令牌，查看支付状态并取回授权码。</p>
+  </section>
+
+  <section id="entry-panel" class="paper-card hidden">
+    <div class="card-head">
+      <span class="card-kicker">FIND ORDER · 定位订单</span>
+      <h2>输入订单信息</h2>
     </div>
-    <div class="field">
-      <label for="entry-token">查询令牌</label>
-      <input id="entry-token" type="text" placeholder="下单时返回的 order_token" autocomplete="off" spellcheck="false" maxlength="256">
+    <p class="hint">订单查询令牌等同于取货凭证，请勿转发给他人。</p>
+    <div class="query-grid">
+      <div class="field">
+        <label for="entry-order-no">订单号</label>
+        <input id="entry-order-no" type="text" placeholder="ord_20261102180000_ab12cd34" autocomplete="off" spellcheck="false" maxlength="64">
+      </div>
+      <div class="field">
+        <label for="entry-token">查询令牌</label>
+        <input id="entry-token" type="text" placeholder="下单时返回的 order_token" autocomplete="off" spellcheck="false" maxlength="256">
+      </div>
     </div>
-    <div class="btn-row">
-      <button id="entry-submit" class="btn" type="button">查询订单</button>
-      <a class="btn ghost" href="/buy.html">去购买</a>
+    <div class="actions">
+      <button id="entry-submit" class="btn primary" type="button">查询订单</button>
+      <a class="btn" href="/buy.html">去购买</a>
     </div>
     <div id="entry-error" class="notice err hidden"></div>
   </section>
 
-  <section id="status-panel" class="panel hidden" aria-live="polite">
-    <div class="row order-meta-row">
+  <section id="status-panel" class="paper-card panel hidden" aria-live="polite">
+    <div class="panel-head">
+      <div>
+        <span class="card-kicker">ORDER STATUS · 订单状态</span>
+        <h2>订单详情</h2>
+      </div>
       <span id="status-pill" class="status-pill pending">等待支付</span>
     </div>
-    <div class="order-meta">
-      <div class="row"><span class="k">订单号</span><span class="v mono" id="order-no">--</span></div>
-      <div class="row"><span class="k">金额</span><span class="v amount" id="order-amount">--</span></div>
-      <div class="row" id="countdown-row"><span class="k">剩余时间</span><span class="v" id="order-countdown">--:--</span></div>
-      <div class="row" id="paid-at-row"><span class="k">支付时间</span><span class="v" id="paid-at">--</span></div>
+    <div class="receipt receipt-flat">
+      <div class="receipt-lines">
+        <div><span>订单号</span><b class="mono" id="order-no">--</b></div>
+        <div><span>应付金额</span><b class="amount" id="order-amount">--</b></div>
+        <div id="countdown-row"><span>剩余时间</span><b id="order-countdown">--:--</b></div>
+        <div id="paid-at-row" class="hidden"><span>支付时间</span><b id="paid-at">--</b></div>
+      </div>
     </div>
     <div id="status-notice" class="notice info">正在查询订单状态…</div>
-    <div class="btn-row">
-      <button id="mock-pay-btn" class="btn ghost hidden" type="button">演示：模拟支付成功</button>
-      <a id="buy-again" class="btn ghost hidden" href="/buy.html">重新下单</a>
+    <div class="actions">
+      <a id="buy-again" class="btn primary hidden" href="/buy.html">重新下单</a>
     </div>
   </section>
 
-  <section id="license-panel" class="panel hidden">
-    <div class="notice ok">支付成功，授权已签发。请复制整行授权码，粘贴到软件「授权」页；或下载 license.json 后拖入授权页。</div>
+  <section id="license-panel" class="paper-card panel hidden">
+    <div class="panel-head">
+      <div>
+        <span class="card-kicker">LICENSE · 已签发</span>
+        <h2>取回授权</h2>
+      </div>
+      <span class="status-pill paid">已支付</span>
+    </div>
+    <div class="notice ok">支付成功，授权已签发。请复制整行授权码，粘贴到软件「授权」页；或下载 <span class="mono">license.json</span> 后拖入授权页。</div>
     <div class="field">
       <label for="license-text">授权码（一整行 JSON）</label>
       <textarea id="license-text" readonly spellcheck="false"></textarea>
     </div>
-    <div class="btn-row">
-      <button id="copy-license" class="btn" type="button">复制授权码</button>
-      <button id="download-license" class="btn ghost" type="button">下载 license.json</button>
+    <div class="actions">
+      <button id="copy-license" class="btn primary" type="button">复制授权码</button>
+      <button id="download-license" class="btn" type="button">下载 license.json</button>
     </div>
-    <ol class="steps">
-      <li>打开数据隐站桌面版，进入「授权」页；</li>
-      <li>把整行授权码粘贴到输入框，点「导入授权」；</li>
-      <li>状态显示「已授权」即解锁成功。</li>
-    </ol>
+    <div class="unlock-guide">
+      <h3>如何解锁</h3>
+      <ol class="steps">
+        <li>打开数据隐站桌面版，进入「授权」页；</li>
+        <li>把整行授权码粘贴到输入框，点「导入授权」；</li>
+        <li>状态显示「已授权」即解锁成功。</li>
+      </ol>
+    </div>
   </section>
 
   <footer class="foot">
     <p>订单查询令牌等同于取货凭证，请勿转发给他人。如有问题请保留订单号联系客服。</p>
+    <p>数据隐站的文件处理全部在本机完成，不上传您的文件。</p>
     <p>运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 增值电信业务经营许可证：川B2-20261782</p>
   </footer>
 </main>
