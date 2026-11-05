@@ -178,59 +178,40 @@ class PurchaseStaticTest(unittest.TestCase):
         self.assertIn("YINZHAN_COMMERCIAL_URL", source)
         self.assertIn("COMMERCIAL_URL", source)
 
-    def test_keys_supports_public_keys_path_override(self):
+    def test_keys_uses_core_signed_keyring(self):
         source = read_text(KEYS_PY)
-        self.assertIn("YINZHAN_PUBLIC_KEYS_PATH", source)
-        self.assertIn("PUBLIC_KEYS_PATH_ENV", source)
-        # 注释必须写明仅供测试/私有化，避免误用到生产
-        self.assertRegex(source, r"仅测试|私有化")
+        self.assertIn("CORE_PUBLIC_KEYS", source)
+        self.assertIn("KEYRING_SCHEMA", source)
+        # 旧运行时覆盖入口必须已删除
+        self.assertNotIn("_load_override", source)
 
-    # ── keys.py 行为：env 覆盖/合并；未设置不变（不依赖 app 进程） ──
+    def test_production_keyring_is_signed(self):
+        manifest = json.loads((LICENSING / "public_keys.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest.get("schema"), 2)
+        self.assertEqual(manifest.get("root_key_id"), "core-2026")
+        self.assertIn("prod-2026", manifest.get("keys", {}))
+        self.assertIn("prod-2026b", manifest.get("keys", {}))
+        self.assertTrue(manifest.get("sig"))
+        self.assertNotIn("test-2026", manifest.get("keys", {}))
+
     def _load_keys_module(self):
         spec = importlib.util.spec_from_file_location("yinzhan_keys_under_test", KEYS_PY)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)          # noqa: SLF001  (测试内加载独立模块)
         return module
 
-    def test_public_keys_env_override_merges(self):
-        override_id = "t3-override-2026"
-        raw = base64.b64encode(b"t" * 32).decode("ascii")
-        # 不落盘：用 Path.read_text 的 side_effect 伪造环境变量指向的 JSON 文件，
-        # 避免测试往沙箱外/仓库里写临时文件；同时验证 env → 读取 → 合并的完整路径。
-        override_path = KEYS_PY.parent / "nonexistent_public_keys_override.json"
-        real_read_text = Path.read_text
+    def test_signed_keyring_loads_public_keys(self):
+        module = self._load_keys_module()
+        self.assertTrue(module.KEYRING_OK)
+        self.assertIn("prod-2026", module.PUBLIC_KEYS)
+        self.assertIn("prod-2026b", module.PUBLIC_KEYS)
 
-        def fake_read_text(self, *args, **kwargs):
-            if self == override_path:
-                return json.dumps({override_id: raw})
-            return real_read_text(self, *args, **kwargs)
-
-        with mock.patch.object(Path, "read_text", fake_read_text):
-            with mock.patch.dict(os.environ,
-                                 {"YINZHAN_PUBLIC_KEYS_PATH": str(override_path)},
-                                 clear=False):
-                module = self._load_keys_module()
-        self.assertEqual(module.PUBLIC_KEYS.get(override_id), b"t" * 32)
-        # 合并而不是整体替换：默认公钥仍然保留（若默认文件存在）
-        default_path = LICENSING / "public_keys.json"
-        if default_path.is_file():
-            default = json.loads(default_path.read_text(encoding="utf-8"))
-            for key_id, value in default.items():
-                self.assertEqual(module.PUBLIC_KEYS.get(str(key_id)),
-                                 base64.b64decode(str(value)))
-
-    def test_public_keys_without_env_unchanged(self):
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("YINZHAN_PUBLIC_KEYS_PATH", None)
-            module = self._load_keys_module()
-        self.assertNotIn("t3-override-2026", module.PUBLIC_KEYS)
-        default_path = LICENSING / "public_keys.json"
-        if default_path.is_file():
-            default = json.loads(default_path.read_text(encoding="utf-8"))
-            self.assertEqual(set(module.PUBLIC_KEYS), {str(k) for k in default})
-            for key_id, value in default.items():
-                self.assertEqual(module.PUBLIC_KEYS[str(key_id)],
-                                 base64.b64decode(str(value)))
+    def test_runtime_public_keys_override_removed(self):
+        source = read_text(KEYS_PY)
+        # 生产冻结态不允许 add/注入；只允许显式测试 keyring
+        self.assertIn("_is_frozen", source)
+        self.assertIn("YINZHAN_TEST_KEYRING_PATH", source)
+        self.assertIn("install_test_keyring", source)
 
     def test_purchase_page_documented_in_contract_aliases(self):
         """防止有人把 /purchase 别名改成别的文件名（契约要求 purchase.html）。"""

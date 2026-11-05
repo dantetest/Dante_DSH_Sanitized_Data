@@ -3,8 +3,13 @@
 """生成离线 license 的 Ed25519 密钥对（W1 运维工具）。
 
 私钥只写到你指定的安全目录，绝不写进仓库/安装包/聊天记录。
-生成后把 public_keys.json 里的公钥内容合并到
-``app/server/yinzhan/licensing/public_keys.json``，再重新打包。
+
+新流程（v1.5.0+）：
+1. 本工具生成 license 密钥对，并把公钥写到一个**未签名**的
+   ``public_keys.json``（格式仍是扁平 key_id → base64 公钥）；
+2. 用 core 私钥运行 ``deploy/sign_keyring.py`` 生成带 ``sig`` 的最终
+   ``app/server/yinzhan/licensing/public_keys.json``；
+3. 构建脚本会拒绝未签名的 keyring。
 
 用法：
   # 推荐：交互输入口令（不出现在命令历史）
@@ -85,8 +90,11 @@ def main() -> int:
     print("info   :", key_info)
     print("key_id :", args.key_id)
     print("pub fp :", fingerprint)
-    print("把下面内容合并到 app/server/yinzhan/licensing/public_keys.json：")
+    print("把下面内容合并到未签名 keyring，再用 core 私钥签名：")
     print(json.dumps({args.key_id: public_b64}, indent=2))
+    print("  python deploy/sign_keyring.py --core-private-key <离线 core 私钥> \\")
+    print("      --root-key-id core-2026 --in <未签名 public_keys.json> \\")
+    print("      --out app/server/yinzhan/licensing/public_keys.json")
     print("\n注意：私钥文件请离线备份；丢失/泄露需要重新签发所有 license。")
     print("备份：把加密私钥 + public_keys.json + key_info.txt 复制到离线介质；")
     print("      口令只记在密码管理器/纸质密封，不要和私钥放同一处。")

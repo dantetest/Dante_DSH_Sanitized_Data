@@ -59,6 +59,7 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 #: commercial/ 目录
@@ -73,6 +74,53 @@ APP_SERVER_RUN = PROJECT_ROOT / "app" / "server" / "run.py"
 TMP_ROOT = COMMERCIAL_DIR / "var" / "_e2e_tmp"
 #: 本机 app 测试公钥覆盖文件（由 gen_test_keys 生成）
 TEST_KEYS_DIR = COMMERCIAL_DIR / "var" / "test_keys"
+#: 签名测试 keyring（e2e 专用；test core 公钥只通过源码模式注入）
+TEST_KEYRING = TEST_KEYS_DIR / "public_keys_test.signed.json"
+TEST_CORE_PRIVATE = TEST_KEYS_DIR / "test_core_signing_ed25519.pem"
+TEST_CORE_PUBLIC = TEST_KEYS_DIR / "test_core_public.b64"
+
+
+def _ensure_test_keyring() -> dict[str, str]:
+    """生成/复用 test core 密钥并签一个测试 keyring。
+
+    仅用于源码 e2e；生产包不识别该注入。
+    """
+    import datetime
+
+    license_public = json.loads(
+        (TEST_KEYS_DIR / "license_public_keys_test.json").read_text(encoding="utf-8")
+    )["test-2026"]
+    if TEST_KEYRING.is_file() and TEST_CORE_PUBLIC.is_file() and TEST_CORE_PRIVATE.is_file():
+        return {
+            "path": str(TEST_KEYRING),
+            "core_public_b64": TEST_CORE_PUBLIC.read_text(encoding="ascii").strip(),
+        }
+    TEST_KEYS_DIR.mkdir(parents=True, exist_ok=True)
+    core = Ed25519PrivateKey.generate()
+    TEST_CORE_PRIVATE.write_bytes(core.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ))
+    try:
+        os.chmod(TEST_CORE_PRIVATE, 0o600)
+    except Exception:
+        pass
+    core_public_b64 = base64.b64encode(core.public_key().public_bytes_raw()).decode("ascii")
+    TEST_CORE_PUBLIC.write_text(core_public_b64 + "\n", encoding="ascii")
+    payload = {
+        "schema": 2,
+        "root_key_id": "test-core",
+        "keyring_revision": 1,
+        "issued_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "keys": {"test-2026": license_public},
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                     separators=(",", ":"), allow_nan=False).encode("utf-8")
+    payload["sig"] = base64.b64encode(core.sign(raw)).decode("ascii")
+    TEST_KEYRING.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                            encoding="utf-8")
+    return {"path": str(TEST_KEYRING), "core_public_b64": core_public_b64}
 
 # 让 ``import gen_test_keys`` 在「直接运行」与「pytest 导入」两种方式下都可用
 if str(SCRIPT_DIR) not in sys.path:
@@ -327,6 +375,8 @@ def _child_env(extra: dict[str, str]) -> dict[str, str]:
         "ALIPAY_GATEWAY",
         "YINZHAN_DATA_DIR",
         "YINZHAN_PUBLIC_KEYS_PATH",
+        "YINZHAN_TEST_KEYRING_PATH",
+        "YINZHAN_TEST_CORE_PUBLIC_KEY",
         "YINZHAN_COMMERCIAL_URL",
         "YINZHAN_PAYWALL",
         "PYTHONPATH",
@@ -550,9 +600,11 @@ def _start_alipay_service(report: E2EReport, tmp_dir: Path, port: int,
 def _start_local_app(report: E2EReport, tmp_dir: Path, port: int,
                      keys: dict[str, Any], commercial_url: str) -> tuple[str, dict[str, Any]]:
     data_dir = tmp_dir / "app_data"
+    test_keyring = _ensure_test_keyring()
     env = _child_env({
         "YINZHAN_DATA_DIR": str(data_dir),
-        "YINZHAN_PUBLIC_KEYS_PATH": keys["paths"]["license_public_json"],
+        "YINZHAN_TEST_KEYRING_PATH": test_keyring["path"],
+        "YINZHAN_TEST_CORE_PUBLIC_KEY": test_keyring["core_public_b64"],
         "YINZHAN_COMMERCIAL_URL": commercial_url,
         "YINZHAN_PAYWALL": "1",
     })

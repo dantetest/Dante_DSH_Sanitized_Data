@@ -206,6 +206,12 @@ class LicenseService:
 
     # ── license 校验 ──
     def _verify_container(self, content: str | bytes | dict) -> dict:
+        if not keys.KEYRING_OK or not keys.PUBLIC_KEYS:
+            raise LicenseError(
+                "keyring_invalid",
+                "软件组件可能损坏，请使用官方安装包重新安装",
+                403,
+            )
         try:
             if isinstance(content, dict):
                 container = content
@@ -343,6 +349,8 @@ class LicenseService:
                 "machine_display": self.machine_info()["display"],
                 "clock_suspect": clock_suspect,
                 "can_import": True,
+                "keyring_ok": bool(keys.KEYRING_OK),
+                "keyring_error": None if keys.KEYRING_OK else "keyring_invalid",
                 "license": None,
                 "state_recovered": bool(
                     (state.get("flags") or {}).get("state_recovered")),

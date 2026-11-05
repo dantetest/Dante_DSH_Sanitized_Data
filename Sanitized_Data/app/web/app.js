@@ -139,6 +139,7 @@ const ERROR_CN = {
   pack_requires_paid: '该行业规则包需要个人版及以上；请切换通用规则，或升级后使用。',
   quota_busy: '当前任务还没处理完，请等它完成后再建下一个。',
   license_required: '本版本不提供免费使用；请先在授权页开始 3 天全功能试用，或购买个人版授权。',
+  keyring_invalid: '软件组件可能损坏，请使用官方安装包重新安装',
 };
 class AppError extends Error {
   constructor(code, human) { super(human || '这一步没走通，请重新试一次。'); this.code = code; this.human = this.message; }
@@ -355,6 +356,7 @@ function openLicenseLimit(err) {
     pack_requires_paid: '这个规则包需要升级',
     quota_busy: '先等当前任务完成',
     license_required: '需要开始试用或购买',
+    keyring_invalid: '软件组件可能损坏',
   }[code] || '继续使用，需要升级';
   const message = (err && (err.human || (code && ERROR_CN[code]))) || '升级后可以继续处理这份文件。';
   ui.licenseLimitTitle.textContent = title;

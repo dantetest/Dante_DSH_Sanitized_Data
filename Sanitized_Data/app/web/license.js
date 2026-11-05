@@ -73,6 +73,11 @@
       $('statusMsg').textContent = '系统时间异常：本机授权状态可能受影响，请校正系统时间。';
       $('statusMsg').className = 'msg err';
     }
+    if (s.keyring_ok === false) {
+      $('statusMsg').textContent = '软件组件可能损坏，请使用官方安装包重新安装';
+      $('statusMsg').className = 'msg err';
+      $('trialRow').style.display = 'none';
+    }
     const buy = $('buyLink');
     const url = s.purchase_url || '';
     if (/^https?:\/\//i.test(url)) {
@@ -122,9 +127,15 @@
 
   async function load() {
     try {
-      render(await api('/api/license/status'));
-      $('statusMsg').textContent = '';
-      $('statusMsg').className = 'msg';
+      const status = await api('/api/license/status');
+      render(status);
+      if (status.keyring_ok === false) {
+        $('statusMsg').textContent = '软件组件可能损坏，请使用官方安装包重新安装';
+        $('statusMsg').className = 'msg err';
+      } else {
+        $('statusMsg').textContent = '';
+        $('statusMsg').className = 'msg';
+      }
     } catch (err) {
       $('statusMsg').textContent = '无法读取授权状态：' + err.message;
       $('statusMsg').className = 'msg err';

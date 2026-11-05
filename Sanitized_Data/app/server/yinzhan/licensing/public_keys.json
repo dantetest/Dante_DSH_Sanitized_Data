@@ -1,4 +1,11 @@
 {
-  "prod-2026": "ukCCU+OZM9wSPF1FxJ2VTmMRhq0WQVOsV+DWHLKVpFI=",
-  "prod-2026b": "+7p1RknkRttqusSrfqvNtJl58q5nlVigZtGX4zqv3bQ="
+  "schema": 2,
+  "root_key_id": "core-2026",
+  "keyring_revision": 1,
+  "issued_at": "2026-11-05T13:38:41.815275+00:00",
+  "keys": {
+    "prod-2026": "ukCCU+OZM9wSPF1FxJ2VTmMRhq0WQVOsV+DWHLKVpFI=",
+    "prod-2026b": "+7p1RknkRttqusSrfqvNtJl58q5nlVigZtGX4zqv3bQ="
+  },
+  "sig": "J2AEkFVpLIOBltG3ijCDZcA6WBDLt9Rg067Dn7g5g65H2a7f8skiRHLgCfuKPPPW8tKipxHhl0BEyIPORtk2Dw=="
 }

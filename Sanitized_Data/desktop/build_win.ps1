@@ -1,4 +1,4 @@
-﻿# 数据隐站 · Windows 打包脚本
+# 数据隐站 · Windows 打包脚本
 #   powershell -ExecutionPolicy Bypass -File desktop\build_win.ps1
 #
 # 产物：
@@ -24,6 +24,11 @@ if ($need.Count -gt 0) {
     python -m pip install --quiet --disable-pip-version-check @need
 }
 python -m PyInstaller --version
+
+Write-Host "`n[1.5/7] 校验授权组件 keyring" -ForegroundColor Cyan
+python deploy\verify_keyring.py --manifest app\server\yinzhan\licensing\public_keys.json
+if ($LASTEXITCODE -ne 0) { throw '授权组件 keyring 校验失败：public_keys.json 未由 core 私钥签名或内容非法，拒绝打包' }
+Write-Host "  ✓ keyring 签名有效"
 
 Write-Host "`n[2/6] 拉取运行时安装包（WebView2 / VC++）" -ForegroundColor Cyan
 & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'fetch_redist.ps1')
@@ -125,6 +130,11 @@ if (Test-Path $exe) {
         if ($h.engine.ocr -ne $true) {
             Write-Host "  ! 警告：OCR 未就绪（检查 rapidocr/onnxruntime 模型是否打进包）" -ForegroundColor Yellow
         }
+        $ls = (Invoke-WebRequest "http://127.0.0.1:$healthPort/api/license/status" -UseBasicParsing -TimeoutSec 8).Content | ConvertFrom-Json
+        if ($ls.keyring_ok -ne $true) {
+            throw "打包自检失败：授权组件 keyring 未通过校验（keyring_ok=$($ls.keyring_ok)）"
+        }
+        "  ✓ 授权组件 keyring 已加载"
     } catch {
         "  ! 自检请求失败（可能窗口已打开但端口不同，检查 data\runtime.json）"
     }
