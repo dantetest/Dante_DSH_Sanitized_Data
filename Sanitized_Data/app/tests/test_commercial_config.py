@@ -58,6 +58,14 @@ def test_commercial_json_in_data_dir():
     assert _run({"YINZHAN_DATA_DIR": str(data_dir)}) == URL
 
 
+def test_commercial_json_with_utf8_bom():
+    """Windows PowerShell 写出的 UTF-8 BOM 不能让配置被静默忽略。"""
+    data_dir = _setup()
+    payload = json.dumps({"commercial_url": URL}).encode("utf-8")
+    (data_dir / "commercial.json").write_bytes(b"\xef\xbb\xbf" + payload)
+    assert _run({"YINZHAN_DATA_DIR": str(data_dir)}) == URL
+
+
 def test_invalid_scheme_ignored():
     data_dir = _setup()
     (data_dir / "commercial.json").write_text(
