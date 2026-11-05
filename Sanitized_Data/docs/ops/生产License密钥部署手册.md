@@ -1,4 +1,4 @@
-﻿# 数据隐站 · 生产 License 密钥部署手册（prod-2026b）
+# 数据隐站 · 生产 License 密钥部署手册（prod-2026b）
 
 > 适用：把**生产授权签名密钥**从本机交接给服务器部署同事，并配置商业服务签发真实 License。
 > 目标服务器：`buysd.blctek.com:8443` 背后的商业服务（只监听 `127.0.0.1:8787`）。
@@ -9,6 +9,8 @@
 > - 旧 `prod-2026` 公钥继续保留，**旧授权仍可正常验证**；
 > - 不要把旧 `prod-2026` 私钥用于新签发；
 > - 新私钥、新口令、备份位置见 §2。
+>
+> **2026-11-05 v1.5.0 新增 core 信任根：** 客户端 `.exe` 硬编码 core 公钥；`public_keys.json` 必须由对应 core 私钥签名（`schema=2` + `sig`）。core 私钥**只在离线环境保存**，与 license 签发私钥分开保管；新增/轮换 license 公钥后必须用 `deploy/sign_keyring.py` 重新签名，构建脚本会用 `deploy/verify_keyring.py` 拒绝未签名 keyring。详见 [keyring-core-signing-plan.md](../impl/keyring-core-signing-plan.md)。
 
 ---
 

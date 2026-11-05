@@ -9,7 +9,7 @@
   * ``pricing.js``：有 commercial_url 时购买按钮指向 /purchase?sku=，否则回退 purchase_url；
   * ``api.py``：PAGE_ALIASES 含 purchase、status 含 commercial_url；
   * ``config.py``：读 YINZHAN_COMMERCIAL_URL；
-  * ``licensing/keys.py``：YINZHAN_PUBLIC_KEYS_PATH 覆盖/合并公钥，未设置时行为不变。
+  * ``licensing/keys.py``：CORE_PUBLIC_KEYS + core 签名的 keyring；旧运行时公钥覆盖已移除。
 """
 from __future__ import annotations
 

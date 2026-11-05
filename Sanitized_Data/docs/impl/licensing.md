@@ -125,6 +125,28 @@
 > **限量不是 feature**：免费版的「3 份/天、20 页/份、OCR 10 页/份」由 [02](free-tier.md) 的 quota 配置实现；付费授权 = 不限额（`limits=null`）。feature 只控制「有没有」，不控制「多少」。
 
 > **feature 与 trial 的关系**：试用不使用 license 文件；`tiers.py` 的 trial 配置授予「专业版级」features（含 `all_packs/tif/d3d/mcp/audit_export`，不含 `custom_packs/team_admin`；批量/管理台 P1 上线后开放）。**各文档的 trial 定义以本句 + [02 §1](free-tier.md) 为准**，W1/W2 不得各写一套。
+
+### 3.4 信任根：core 公钥 + 签名 keyring（v1.5.0）
+
+`license` 公钥不再直接从普通 `public_keys.json` 读取；`public_keys.json` 改为 core 私钥签名的 envelope：
+
+```json
+{"schema":2,"root_key_id":"core-2026","keyring_revision":1,
+ "issued_at":"...","keys":{"prod-2026":"...","prod-2026b":"..."},"sig":"..."}
+```
+
+客户端启动时：
+
+1. 用 `.exe` 内硬编码的 `CORE_PUBLIC_KEYS` 验证 keyring envelope；
+2. 验签通过后才填充 `PUBLIC_KEYS`；
+3. 失败则 fail closed，授权导入/付费校验返回 `keyring_invalid`；
+4. 生产冻结包忽略所有运行时公钥覆盖；源码模式的测试 keyring 注入只用于 e2e/单测。
+
+UI 只提示：**「软件组件可能损坏，请使用官方安装包重新安装」**，不暴露具体校验细节。
+
+构建门禁：`desktop/build_win.ps1` 打包前执行 `deploy/verify_keyring.py`，未签名/tampered keyring 直接拒绝构建。core 私钥离线保存，不进仓库/CI/安装包；轮换时在 `CORE_PUBLIC_KEYS` 追加新 key，旧 key 保留到旧 keyring 不再使用。
+
+详细实施文档：[keyring-core-signing-plan.md](keyring-core-signing-plan.md)。
 >
 > **MCP 分级（2026-10-24 调研建议，待拍板）**：`mcp` feature 只覆盖「文件写操作 + L2 Job/导出/还原/审计/工作台深链」；只读小工具（`list_rules`/`check_support`/小文本 `redact_text`）免费。详见 [mcp-monetization.md](mcp-monetization.md) §2/§4。
 >
