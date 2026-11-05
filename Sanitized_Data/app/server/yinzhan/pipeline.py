@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import re
 import types
 import unicodedata
@@ -247,6 +248,143 @@ def _build_replacement(strategy: str, rule: Rule | None, e: Entity, ctx: Replace
 
 def decisions_of(entities: list[Entity]) -> dict[str, Decision]:
     return {e.id: (e.decision or Decision(strategy="black", black=True)) for e in entities}
+
+
+# ══════════════════ 回件映射提示（问题2：近似实体归并后的消歧上下文） ══════════════════
+# 导出 AI 版时随 vault 映射额外保存「同一假值可能对应哪些原值 + 各自上下文哈希」，
+# 供回件（restore）在近似归并场景按上下文选回正确原值（见
+# docs/analysis/PROD_FIX_DESIGN_2026-11-05.md §3）。只存上下文哈希，不存原文上下文；
+# 不改变 mapping/session 现有语义（session.map 仍只写一个 canonical）。
+HINT_CONTEXT_WINDOW = 8          # 目标前后各取多少字符
+HINT_HASH_LEN = 16               # context_hash 截断长度
+
+
+def _hint_normalize(text: str) -> str:
+    """上下文归一化：NFKC + 去空白（``re`` 的 ``\\s``，含全角空格）。
+
+    回件侧（restore.py）必须使用同一规则，否则 context_hash 无法精确匹配。
+    """
+    text = unicodedata.normalize("NFKC", text or "")
+    return re.sub(r"\s+", "", text)
+
+
+def hint_context_hash(text: str, start: int, end: int,
+                      window: int = HINT_CONTEXT_WINDOW) -> str:
+    """目标前后 ``window`` 字上下文的 ``sha256[:16]``（NFKC + 去空白）。
+
+    回件侧复刻规则：取原文 ``text[start-window:start] + "|" + text[end:end+window]``，
+    做 NFKC + 去空白，再 ``sha256(utf-8).hexdigest()[:16]``。
+    """
+    text = text or ""
+    try:
+        start = max(0, int(start))
+        end = min(len(text), int(end))
+        window = max(1, int(window))
+    except (TypeError, ValueError):
+        return ""
+    left = text[max(0, start - window):start]
+    right = text[end:end + window]
+    context = _hint_normalize(left + "|" + right)
+    return hashlib.sha256(context.encode("utf-8")).hexdigest()[:HINT_HASH_LEN]
+
+
+def _page_text_index(doc: Document) -> dict[int, tuple[str, dict[str, int]]]:
+    """按页拼接 block.text（换行连接），返回 ``{page: (page_text, {block_id: offset})}``。
+
+    为什么不用 block.text 直接算：回件（restore.py）是在**页级文本**上定位假值并取
+    前后上下文，如果导出用块级上下文，块首实体会和页级上下文对不上（doc03 实测
+    `云基公司`/`云基智慧工程股份有限公司` 匹配失败）。这里统一为页级文本口径。
+    """
+    pages: dict[int, tuple[str, dict[str, int]]] = {}
+    for page in getattr(doc, "pages", []) or []:
+        parts: list[str] = []
+        offsets: dict[str, int] = {}
+        cursor = 0
+        for block in getattr(page, "blocks", []) or []:
+            text = getattr(block, "text", "") or ""
+            if not text:
+                continue
+            offsets[getattr(block, "id", "")] = cursor
+            parts.append(text)
+            cursor += len(text) + 1          # +1 = 连接用的换行
+        try:
+            page_no = int(getattr(page, "index", len(pages)))
+        except (TypeError, ValueError):
+            page_no = len(pages)
+        pages[page_no] = ("\n".join(parts), offsets)
+    return pages
+
+
+def build_occurrence_hints(doc: Document, entities: list[Entity],
+                           *, window: int = HINT_CONTEXT_WINDOW) -> dict:
+    """生成「假值 → 候选原值+上下文哈希」映射提示（只读 doc/entities）。
+
+    - 只处理 ``status != rejected``、``decision.strategy == "surrogate"``、
+      replacement 非空、value 非空、有 spans 的实体；
+    - 每个 span 取所属 **页级文本**（该页 blocks 按顺序以 ``\\n`` 拼接，与回件
+      页级定位口径一致）的上下文哈希；页/块缺失时退回 block.text；
+    - ``order`` 按遍历顺序全局递增；同一 fake 的多个原值/位置都保留；
+    - 无可用提示时返回空 dict；不修改实体/session/映射状态。
+    """
+    blocks: dict[str, Block] = {}
+    for page in getattr(doc, "pages", []) or []:
+        for block in getattr(page, "blocks", []) or []:
+            blocks[getattr(block, "id", "")] = block
+    page_index = _page_text_index(doc)
+    hints: dict[str, list[dict]] = {}
+    order = 0
+    for entity in entities or []:
+        if getattr(entity, "status", "") == "rejected":
+            continue
+        decision = getattr(entity, "decision", None)
+        if decision is None or getattr(decision, "strategy", "") != "surrogate":
+            continue
+        replacement = getattr(decision, "replacement", None) or ""
+        value = getattr(entity, "value", None) or ""
+        if not replacement or not value:
+            continue
+        for span in getattr(entity, "spans", []) or []:
+            block_id = getattr(span, "block_id", None)
+            start = getattr(span, "start", -1)
+            end = getattr(span, "end", -1)
+            if not block_id or start is None or end is None:
+                continue
+            try:
+                start, end = int(start), int(end)
+            except (TypeError, ValueError):
+                continue
+            if start < 0 or end <= start:
+                continue
+            block = blocks.get(block_id)
+            if block is None or not getattr(block, "text", ""):
+                continue
+            page_no = getattr(block, "page", 0)
+            if page_no is None:
+                page_no = 0
+            page_no = int(page_no)
+            context_text = block.text
+            context_start, context_end = start, end
+            page_entry = page_index.get(page_no)
+            if page_entry is not None:
+                page_text, offsets = page_entry
+                offset = offsets.get(block_id)
+                if offset is not None and page_text:
+                    page_start = offset + start
+                    page_end = min(offset + end, len(page_text))
+                    if page_end > page_start:
+                        context_text = page_text
+                        context_start, context_end = page_start, page_end
+            hints.setdefault(replacement, []).append({
+                "orig": value,
+                "etype": getattr(entity, "etype", "") or "",
+                "page": page_no,
+                "order": order,
+                "context_hash": hint_context_hash(context_text,
+                                                  context_start, context_end,
+                                                  window=window),
+            })
+            order += 1
+    return hints
 
 
 # ══════════════════ 近似实体假值归并（Phase A2，只影响 AI 换名版） ══════════════════

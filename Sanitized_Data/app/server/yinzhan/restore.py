@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -79,6 +80,18 @@ MAX_ITEMS = 24
 ITEM_TTL = 24 * 3600
 
 PREVIEW_CHARS = 800
+
+# ── 回件提示开关（默认 0=关闭，行为与 HEAD 完全一致；灰度上线再打开）──
+# 问题1：扫描页 AI 回件移除假值像素图后重绘真值
+RESTORE_SCAN_AI_V2_ENV = "YINZHAN_RESTORE_SCAN_AI_V2"
+# 问题2：同一假值多候选原值时按上下文消歧
+RESTORE_OCCURRENCE_HINTS_ENV = "YINZHAN_RESTORE_OCCURRENCE_HINTS"
+_CONTEXT_CHARS = 8
+
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    raw = (os.environ.get(name, default) or "").strip().lower()
+    return raw not in ("", "0", "false", "off", "no")
 
 
 class RestoreError(Exception):
@@ -167,6 +180,11 @@ class MappingInfo:
     derived: list[Pair] = field(default_factory=list)
     quality_warnings: list[str] = field(default_factory=list)
     mapping_guard: dict = field(default_factory=dict)
+    # 回件提示（可选；旧映射没有 → 空 dict，行为完全不变）
+    # scan_ai_images: {page(str): [{rect:[x0,y0,x1,y1], fake, rotation, size?, color?}]}
+    # occurrence_hints: {fake: [{orig, etype, page, order, context_hash}]}
+    scan_ai_images: dict = field(default_factory=dict)
+    occurrence_hints: dict = field(default_factory=dict)
     _index: "_Index | None" = field(default=None, init=False, repr=False)
 
     @property
@@ -461,6 +479,12 @@ def load_mapping_info(job_id: str) -> MappingInfo:
     # 映射一致性护栏（P0-1 前哨）：旧映射也重新算一遍，跨类别归并/超大簇
     # 在还原报告里显式提示；报告修复后仍保留该检查，防止未来回归。
     mapping_guard = quality.check_mapping_guard_from_map(raw.get("map") or {})
+    # 回件提示（问题1/2）：旧映射没有该键 → 空 dict，走原逻辑。
+    hints = meta.get("pdf_restore_hints")
+    if not isinstance(hints, dict):
+        hints = {}
+    scan_ai_images = hints.get("scan_ai_images")
+    occurrence_hints = hints.get("occurrence_hints")
     return MappingInfo(
         job_id=job_id,
         name=str(meta.get("name") or job_id),
@@ -472,6 +496,8 @@ def load_mapping_info(job_id: str) -> MappingInfo:
         derived=derived,
         quality_warnings=_quality_warnings(pairs),
         mapping_guard=mapping_guard,
+        scan_ai_images=dict(scan_ai_images) if isinstance(scan_ai_images, dict) else {},
+        occurrence_hints=dict(occurrence_hints) if isinstance(occurrence_hints, dict) else {},
     )
 
 
@@ -580,13 +606,21 @@ class Report:
     input_name: str = ""
     input_sha256: str = ""
 
-    def add_event(self, event: Event) -> None:
+    def add_event(self, event: Event, orig_override: str | None = None) -> None:
+        """登记一次替换。
+
+        ``orig_override``：问题2 同一假值按上下文还原成不同原值时，报告按
+        「假值 + 实际原值」分条展示（默认 None = 行为不变）。
+        """
         self.replaced += 1
-        key = event.pair.key
+        base_key = event.pair.key
+        canonical_orig = event.pair.display_orig
+        orig = orig_override or canonical_orig
+        key = base_key if orig == canonical_orig else f"{base_key}\x1f{orig}"
         item = self.replacements.get(key)
         if item is None:
             self.replacements[key] = {
-                "fake": event.pair.display_fake, "orig": event.pair.display_orig,
+                "fake": event.pair.display_fake, "orig": orig,
                 "etype": event.pair.etype, "label": event.pair.label,
                 "count": 1,
             }
@@ -1077,29 +1111,699 @@ def _ensure_restore_font(page) -> tuple[str, bool]:
 
 
 def _pdf_insert(page, rect, text: str, size: float, origin_y: float,
-                color: tuple | None, report: Report) -> tuple[bool, bool, bool]:
-    """在 PDF 原位插入真值；返回 (是否成功, 是否缩小字号, 是否用自定义字体)。"""
+                color: tuple | None, report: Report,
+                rotate: int = 0,
+                width_limit: float | None = None) -> tuple[bool, bool, bool]:
+    """在 PDF 原位插入真值；返回 (是否成功, 是否缩小字号, 是否用自定义字体)。
+
+    ``rotate``：文本在页面坐标系中的旋转角（/Rotate 页写入时传 page.rotation，
+    否则显示方向会竖排/倒置）。默认 0 = HEAD 行为。
+    ``width_limit``：可用行宽（旋转 90/270 时是 rect.height，调用方传入）。
+    """
     try:
         import fitz
         font_size = size or 10.0
-        width_limit = max(4.0, rect.width)
+        limit = max(4.0, width_limit if width_limit is not None else rect.width)
         # 宽度估算用内置 china-s 近似；实际插入用可抽取的独立字体
         text_width = fitz.get_text_length(text, fontname="china-s",
                                           fontsize=font_size)
         shrunk = False
-        if text_width > width_limit:
-            font_size = max(4.0, font_size * width_limit / text_width)
+        if text_width > limit:
+            font_size = max(4.0, font_size * limit / text_width)
             shrunk = True
         fontname, used_custom = _ensure_restore_font(page)
-        page.insert_text((rect.x0, origin_y), text, fontsize=font_size,
-                         fontname=fontname, color=color or (0, 0, 0))
+        origin_x, origin_yy = _insert_origin(rect, rotate, origin_y)
+        page.insert_text((origin_x, origin_yy), text, fontsize=font_size,
+                         fontname=fontname, color=color or (0, 0, 0),
+                         rotate=int(rotate or 0) % 360)
         return True, shrunk, used_custom
     except Exception:
         return False, False, False
 
 
+def _insert_origin(rect, rotate: int, fallback_y: float) -> tuple[float, float]:
+    """按 /Rotate 计算 insert_text 原点：让旋转后的文字 bbox 落在 rect 内。
+
+    实测（fitz y 向下）：rotate=0 bbox 在原点右上方；90 在原点左上方；
+    180 在原点上方（左延伸）；270 在原点右下方。
+    """
+    rotate = int(rotate or 0) % 360
+    if rotate == 90:
+        return float(rect.x1), float(rect.y1)
+    if rotate == 180:
+        return float(rect.x1), float(rect.y0)
+    if rotate == 270:
+        return float(rect.x0), float(rect.y0)
+    return float(rect.x0), float(fallback_y)
+
+
+# ── 回件提示：问题1 扫描页假值图重绘 / 问题2 近似实体上下文消歧 ──
+
+class _TextLocator:
+    """按出现顺序在页面文本中定位假值，返回字符偏移（供 context_hash）。"""
+
+    def __init__(self, text: str):
+        self.text = text or ""
+        self._cursor: dict[str, int] = {}
+
+    def locate(self, variant: str) -> int | None:
+        if not variant:
+            return None
+        start = self._cursor.get(variant, 0)
+        pos = self.text.find(variant, start)
+        if pos < 0:
+            return None
+        self._cursor[variant] = pos + len(variant)
+        return pos
+
+
+def _context_hashes(prefix: str, suffix: str) -> set[str]:
+    """回件侧上下文哈希（3 种 normalize 变体容错）。
+
+    与导出侧 ``pipeline.hint_context_hash`` 同规则的是「NFKC + 去空白」变体；
+    另外兼容 raw / 仅 NFKC 两种写法，避免历史映射因空白差异无法命中
+    （命中不了再退回 page+order）。
+    """
+    raw = f"{prefix or ''}|{suffix or ''}"
+    variants = {raw}
+    norm = unicodedata.normalize("NFKC", raw)
+    variants.add(norm)
+    variants.add(re.sub(r"\s+", "", norm))
+    return {hashlib.sha256(v.encode("utf-8")).hexdigest()[:16]
+            for v in variants}
+
+
+def _hints_for_fake(pair: Pair, occurrence_hints: dict) -> list[dict]:
+    if not occurrence_hints:
+        return []
+    for key in (pair.key, pair.fake):
+        items = occurrence_hints.get(key)
+        if isinstance(items, list) and items:
+            return [x for x in items if isinstance(x, dict) and x.get("orig")]
+    return []
+
+
+def _warn_once(report: Report, message: str) -> None:
+    if message not in report.warnings:
+        report.warnings.append(message)
+
+
+def _resolve_occurrence_orig(pair: Pair, occurrence_hints: dict, text: str,
+                             start: int, end: int, page_no: int,
+                             page_order: int, report: Report) -> str:
+    """问题2：同一 fake 的多个候选 orig → context_hash > page+order > canonical。"""
+    candidates = _hints_for_fake(pair, occurrence_hints)
+    if not candidates:
+        return pair.orig
+    etype = (pair.etype or "").upper()
+    typed = [c for c in candidates
+             if not c.get("etype") or str(c.get("etype")).upper() == etype]
+    if typed:
+        candidates = typed
+    prefix = (text or "")[max(0, start - _CONTEXT_CHARS):start]
+    suffix = (text or "")[end:end + _CONTEXT_CHARS]
+    hashes = _context_hashes(prefix, suffix)
+    matched = [c for c in candidates
+               if str(c.get("context_hash") or "") in hashes]
+    if len(matched) == 1:
+        return str(matched[0]["orig"])
+    same_page = [c for c in candidates if c.get("page") == page_no]
+    if same_page:
+        # hint["order"] 是导出侧全局递增序号（非页内序号）：按 order 排序后
+        # 用「同页第几次出现」的 rank 取，不假设 order == page_order。
+        ordered = sorted(same_page, key=lambda c: c.get("order", 0))
+        if 0 <= page_order < len(ordered):
+            return str(ordered[page_order]["orig"])
+        return str(ordered[0]["orig"])
+    _warn_once(report,
+               "有近似实体无法按上下文判定，已按映射默认值还原，请人工核对")
+    return pair.orig
+
+
+def _apply_occurrence_hints(text: str, events: list[Event],
+                            occurrence_hints: dict, page_no: int,
+                            report: Report) -> str:
+    """按问题2规则重建还原文本（扫描页 OCR 行等文本片段通用）。"""
+    if not events:
+        return text
+    out: list[str] = []
+    last = 0
+    counters: dict[str, int] = {}
+    for event in events:
+        out.append(text[last:event.start])
+        order = counters.get(event.pair.fake, 0)
+        counters[event.pair.fake] = order + 1
+        orig = _resolve_occurrence_orig(
+            event.pair, occurrence_hints, text, event.start, event.end,
+            page_no, order, report)
+        out.append(orig)
+        last = event.end
+        report.add_event(event,
+                         orig_override=orig if orig != event.pair.orig else None)
+    out.append(text[last:])
+    return "".join(out)
+
+
+def _scan_ai_hints_for_page(info: "MappingInfo | None", page_no: int) -> list[dict]:
+    if info is None:
+        return []
+    raw = getattr(info, "scan_ai_images", None) or {}
+    if not isinstance(raw, dict):
+        return []
+    for key in (str(page_no), page_no):
+        items = raw.get(key)
+        if isinstance(items, list) and items:
+            return [x for x in items if isinstance(x, dict)]
+    return []
+
+
+def _fake_to_pair(index: _Index) -> dict[str, Pair]:
+    return {pair.fake: pair for pair in index_pairs(index)}
+
+
+def _page_content_area(page) -> float:
+    """页面内容面积（取显示 rect 与 MediaBox 的较大者；旋转 90/270 两者相同）。"""
+    areas = []
+    try:
+        areas.append(abs(float(page.rect.width) * float(page.rect.height)))
+    except Exception:
+        pass
+    try:
+        mb = page.mediabox
+        areas.append(abs(float(mb.width) * float(mb.height)))
+    except Exception:
+        pass
+    return max(areas) if areas else 0.0
+
+
+def _hint_rect_variants(page, hint_rect) -> list:
+    """hint rect（未旋转 PDF 坐标）的可能比较空间：原值 + 旋转/逆旋转显示坐标。
+
+    不同 PyMuPDF 版本的 get_image_rects 可能返回未旋转坐标或显示坐标；旋转页
+    同时接受两种换算并取最大 IoU，避免坐标空间假设错误导致误删整页背景图。
+    """
+    variants = [hint_rect]
+    try:
+        rotation = int(getattr(page, "rotation", 0) or 0) % 360
+    except Exception:
+        rotation = 0
+    if rotation:
+        for matrix in (getattr(page, "rotation_matrix", None),
+                       getattr(page, "derotation_matrix", None)):
+            if matrix is None:
+                continue
+            try:
+                variants.append(hint_rect * matrix)
+            except Exception:
+                pass
+    return variants
+
+
+def _max_hint_iou(page, place, hint_rects: list) -> float:
+    best = 0.0
+    for hint_rect in hint_rects:
+        for variant in _hint_rect_variants(page, hint_rect):
+            best = max(best, _iou_overlap(place, variant))
+    return best
+
+
+def _safe_fake_image_xrefs(page, hints: list[dict]) -> tuple[set[int], list]:
+    """找出「假值替换图」xref，带硬保护：面积 >30% 页面的大图（背景）绝不删。
+
+    返回 (targets, hint_rects)。规则：
+    1) 显式 hint["xref"] 仅当 placement 面积 ≤30% 页面 且与 hint rect IoU≥0.3；
+    2) 几何兜底：任意图片 placement 面积 ≤30% 页面 且 IoU≥0.5；
+    3) 两者都找不到 → 返回空集合（调用方只用白底覆盖，不删任何图）。
+    """
+    import fitz
+
+    page_area = _page_content_area(page)
+    hint_rects: list = []
+    explicit: set[int] = set()
+    for hint in hints or []:
+        if not isinstance(hint, dict):
+            continue
+        if str(hint.get("kind") or "image") != "image":
+            continue
+        raw_xref = hint.get("xref")
+        try:
+            xref = int(raw_xref) if raw_xref is not None else None
+        except (TypeError, ValueError):
+            xref = None
+        if xref:
+            explicit.add(xref)
+        raw_rect = hint.get("rect")
+        if raw_rect:
+            try:
+                hint_rects.append(fitz.Rect(*[float(v) for v in raw_rect]))
+            except Exception:
+                pass
+    try:
+        infos = list(page.get_images(full=True))
+    except Exception:
+        infos = []
+
+    def placements_for(xref: int) -> list:
+        try:
+            return list(page.get_image_rects(xref))
+        except Exception:
+            return []
+
+    def small(place) -> bool:
+        if place.is_empty:
+            return False
+        if page_area <= 0:
+            return True
+        return place.width * place.height <= page_area * 0.30
+
+    targets: set[int] = set()
+    # 1) 显式 xref：必须是小图 + 与 hint rect 有重叠（任一坐标空间）
+    for xref in explicit:
+        for place in placements_for(xref):
+            if not small(place):
+                continue        # 整页背景图：绝不删
+            if _max_hint_iou(page, place, hint_rects) >= 0.3:
+                targets.add(xref)
+                break
+    # 2) 几何兜底：小图 + IoU≥0.5（不依赖 xref，防 xref 重排/失效）
+    for info in infos:
+        try:
+            xref = int(info[0])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if xref in targets:
+            continue
+        for place in placements_for(xref):
+            if not small(place):
+                continue
+            if _max_hint_iou(page, place, hint_rects) >= 0.5:
+                targets.add(xref)
+                break
+    return targets, hint_rects
+
+
+def _detect_fake_image_xrefs(src: Path, scan_ai_images: dict) -> dict[int, set[int]]:
+    """在回件 PDF 上定位「假值替换图」xref（面积 >30% 页面的大图一律不选）。"""
+    import fitz
+
+    targets: dict[int, set[int]] = {}
+    try:
+        doc = fitz.open(str(src))
+    except Exception:
+        return targets
+    try:
+        for pno_key, items in (scan_ai_images or {}).items():
+            try:
+                pno = int(pno_key)
+            except (TypeError, ValueError):
+                continue
+            if pno < 0 or pno >= doc.page_count or not isinstance(items, list):
+                continue
+            found, _hint_rects = _safe_fake_image_xrefs(doc[pno], items)
+            if found:
+                targets[pno] = found
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+    return targets
+
+
+def _preclean_scan_ai_images(src: Path, scan_ai_images: dict) -> dict | None:
+    """用 pikepdf 物理移除假值替换图（保整页背景扫描图），返回临时 PDF 信息。
+
+    PyMuPDF 的 ``page.delete_image`` 只是把图片替换成 1x1 透明占位图，图片对象
+    数不变（F4 的图片对象门会判「未移除」）；这里在打开回件前用 pikepdf 把
+    目标 XObject 从页资源与内容流 ``Do`` 指令中物理摘掉，图片对象数真正 -N。
+    返回 ``{"path": tmp, "removed": n}``；失败/无目标返回 None。
+    """
+    import pikepdf
+    import re as _re
+
+    targets = _detect_fake_image_xrefs(src, scan_ai_images)
+    if not targets:
+        return None
+    tmp = src.with_name(f".{src.stem}.zy_scan_ai_clean.pdf")
+    try:
+        pdf = pikepdf.open(str(src))
+    except Exception:
+        return None
+    removed = 0
+    try:
+        for pno, xrefs in targets.items():
+            if pno < 0 or pno >= len(pdf.pages):
+                continue
+            page = pdf.pages[pno]
+            node = page.obj
+            res = None
+            guard = 0
+            while res is None and guard < 32:
+                if "/Resources" in node:
+                    try:
+                        res = node["/Resources"]
+                    except Exception:
+                        res = None
+                    break
+                if "/Parent" not in node:
+                    break
+                try:
+                    node = node["/Parent"]
+                except Exception:
+                    break
+                guard += 1
+            if res is None:
+                continue
+            try:
+                xobjects = res.get("/XObject")
+            except Exception:
+                xobjects = None
+            if xobjects is None:
+                continue
+            names: list[str] = []
+            for key in list(xobjects.keys()):
+                try:
+                    value = xobjects[key]
+                    if not getattr(value, "is_indirect", False):
+                        continue
+                    if int(value.objgen[0]) in xrefs:
+                        names.append(str(key))
+                except Exception:
+                    continue
+            if not names:
+                continue
+            for key in names:
+                try:
+                    del xobjects[key]
+                except Exception:
+                    pass
+            removed += len(names)
+            try:
+                contents = page.obj.get("/Contents")
+            except Exception:
+                contents = None
+            if isinstance(contents, pikepdf.Array):
+                streams = list(contents)
+            elif contents is not None:
+                streams = [contents]
+            else:
+                streams = []
+            if names:
+                pattern = _re.compile(
+                    rb"/(" + b"|".join(
+                        _re.escape(n.lstrip("/").encode("latin-1", "replace"))
+                        for n in names) + rb")\s+Do\b")
+                for stream in streams:
+                    try:
+                        data = stream.read_bytes()
+                        new_data = pattern.sub(b"", data)
+                        if new_data != data:
+                            stream.write(new_data)
+                    except Exception:
+                        continue
+        if not removed:
+            pdf.close()
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return None
+        pdf.save(str(tmp), compress_streams=True,
+                 object_stream_mode=pikepdf.ObjectStreamMode.generate)
+        pdf.close()
+        return {"path": tmp, "removed": removed}
+    except Exception:
+        try:
+            pdf.close()
+        except Exception:
+            pass
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+
+def _iou_overlap(a, b) -> float:
+    """两个矩形（fitz.Rect）的交并比；用于识别「假值替换图 ≈ hint rect」。"""
+    try:
+        x0, y0 = max(a.x0, b.x0), max(a.y0, b.y0)
+        x1, y1 = min(a.x1, b.x1), min(a.y1, b.y1)
+        if x1 <= x0 or y1 <= y0:
+            return 0.0
+        inter = (x1 - x0) * (y1 - y0)
+        area = a.width * a.height + b.width * b.height - inter
+        return inter / area if area > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+def _hint_occurrence_index(hint_rect, text_rects: list) -> int | None:
+    """hint（图片位置）对应页面文本层中第几次 fake 出现：取重叠最大者。"""
+    best: int | None = None
+    best_overlap = 0.0
+    for idx, rect in enumerate(text_rects):
+        try:
+            overlap = _rect_overlap(rect, hint_rect)
+        except Exception:
+            continue
+        if overlap > best_overlap:
+            best, best_overlap = idx, overlap
+    return best if best_overlap >= 0.2 else None
+
+
+def _repair_scan_ai_page(page, hints: list[dict], index: _Index,
+                         info: "MappingInfo | None", report: Report,
+                         page_no: int, use_occurrence: bool,
+                         delete_images: bool = True) -> dict:
+    """问题1：移除 AI 扫描页假值像素图 → 清隐藏文本层 fake → 写真值。
+
+    ``delete_images=False``：调用方已完成「预清理」（图片对象在打开回件前被
+    pikepdf 物理移除），此时绝不能再按 hint xref 删图——xref 会因 preclean
+    重存而重排，可能指向整页背景图（F4 doc08 p0 黑页事故）。
+    返回 ``{"inserted": n, "custom_font": bool}``。
+    """
+    import fitz
+
+    fake_pairs = _fake_to_pair(index)
+    prepared: list[dict] = []
+    seen: set[tuple] = set()
+    for hint in hints:
+        fake = str(hint.get("fake") or "")
+        if not fake:
+            continue
+        try:
+            rect = fitz.Rect(*[float(v) for v in (hint.get("rect") or [])])
+        except Exception:
+            continue
+        if rect.is_empty or rect.width <= 0 or rect.height <= 0:
+            continue
+        key = (round(rect.x0, 2), round(rect.y0, 2), round(rect.x1, 2),
+               round(rect.y1, 2), fake)
+        if key in seen:
+            continue
+        seen.add(key)
+        prepared.append({"rect": rect, "fake": fake, "hint": hint})
+    if not prepared:
+        return {"inserted": 0, "custom_font": False}
+
+    pre_text = page.get_text("text") or ""
+    had_text_layer = bool(pre_text.strip())
+    hint_rects = [item["rect"] for item in prepared]
+    page_rotate = int(getattr(page, "rotation", 0) or 0) % 360
+
+    # 0) 记录 fake 文本出现位置（rects / 字符偏移），供问题2消歧与
+    #    「hint rect ↔ 第几次出现」对齐（hints 是图片位置，文本抽取顺序可能不同）。
+    fake_rects: dict[str, list] = {}
+    fake_positions: dict[str, list[int]] = {}
+    for fake in {item["fake"] for item in prepared}:
+        try:
+            fake_rects[fake] = list(page.search_for(fake))
+        except Exception:
+            fake_rects[fake] = []
+        positions: list[int] = []
+        cursor = 0
+        while True:
+            pos = pre_text.find(fake, cursor)
+            if pos < 0:
+                break
+            positions.append(pos)
+            cursor = pos + len(fake)
+        fake_positions[fake] = positions
+
+    # 1) 只删除「假值替换小图」，保留整页扫描背景图。
+    #    预清理成功时图片已在打开前物理移除（delete_images=False），这里不再按
+    #    xref 删图——preclean 重存会重排 xref，可能把 hint["xref"] 指向整页
+    #    背景图（F4 doc08 p0 黑页事故的根因）。
+    #    预清理失败才走安全删除（_safe_fake_image_xrefs）：
+    #      · 面积 >30% 页面的大图（背景）绝不删；
+    #      · 显式 xref 需「小图 + 与 hint rect IoU≥0.3」（旋转页兼容两种坐标空间）；
+    #      · 几何兜底：小图 + IoU≥0.5；
+    #      · 找不到匹配 → 一张图都不删，后面用白底覆盖假值图。
+    deleted: list[int] = []
+    failed_images = 0
+    if delete_images:
+        try:
+            safe_xrefs, _safe_rects = _safe_fake_image_xrefs(page, hints)
+        except Exception:
+            safe_xrefs = set()
+        for xref in sorted(safe_xrefs):
+            try:
+                page.delete_image(int(xref))
+                deleted.append(int(xref))
+            except Exception:
+                failed_images += 1
+    # 1b) 兜底：有替换图删不掉时，用 PIXELS 模式只抹掉与 hint 相交的像素
+    #     （保留整页图其余部分；比 REMOVE 模式安全）。
+    if failed_images:
+        for item in prepared:
+            try:
+                page.add_redact_annot(item["rect"], fill=None)
+            except Exception:
+                pass
+        try:
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS,
+                                  graphics=fitz.PDF_REDACT_LINE_ART_NONE)
+        except Exception:
+            _warn_once(report, "AI 扫描页假值图像素抹除失败，请人工核对")
+
+    # 2) 清 hint 区域内的 fake 文本（可见文字回退路径 + 隐藏文本层）；只删文本
+    for item in prepared:
+        try:
+            page.add_redact_annot(item["rect"], fill=None)
+        except Exception:
+            pass
+    try:
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
+                              graphics=fitz.PDF_REDACT_LINE_ART_NONE)
+    except Exception:
+        _warn_once(report, "AI 扫描页隐藏文本层清理失败，请人工核对")
+
+    # 2b) 幂等：hint 矩形内仍搜得到 fake（文本层偏移）时再清一次；
+    #     非 hint 覆盖的 fake 留给下面的通用文本层分支还原（避免漏还原）。
+    residual = 0
+    for fake in {item["fake"] for item in prepared}:
+        try:
+            rects = page.search_for(fake)
+        except Exception:
+            rects = []
+        for rect in rects:
+            if rect.is_empty:
+                continue
+            if not any(_rect_overlap(rect, hint_rect) > 0.2
+                       for hint_rect in hint_rects):
+                continue
+            try:
+                page.add_redact_annot(rect, fill=None)
+                residual += 1
+            except Exception:
+                pass
+    if residual:
+        try:
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
+                                  graphics=fitz.PDF_REDACT_LINE_ART_NONE)
+        except Exception:
+            _warn_once(report, "AI 扫描页隐藏文本层清理失败，请人工核对")
+
+    # 3) 写可见真值（页面原有隐藏文本层时再补一条 render_mode=3 真值）
+    #    先给「图片型 hint」铺白底：假值替换图原是白底小图，物理删除后会露出
+    #    扫描底图（可能带噪点/残影），直接写文字会降低 OCR/可读性。
+    for item in prepared:
+        if str(item["hint"].get("kind") or "image") != "image":
+            continue
+        try:
+            page.draw_rect(item["rect"], color=None, fill=(1, 1, 1),
+                           overlay=True, width=0)
+        except Exception:
+            pass
+    inserted = hidden = shrunk = 0
+    custom_font = False
+    for item in prepared:
+        fake, hint, rect = item["fake"], item["hint"], item["rect"]
+        pair = fake_pairs.get(fake)
+        if pair is None:
+            _warn_once(report, "AI 扫描页提示中有无法对应映射的假值，已跳过 1 处")
+            continue
+        orig = pair.orig
+        if use_occurrence and info is not None and info.occurrence_hints:
+            # hint 是图片位置，可能对应页面上的第 2/3 次 fake 文本出现；
+            # 用 rect 重叠把 hint 对齐到具体出现次序，再按 context/page+order 消歧。
+            occ_idx = _hint_occurrence_index(rect, fake_rects.get(fake) or [])
+            positions = fake_positions.get(fake) or []
+            order = occ_idx if occ_idx is not None else 0
+            pos = (positions[occ_idx]
+                   if occ_idx is not None and occ_idx < len(positions) else None)
+            if pos is not None:
+                orig = _resolve_occurrence_orig(
+                    pair, info.occurrence_hints, pre_text, pos, pos + len(fake),
+                    page_no, order, report)
+        try:
+            size = float(hint.get("size") or
+                         max(6.0, min(24.0, rect.height * 0.8)))
+        except Exception:
+            size = max(6.0, min(24.0, rect.height * 0.8))
+        try:
+            origin_y = float(hint.get("origin_y") or hint.get("baseline") or
+                             (rect.y1 - size * 0.2))
+        except Exception:
+            origin_y = rect.y1 - size * 0.2
+        color = None
+        raw_color = hint.get("color")
+        if isinstance(raw_color, (list, tuple)) and len(raw_color) == 3:
+            try:
+                color = tuple(float(v) for v in raw_color)
+            except Exception:
+                color = None
+        ok, was_shrunk, used_custom = _pdf_insert(
+            page, rect, orig, size, origin_y, color, report,
+            rotate=page_rotate,
+            width_limit=(rect.height if page_rotate in (90, 270)
+                         else rect.width))
+        if not ok:
+            _warn_once(report, "AI 扫描页真值写入失败，已跳过 1 处")
+            continue
+        inserted += 1
+        shrunk += int(was_shrunk)
+        custom_font = custom_font or used_custom
+        report.add_event(Event(0, 0, pair, fake),
+                         orig_override=orig if orig != pair.orig else None)
+        if had_text_layer:
+            try:
+                fontname, used_custom2 = _ensure_restore_font(page)
+                custom_font = custom_font or used_custom2
+                # 隐藏层真值固定用 rotate=0 写入（内容坐标横排）：仅用于纯文本
+                # 抽取；若跟可见文字一样旋转，`get_text(sort=True)` 会把两条
+                # 重叠的旋转文本交错排序，导致真值被拆开（F4 doc08 实测）。
+                # 再按页面内容边界收回，避免横排文本超出 MediaBox 被截断。
+                hidden_x, hidden_y = _insert_origin(rect, 0, origin_y)
+                try:
+                    content_w = float(page.mediabox.width)
+                    content_h = float(page.mediabox.height)
+                    text_w = fitz.get_text_length(
+                        orig, fontname="china-s", fontsize=size)
+                    if hidden_x + text_w > content_w - 1:
+                        hidden_x = max(1.0, content_w - 1 - text_w)
+                    hidden_y = min(max(hidden_y, size), content_h - 1)
+                except Exception:
+                    pass
+                page.insert_text((hidden_x, hidden_y), orig, fontsize=size,
+                                 fontname=fontname, color=color or (0, 0, 0),
+                                 render_mode=3)
+                hidden += 1
+            except Exception:
+                _warn_once(report, "AI 扫描页隐藏文本真值写入失败，已跳过 1 处")
+    if inserted or hidden:
+        report.warnings.append(
+            f"AI 扫描页回件重绘：移除假值小图 {len(deleted)} 个/假值文本 "
+            f"{len(prepared)} 处，写入可见真值 {inserted} 处、隐藏文本 {hidden} 处")
+        if shrunk:
+            report.warnings.append(f"{shrunk} 处 AI 回件真值较长，已自动缩字")
+    return {"inserted": inserted, "custom_font": custom_font}
+
+
 def _restore_pdf(src: Path, dst: Path, item: dict, index: _Index,
-                 report: Report) -> Path | None:
+                 report: Report,
+                 info: "MappingInfo | None" = None) -> Path | None:
     """还原 PDF 文本层；返回扫描页侧车文本路径（没有则 None）。
 
     扫描页（无文本层）不做版式回写，只 OCR 出还原后的文本放进侧车。
@@ -1108,21 +1812,76 @@ def _restore_pdf(src: Path, dst: Path, item: dict, index: _Index,
         import fitz
     except Exception:
         raise RestoreError("本机缺少 PDF 组件，无法还原 PDF", "restore_failed", 503)
+    # 问题1：先物理摘掉「假值替换图」再进入 fitz 处理（保留整页扫描背景图）。
+    preclean: dict | None = None
+    if (_env_flag(RESTORE_SCAN_AI_V2_ENV) and info is not None
+            and getattr(info, "scan_ai_images", None)):
+        try:
+            preclean = _preclean_scan_ai_images(
+                Path(src), getattr(info, "scan_ai_images", {}) or {})
+        except Exception:
+            preclean = None
+    open_src = preclean["path"] if preclean else src
     try:
-        doc = fitz.open(str(src))
+        doc = fitz.open(str(open_src))
     except Exception as exc:
+        if preclean:
+            try:
+                preclean["path"].unlink(missing_ok=True)
+            except Exception:
+                pass
         raise RestoreError(f"打不开这个 PDF：{exc}", "restore_failed", 400)
     if doc.needs_pass:
         doc.close()
+        if preclean:
+            try:
+                preclean["path"].unlink(missing_ok=True)
+            except Exception:
+                pass
         raise RestoreError("这份 PDF 有密码，先解锁后再还原", "restore_failed", 400)
     scanned_pages: list[tuple[int, str]] = []
     shrunk = 0
     custom_font = False
     text_layer_replaced = 0
+    scan_ai_v2 = _env_flag(RESTORE_SCAN_AI_V2_ENV)
+    occurrence_hints_on = _env_flag(RESTORE_OCCURRENCE_HINTS_ENV)
+    use_occ = bool(occurrence_hints_on and info is not None
+                   and info.occurrence_hints)
+    force_text_rotate = 0   # >0 = 该页由 scan-AI 分支收口，通用写回也要跟页旋转
+    # 该页是否已被 scan-AI 分支处理过（通用文本层分支需禁用图片 redaction：
+    # PyMuPDF 默认 apply_redactions() 会动图片，旋转页上可能把整页背景图删成
+    # 1x1 占位（F4 doc08 p0 黑页根因），flag-on 路径必须只删文本）
+    scan_ai_page = False
+    if preclean:
+        report.warnings.append(
+            f"AI 扫描页回件预清理：物理移除假值替换图 {preclean['removed']} 个"
+            "（保留整页扫描背景图）")
+        report.scan_ai_removed_images = preclean["removed"]
     try:
         for pno in range(doc.page_count):
             page = doc[pno]
             raw_text = page.get_text("text") or ""
+            scan_ai_page = False
+            if scan_ai_v2:
+                page_hints = _scan_ai_hints_for_page(info, pno)
+                if page_hints:
+                    # 问题1：AI 扫描页（可见假值图 + 隐藏文本层）重绘真值；
+                    # 该页不再走下面的通用文本层重绘分支，避免双写。
+                    repaired = _repair_scan_ai_page(
+                        page, page_hints, index, info, report, pno,
+                        use_occurrence=use_occ,
+                        delete_images=preclean is None)
+                    text_layer_replaced += repaired["inserted"]
+                    custom_font = custom_font or repaired["custom_font"]
+                    report.scan_ai_fixed = (
+                        int(getattr(report, "scan_ai_fixed", 0) or 0)
+                        + repaired["inserted"])
+                    # 提示只覆盖「替换图」；页面可能还有未被图片化、仅以文字
+                    # 形式出现的同 fake（导出图片化失败的回退文字），继续走下面的
+                    # 通用文本层分支按映射还原，避免漏还原/漏删。
+                    raw_text = page.get_text("text") or ""
+                    force_text_rotate = int(page.rotation or 0) % 360
+                    scan_ai_page = True
             if not raw_text.strip():
                 # 扫描页：OCR 出文本，供侧车还原
                 try:
@@ -1138,8 +1897,14 @@ def _restore_pdf(src: Path, dst: Path, item: dict, index: _Index,
                 for line in lines:
                     new_text, events = scan_replace(line.text, index)
                     if events:
-                        report.add_events(events)
-                        changed_lines.append(new_text)
+                        if use_occ:
+                            # 问题2：扫描页 OCR 行同样按上下文消歧
+                            changed_lines.append(_apply_occurrence_hints(
+                                line.text, events, info.occurrence_hints,
+                                pno, report))
+                        else:
+                            report.add_events(events)
+                            changed_lines.append(new_text)
                     else:
                         changed_lines.append(line.text)
                 if lines:
@@ -1157,7 +1922,7 @@ def _restore_pdf(src: Path, dst: Path, item: dict, index: _Index,
                         seen_variants.add(variant)
                         variants.append((variant, pair))
             variants.sort(key=lambda item_: len(item_[0]), reverse=True)
-            selected: list[tuple[Any, Pair]] = []
+            selected: list[tuple[Any, Pair, str]] = []
             for variant, pair in variants:
                 try:
                     rects = page.search_for(variant)
@@ -1166,13 +1931,16 @@ def _restore_pdf(src: Path, dst: Path, item: dict, index: _Index,
                 for rect in rects:
                     if rect.is_empty:
                         continue
-                    if any(_rect_overlap(rect, old) > 0.35 for old, _ in selected):
+                    if any(_rect_overlap(rect, old) > 0.35
+                           for old, _p, _v in selected):
                         continue
-                    selected.append((rect, pair))
+                    selected.append((rect, pair, variant))
             if not selected:
                 continue
+            locator = _TextLocator(raw_text) if use_occ else None
+            order_counters: dict[str, int] = {}
             jobs = []
-            for rect, pair in selected:
+            for rect, pair, variant in selected:
                 span = _pdf_span_at(spans, rect)
                 size = float(span.get("size") or 10.0) if span else 10.0
                 origin_y = float(span["origin"][1]) if span and span.get("origin") else rect.y1 - 2
@@ -1182,30 +1950,56 @@ def _restore_pdf(src: Path, dst: Path, item: dict, index: _Index,
                         color = fitz.sRGB_to_pdf(int(span["color"]))
                 except Exception:
                     color = None
-                jobs.append((rect, pair, size, origin_y, color))
-            for rect, _pair, _size, _y, _color in jobs:
+                chosen_orig = pair.orig
+                if use_occ:
+                    # 问题2：同一假值多候选原值 → 按回件上下文消歧
+                    pos = locator.locate(variant) if locator is not None else None
+                    order = order_counters.get(pair.fake, 0)
+                    order_counters[pair.fake] = order + 1
+                    if pos is not None:
+                        chosen_orig = _resolve_occurrence_orig(
+                            pair, info.occurrence_hints, raw_text, pos,
+                            pos + len(variant), pno, order, report)
+                jobs.append((rect, pair, size, origin_y, color, chosen_orig))
+            for rect, _pair, _size, _y, _color, _orig in jobs:
                 try:
                     page.add_redact_annot(rect, fill=None)
                 except Exception:
                     pass
             try:
-                page.apply_redactions()
+                if scan_ai_page:
+                    # scan-AI 页：只删文本，绝不动图片/线稿（保护整页扫描背景图）
+                    page.apply_redactions(
+                        images=fitz.PDF_REDACT_IMAGE_NONE,
+                        graphics=fitz.PDF_REDACT_LINE_ART_NONE)
+                else:
+                    page.apply_redactions()
             except Exception:
                 pass
-            inserted_events: list[Event] = []
-            for rect, pair, size, origin_y, color in jobs:
+            inserted_events: list[tuple[Event, str]] = []
+            for rect, pair, size, origin_y, color, chosen_orig in jobs:
                 ok, was_shrunk, used_custom = _pdf_insert(
-                    page, rect, pair.orig, size, origin_y, color, report)
+                    page, rect, chosen_orig, size, origin_y, color, report,
+                    rotate=force_text_rotate,
+                    width_limit=(rect.height
+                                 if force_text_rotate in (90, 270)
+                                 else rect.width))
                 if not ok:
                     report.warnings.append("有 1 处 PDF 文本插入失败，已跳过")
                     continue
                 custom_font = custom_font or used_custom
-                inserted_events.append(Event(0, 0, pair, pair.fake))
+                inserted_events.append((Event(0, 0, pair, pair.fake),
+                                        chosen_orig))
                 if was_shrunk:
                     shrunk += 1
             if inserted_events:
                 text_layer_replaced += len(inserted_events)
-                report.add_events(inserted_events)
+                for event, chosen_orig in inserted_events:
+                    report.add_event(
+                        event,
+                        orig_override=(chosen_orig
+                                       if chosen_orig != event.pair.orig
+                                       else None))
         if shrunk:
             report.warnings.append(f"{shrunk} 处真值较长，PDF 中原位置已缩字")
         sidecar: Path | None = None
@@ -1238,6 +2032,11 @@ def _restore_pdf(src: Path, dst: Path, item: dict, index: _Index,
             doc.close()
         except Exception:
             pass
+        if preclean:
+            try:
+                preclean["path"].unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def index_pairs(index: _Index) -> list[Pair]:
@@ -1434,7 +2233,8 @@ def restore_path(src: Path, name: str, mapping: MappingInfo,
         report.artifacts.append(Artifact(kind="main", path=dst, name=dst.name))
     elif fmt == "pdf":
         dst = out_path(".pdf")
-        _restore_pdf(src, dst, pre_extracted or {}, mapping.index, report)
+        _restore_pdf(src, dst, pre_extracted or {}, mapping.index, report,
+                     info=mapping)
         if dst.exists():
             report.artifacts.insert(0, Artifact(kind="main", path=dst, name=dst.name))
     elif fmt == "image":

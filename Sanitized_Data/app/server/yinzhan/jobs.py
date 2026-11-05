@@ -104,6 +104,56 @@ def _embedded_media_info(doc: Document) -> dict:
         return {}
 
 
+# ── 回件映射提示（问题1/2 导出侧，见 PROD_FIX_DESIGN_2026-11-05） ──
+
+def _collect_scan_ai_images(doc: Document | None) -> dict:
+    """把解析器记录的 ``doc.extra["ai_scan_images"]`` 按页分组（仅非空）。"""
+    try:
+        items = (getattr(doc, "extra", None) or {}).get("ai_scan_images") or []
+    except Exception:
+        return {}
+    grouped: dict[str, list[dict]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            page = int(item.get("page", 0))
+        except (TypeError, ValueError):
+            page = 0
+        grouped.setdefault(str(page), []).append(dict(item))
+    return grouped
+
+
+def _collect_pdf_restore_hints(job) -> dict:
+    """收集随 vault 映射保存的回件提示；无内容时返回 ``{}``（不写 meta 键）。
+
+    - ``scan_ai_images``：扫描页 AI 可见假值图位置（问题1，来自解析器 doc.extra）；
+    - ``occurrence_hints``：同一假值多原值的上下文哈希（问题2，pipeline 生成）。
+
+    只在非空时写入；不改变 vault 加密格式/旧字段，旧映射无此键时回件走原逻辑。
+    """
+    doc = getattr(job, "doc", None)
+    hints: dict = {"version": 1}
+    try:
+        scan = _collect_scan_ai_images(doc)
+    except Exception:  # noqa: BLE001  提示生成失败不得影响导出
+        scan = {}
+    if scan:
+        hints["scan_ai_images"] = scan
+    try:
+        occurrence = pipeline.build_occurrence_hints(
+            doc, getattr(job, "entities", []) or [])
+    except Exception as exc:  # noqa: BLE001
+        try:
+            job.warnings.append(f"回件映射提示生成失败：{exc}")
+        except Exception:
+            pass
+        occurrence = {}
+    if occurrence:
+        hints["occurrence_hints"] = occurrence
+    return hints if len(hints) > 1 else {}
+
+
 # 同一 warning 在多页扫描件里常按页重复一次（典型：人像检测的「照片较大…」），
 # 逐页堆叠会把真正需要看的错误淹掉。这里只合并**完全相同的字符串**（不同错误
 # 绝不合并），保留首次出现顺序并标注出现次数；已带计数的可重复调用（幂等）。
@@ -903,6 +953,11 @@ class JobManager:
                 geo_params = (job.doc.extra or {}).get("geo_params") if job.doc else None
                 if geo_params:
                     extra["geo"] = geo_params
+                # 回件提示（问题1 扫描页假值图位置 + 问题2 同假值多原值上下文哈希）：
+                # 只在非空时新增 meta 键；不改 vault 加密格式/旧字段，旧映射兼容。
+                restore_hints = _collect_pdf_restore_hints(job)
+                if restore_hints:
+                    extra["pdf_restore_hints"] = restore_hints
                 vault.save_mapping(job.id, job.session.to_dict(), extra)
             record = {
                 "out": str(out), "name": out.name, "seal_no": seal,

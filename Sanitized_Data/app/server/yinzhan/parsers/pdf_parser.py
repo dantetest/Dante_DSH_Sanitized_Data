@@ -1529,6 +1529,9 @@ def _render_replacement_pixmap(display_rect: fitz.Rect,
         dpi = min(AI_REPLACEMENT_IMAGE_MAX_DPI,
                   AI_REPLACEMENT_IMAGE_MAX_PX * 72.0 / width)
         dpi = max(AI_REPLACEMENT_IMAGE_MIN_DPI, dpi)
+        # PyMuPDF set_dpi 只接受 int；某些矩形宽度会算出小数 dpi（如 226.618），
+        # 直接传会抛 TypeError → 图片路径失败回退文字（doc03 云基公司处即此因）。
+        dpi = int(round(float(dpi)))
         return page.get_pixmap(dpi=dpi, alpha=False)
     except Exception:
         return None
@@ -1540,11 +1543,17 @@ def _render_replacement_pixmap(display_rect: fitz.Rect,
 
 
 def _insert_replacement_image(page: fitz.Page, rect: fitz.Rect,
-                              text: str) -> bool:
+                              text: str, *, meta: dict | None = None) -> bool:
     """扫描页 AI 模式：把替换文字渲染成图片贴回矩形（不产生可提取文字）。
 
-    ``rect`` 是未旋转坐标（``_to_pdf_space`` 的结果）。返回 False 表示图片
-    路径不可用，调用方回退到旧的文字写回。
+    ``rect`` 是未旋转坐标（``_to_pdf_space`` 的结果），也是实际
+    ``page.insert_image(fitz.Rect(rect), ...)`` 使用的同一矩形。返回 False
+    表示图片路径不可用，调用方回退到旧的文字写回。
+
+    ``meta`` 可选：成功后写入 ``meta["xref"]`` = ``page.insert_image(...)`` 的
+    返回值（图片 XObject 引用号），供回件侧 ``page.delete_image(xref)`` 精准删
+    假值小图；导出保存后若 garbage 回收导致重排，会由
+    ``_resolve_scan_ai_hint_xrefs`` 用几何 bbox 重定位成成品里的稳定 xref。
     """
     text = (text or "").replace("\r", " ").replace("\n", " ").strip()
     if not text or rect.width <= 0.2 or rect.height <= 0.2:
@@ -1556,12 +1565,202 @@ def _insert_replacement_image(page: fitz.Page, rect: fitz.Rect,
         pix = _render_replacement_pixmap(fitz.Rect(display), text)
         if pix is None:
             return False
-        page.insert_image(
+        xref = page.insert_image(
             fitz.Rect(rect), pixmap=pix, rotate=_rotation(page),
             overlay=True, keep_proportion=False)
+        if meta is not None:
+            try:
+                if int(xref) > 0:
+                    meta["xref"] = int(xref)
+            except (TypeError, ValueError):
+                pass
         return True
     except Exception:
         return False
+
+
+# ── 问题1（扫描件 AI 回件叠影）导出侧记录 ──
+# 回件（restore.py）只重写文本层，无法擦除 AI 版里被图片化的可见假值像素；
+# 导出时把每张假值图的位置/文本/旋转记录到 doc.extra["ai_scan_images"]，由
+# jobs 侧写入映射库 meta（pdf_restore_hints.scan_ai_images），回件侧在
+# YINZHAN_RESTORE_SCAN_AI_V2 开关下消费。只写 doc.extra，不改变页面输出。
+
+def _estimate_scan_image_font_size(page: fitz.Page, rect: fitz.Rect) -> float:
+    """估算可见假值图片的显示字号（供回件重绘参考；渲染路径内部可能再收缩）。"""
+    try:
+        display = _to_page_space(rect, page)
+        width = max(6.0, float(display[2]) - float(display[0]))
+        height = max(6.0, float(display[3]) - float(display[1]))
+        pad = min(0.6, height * 0.05)
+        inner_height = max(0.0, height - 2.0 * pad)
+        return round(max(MIN_FONT_SIZE, inner_height * 0.72), 2)
+    except Exception:
+        return round(float(MIN_FONT_SIZE), 2)
+
+
+def _record_scan_ai_image(doc: Document, page_no: int, page: fitz.Page,
+                          rect: fitz.Rect, text: str,
+                          *, xref: int | None = None) -> None:
+    """记录一张「扫描页 AI 可见假值图」的位置（问题1 导出侧提示，kind=image）。
+
+    rect 用**未旋转 PDF 坐标**（与 ``_insert_replacement_image`` 实际贴图的
+    ``page.insert_image(fitz.Rect(rect))`` 是同一矩形）；rotation 供回件侧按页
+    旋转还原显示方向；xref 为假值图 XObject 引用号（回件侧可
+    ``page.delete_image(xref)`` 精准删除，不会误删整页扫描底图）。
+    记录失败不影响导出（仅提示用途）。
+    """
+    try:
+        fake = (text or "").replace("\r", " ").replace("\n", " ").strip()
+        if not fake:
+            return
+        record = {
+            "kind": "image",
+            "page": int(page_no),
+            "rect": [round(float(rect.x0), 3), round(float(rect.y0), 3),
+                     round(float(rect.x1), 3), round(float(rect.y1), 3)],
+            "fake": fake,
+            "rotation": int(_rotation(page)),
+            "size": _estimate_scan_image_font_size(page, rect),
+            "color": [0.0, 0.0, 0.0],
+        }
+        if xref is not None:
+            try:
+                record["xref"] = int(xref)
+            except (TypeError, ValueError):
+                pass
+        doc.extra.setdefault("ai_scan_images", []).append(record)
+    except Exception:
+        return
+
+
+def _record_scan_ai_text_hint(doc: Document, page_no: int, page: fitz.Page,
+                              rect: fitz.Rect, text: str) -> None:
+    """记录一处「图片路径失败、回退为可见文字」的扫描页假值（kind=text）。
+
+    回件侧看不到图片，只能按该矩形把假值文字擦除并重写真值；若不记录，
+    回件会在该位置漏还原（doc03「明辨***公司」曾因浮点 dpi 失败走到这里）。
+    """
+    try:
+        fake = (text or "").replace("\r", " ").replace("\n", " ").strip()
+        if not fake:
+            return
+        display = _to_page_space(rect, page)
+        height = max(1.0, float(display[3]) - float(display[1]))
+        doc.extra.setdefault("ai_scan_images", []).append({
+            "kind": "text",
+            "page": int(page_no),
+            "rect": [round(float(rect.x0), 3), round(float(rect.y0), 3),
+                     round(float(rect.x1), 3), round(float(rect.y1), 3)],
+            "fake": fake,
+            "rotation": int(_rotation(page)),
+            "size": round(max(MIN_FONT_SIZE, height * 0.85), 2),
+            "color": [0.0, 0.0, 0.0],
+        })
+    except Exception:
+        return
+
+
+def _image_bbox_unrotated(bbox_raw: Any, page: fitz.Page) -> fitz.Rect | None:
+    """图片 bbox → 面积不变的矩形（旋转不改变面积，用于面积保护判定）。"""
+    try:
+        bbox = fitz.Rect(bbox_raw)
+        if bbox.is_empty and bbox.width <= 0:
+            return None
+        return bbox
+    except Exception:
+        return None
+
+
+def _match_image_rect_dev(rect: fitz.Rect, bbox: fitz.Rect,
+                          page: fitz.Page) -> float:
+    """hint rect（未旋转 PDF 坐标）与图片 bbox 的最大边偏差（pt）。
+
+    图片 bbox 的坐标空间随 PyMuPDF 版本/页面旋转可能是未旋转坐标或显示坐标，
+    两种口径都试，取较小偏差。
+    """
+    candidates = [bbox]
+    try:
+        if _rotation(page):
+            candidates.append(_to_pdf_space(bbox, page))
+    except Exception:
+        pass
+    best = float("inf")
+    for candidate in candidates:
+        try:
+            dev = max(abs(candidate.x0 - rect.x0), abs(candidate.y0 - rect.y0),
+                      abs(candidate.x1 - rect.x1), abs(candidate.y1 - rect.y1))
+        except Exception:
+            continue
+        best = min(best, float(dev))
+    return best
+
+
+def _resolve_scan_ai_hint_xrefs(doc: Document, out_path: Path,
+                                tol: float = 1.5) -> None:
+    """成品保存后重开，为 image hints 解析**稳定** xref（garbage 回收可能重排）。
+
+    ``page.insert_image`` 返回值在保存前的文档里有效；``pdf.save(garbage=4)``
+    可能重排对象号。这里以成品为准：按 hint rect 在成品页里找 bbox 匹配的图片，
+    写回 record["xref"]（找不到则移除 xref，回件侧按 rect 几何兜底）。
+    """
+    records = (getattr(doc, "extra", None) or {}).get("ai_scan_images")
+    if not isinstance(records, list) or not records:
+        return
+    image_records = [r for r in records
+                     if isinstance(r, dict) and r.get("kind") != "text"]
+    if not image_records:
+        return
+    try:
+        import fitz
+    except Exception:
+        return
+    try:
+        with fitz.open(str(out_path)) as pdf:
+            for record in image_records:
+                try:
+                    pno = int(record.get("page") or 0)
+                    if pno < 0 or pno >= pdf.page_count:
+                        continue
+                    page = pdf[pno]
+                    rect = fitz.Rect(record.get("rect") or [])
+                    if rect.is_empty:
+                        continue
+                    page_area = (float(page.rect.width)
+                                 * float(page.rect.height))
+                    hint_area = float(rect.width) * float(rect.height)
+                    best_xref = None
+                    best_dev = float("inf")
+                    for info in page.get_image_info(xrefs=True):
+                        bbox_raw = info.get("bbox")
+                        if not bbox_raw:
+                            continue
+                        # 图片 bbox 的坐标空间随版本可能是未旋转/显示坐标；
+                        # 面积与旋转无关，先按面积做两道硬保护：
+                        #   1) 候选图 > 页面 30% 一律视为整页背景图，绝不当作
+                        #      假值小图（旋转页 + 大 hint 误命中背景的防线）；
+                        #   2) 假值图与 hint 是同一矩形贴图，面积应同量级。
+                        bbox = _image_bbox_unrotated(bbox_raw, page)
+                        if bbox is None:
+                            continue
+                        cand_area = float(bbox.width) * float(bbox.height)
+                        if page_area > 0 and cand_area > page_area * 0.30:
+                            continue
+                        if hint_area > 0 and not (
+                                0.20 <= cand_area / hint_area <= 6.0):
+                            continue
+                        dev = _match_image_rect_dev(rect, bbox, page)
+                        if dev < best_dev:
+                            best_dev = dev
+                            best_xref = int(info.get("xref") or 0)
+                    if best_xref and best_xref > 0 and best_dev <= tol:
+                        record["xref"] = int(best_xref)
+                    else:
+                        record.pop("xref", None)
+                except Exception:
+                    record.pop("xref", None)
+    except Exception:
+        for record in image_records:
+            record.pop("xref", None)
 
 
 # ─────────────────── 「给 AI 看」扫描页不可见文本层（F3）───────────────────
@@ -1803,6 +2002,324 @@ def _write_ai_text_layer(page: fitz.Page, udm_page: Page,
         except Exception:
             pass
     return written
+
+
+# ── 问题3（标签后缀被一起涂掉）redaction 后回填非实体片段 ──
+# 背景：标签与值在同一文本 span、字体为嵌入子集时，PyMuPDF ``apply_redactions()``
+# 会把整段移除（实测 reportlab/SimHei 子集与真实 sample_contract：`身份证号：`
+# 只剩 `身份`）。脱敏安全不受影响，但 human/AI 版可读性受损。
+# 开关 ``YINZHAN_AI_LABEL_REPAIR``（默认 0/关）：
+#   1. redaction 前记录实体 span 前后 ≤12 字的非实体片段（char bbox/字号/颜色）；
+#   2. apply_redactions 后检查片段是否仍存在；缺失的前缀/后缀用 china-s 按原位置
+#      与原字号/颜色写回；
+#   3. 回填文本不得包含任何实体原值（安全断言，命中则跳过并 warning）；
+#   4. 只处理文本层页（扫描页标签是像素，不受 redaction 影响）。
+# 默认关闭时本段代码不会被调用，导出行为与 HEAD 完全一致。
+
+LABEL_REPAIR_NEAR_CHARS = 12
+
+
+def _label_repair_enabled() -> bool:
+    """问题3 标签回填开关（默认关；YINZHAN_AI_LABEL_REPAIR=1 开启）。"""
+    raw = os.environ.get("YINZHAN_AI_LABEL_REPAIR")
+    if raw is None or not str(raw).strip():
+        return False
+    return str(raw).strip().lower() not in ("0", "false", "no", "off", "none")
+
+
+def _normalize_no_space(text: str) -> str:
+    """去掉全部空白后的归一文本（用于「片段是否还存在」的匹配）。"""
+    return "".join(str(text or "").split())
+
+
+def _merge_char_intervals(intervals: Iterable[tuple[int, int]],
+                          text_len: int) -> list[tuple[int, int]]:
+    """合并实体字符区间（裁剪到 [0, text_len)，去重叠）。"""
+    cleaned: list[tuple[int, int]] = []
+    for raw_start, raw_end in intervals:
+        start = max(0, min(int(raw_start), text_len))
+        end = max(start, min(int(raw_end), text_len))
+        if end > start:
+            cleaned.append((start, end))
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(cleaned):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _fragment_near_ranges(intervals: list[tuple[int, int]], text_len: int,
+                          near: int) -> list[tuple[int, int]]:
+    """实体区间前后 ≤near 字的非实体片段区间（返回不重叠区间列表）。"""
+    if not intervals:
+        return []
+    ranges: list[tuple[int, int]] = []
+    prev_end = 0
+    for index, (start, end) in enumerate(intervals):
+        # 实体左侧（前缀标签）：紧邻实体、且不超过 near 字
+        if start > prev_end:
+            ranges.append((max(prev_end, start - near), start))
+        # 实体右侧（后缀标签）：紧邻实体、且不超过 near 字
+        next_start = intervals[index + 1][0] if index + 1 < len(intervals) else text_len
+        if next_start > end:
+            ranges.append((end, min(next_start, end + near)))
+        prev_end = max(prev_end, end)
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _trim_blank_range(text: str, start: int, end: int) -> tuple[int, int]:
+    """去掉片段两端的空白字符（换行/空格不参与回填）。"""
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def _fragment_has_entity_value(fragment: str, entities: Iterable[Entity] | None) -> bool:
+    """片段（归一后）是否包含任何实体原值 —— 回填前安全断言。"""
+    normalized = _normalize_no_space(fragment)
+    if not normalized:
+        return True
+    for entity in entities or []:
+        value = _normalize_no_space(getattr(entity, "value", "") or "")
+        if value and value in normalized:
+            return True
+    return False
+
+
+def _block_text_color(page: fitz.Page, block: Block) -> tuple[float, float, float]:
+    """取 block 内第一个文本 span 的 sRGB 颜色（fitz 0-1 tuple）；失败返回黑色。"""
+    try:
+        target = fitz.Rect(block.bbox) if block.bbox else None
+        if target is None:
+            return (0.0, 0.0, 0.0)
+        raw = page.get_text("dict")
+        for raw_block in raw.get("blocks") or []:
+            if raw_block.get("type") != 0:
+                continue
+            for line in raw_block.get("lines") or []:
+                for span in line.get("spans") or []:
+                    bbox = span.get("bbox")
+                    if not bbox:
+                        continue
+                    if (fitz.Rect(bbox) & target).is_empty:
+                        continue
+                    color = span.get("color")
+                    if color is None:
+                        continue
+                    rgb = fitz.sRGB_to_pdf(int(color))
+                    return (float(rgb[0]), float(rgb[1]), float(rgb[2]))
+    except Exception:
+        pass
+    return (0.0, 0.0, 0.0)
+
+
+def _page_text_near(page: fitz.Page, bbox: Any) -> str:
+    """取 block bbox 附近的文本（redaction 后用于判断片段是否仍存在）。"""
+    try:
+        target = fitz.Rect(bbox) if bbox else None
+        chunks: list[str] = []
+        raw = page.get_text("dict")
+        for raw_block in raw.get("blocks") or []:
+            if raw_block.get("type") != 0:
+                continue
+            for line in raw_block.get("lines") or []:
+                for span in line.get("spans") or []:
+                    span_bbox = span.get("bbox")
+                    if not span_bbox:
+                        continue
+                    if target is not None and (fitz.Rect(span_bbox) & target).is_empty:
+                        continue
+                    chunks.append(str(span.get("text") or ""))
+        return "".join(chunks)
+    except Exception:
+        return ""
+
+
+def _insert_fragment_text(page: fitz.Page, char_bbox: Any, text: str,
+                          size: Any, color: Any) -> bool:
+    """在片段首字 bbox 处按原字号/颜色写回（旋转页用显示→未旋转坐标换算）。"""
+    try:
+        if not char_bbox or not text:
+            return False
+        display = fitz.Rect(char_bbox)
+        display.normalize()
+        if display.is_empty or display.width <= 0.1:
+            return False
+        try:
+            font_size = float(size or 0.0)
+        except (TypeError, ValueError):
+            font_size = 0.0
+        if font_size <= 0:
+            font_size = float(display.height) * 0.85
+        font_size = max(MIN_FONT_SIZE, min(font_size, 72.0))
+        rgb = (0.0, 0.0, 0.0)
+        try:
+            if color is not None and len(color) >= 3:
+                rgb = tuple(max(0.0, min(1.0, float(c))) for c in color[:3])
+        except (TypeError, ValueError):
+            rgb = (0.0, 0.0, 0.0)
+        rotation = _rotation(page)
+        baseline = fitz.Point(
+            display.x0,
+            display.y1 - max(0.5, min(font_size * 0.22, display.height * 0.25)))
+        if rotation:
+            baseline = baseline * page.derotation_matrix
+        page.insert_text(
+            baseline, text, fontname="china-s", fontsize=font_size,
+            color=rgb, overlay=True, rotate=rotation)
+        return True
+    except Exception:
+        return False
+
+
+def _capture_removed_fragments(page: fitz.Page, udm_page: Page,
+                               entities: Iterable[Entity] | None,
+                               decisions: dict[str, Decision] | None,
+                               ops: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """redaction 前记录「实体 span 前后 ≤12 字的非实体片段」。"""
+    if page is None or udm_page is None:
+        return []
+    op_rects: list[Box] = []
+    for op in ops or []:
+        rect = op.get("rect")
+        if rect and len(rect) == 4:
+            op_rects.append(tuple(float(v) for v in rect))
+    if not op_rects:
+        return []
+    text_blocks = {
+        block.id: block
+        for block in (getattr(udm_page, "blocks", None) or [])
+        if getattr(block, "kind", "text") == "text" and block.text
+    }
+    intervals_by_block: dict[str, list[tuple[int, int]]] = {}
+    for entity in entities or []:
+        decision = (decisions or {}).get(entity.id) or entity.decision
+        if decision is None:
+            continue
+        if decision.strategy == "keep" and not decision.black:
+            continue
+        for span in entity.spans or []:
+            if not span.block_id or span.start is None or span.start < 0:
+                continue
+            if span.block_id not in text_blocks:
+                continue
+            start = int(span.start)
+            end = int(span.end) if span.end is not None else -1
+            if end <= start:
+                continue
+            intervals_by_block.setdefault(span.block_id, []).append((start, end))
+    records: list[dict[str, Any]] = []
+    for block_id, raw_intervals in intervals_by_block.items():
+        block = text_blocks.get(block_id)
+        if block is None:
+            continue
+        text = block.text or ""
+        chars = (block.ref or {}).get("chars")
+        if not isinstance(chars, list) or len(chars) < len(text):
+            continue
+        if block.bbox and not any(box_intersects(block.bbox, rect)
+                                  for rect in op_rects):
+            continue
+        intervals = _merge_char_intervals(raw_intervals, len(text))
+        if not intervals:
+            continue
+        size = 0.0
+        try:
+            size = float((block.attrs or {}).get("size") or 0.0)
+        except (TypeError, ValueError):
+            size = 0.0
+        color = _block_text_color(page, block)
+        bbox = list(block.bbox) if block.bbox else None
+        for start, end in _fragment_near_ranges(
+                intervals, len(text), LABEL_REPAIR_NEAR_CHARS):
+            start, end = _trim_blank_range(text, start, end)
+            if end <= start:
+                continue
+            fragment = text[start:end]
+            if _fragment_has_entity_value(fragment, entities):
+                continue
+            fragment_chars = [tuple(chars[index]) for index in range(start, end)]
+            records.append({
+                "block_id": block_id,
+                "text": fragment,
+                "chars": fragment_chars,
+                "bbox": bbox,
+                "size": round(size, 2) if size else None,
+                "color": [round(float(c), 4) for c in color],
+            })
+    return records
+
+
+def _repair_removed_fragments(page: fitz.Page, records: Iterable[dict[str, Any]],
+                              entities: Iterable[Entity] | None,
+                              warnings: list[str]) -> int:
+    """apply_redactions 后：检测被整段移除的非实体片段并原位写回。
+
+    返回写回片段数。回填内容不含任何实体原值；无法安全判定时跳过。
+    """
+    if not records:
+        return 0
+    page_text = _normalize_no_space(page.get_text("text") or "")
+    entity_values = [_normalize_no_space(getattr(e, "value", "") or "")
+                     for e in entities or []]
+    entity_values = [value for value in entity_values if value]
+    repaired = 0
+    for record in records:
+        text = str(record.get("text") or "")
+        fragment_ns = _normalize_no_space(text)
+        if not fragment_ns:
+            continue
+        local_text = _page_text_near(page, record.get("bbox"))
+        haystack = _normalize_no_space(local_text) or page_text
+        if fragment_ns in haystack:
+            continue
+        # 仍保留的前缀/后缀（至少 2 字，避免单个标点在别处误命中）
+        limit = min(len(fragment_ns), LABEL_REPAIR_NEAR_CHARS)
+        prefix_len = 0
+        for length in range(limit, 1, -1):
+            if fragment_ns[:length] in haystack:
+                prefix_len = length
+                break
+        suffix_len = 0
+        for length in range(limit, 1, -1):
+            if fragment_ns[-length:] in haystack:
+                suffix_len = length
+                break
+        missing_start = prefix_len
+        missing_end = len(fragment_ns) - suffix_len
+        if missing_end <= missing_start:
+            continue
+        # 归一索引 → 原文索引（片段内部可能含空格）
+        positions = [index for index, ch in enumerate(text) if not ch.isspace()]
+        if len(positions) != len(fragment_ns):
+            continue
+        original_start = positions[missing_start]
+        original_end = positions[missing_end - 1] + 1
+        insert_text = text[original_start:original_end]
+        insert_ns = _normalize_no_space(insert_text)
+        if not insert_ns:
+            continue
+        # 安全断言：回填内容不得包含任何实体原值
+        if any(value in insert_ns for value in entity_values):
+            warnings.append("标签回填跳过：候选片段包含实体原值")
+            continue
+        chars = record.get("chars") or []
+        if original_start >= len(chars):
+            continue
+        if _insert_fragment_text(page, chars[original_start], insert_text,
+                                 record.get("size"), record.get("color")):
+            repaired += 1
+    return repaired
 
 
 # ──────────────────── Batch2-B4：AI 模式 FACE 误检降级 ────────────────────
@@ -2474,6 +2991,8 @@ class PdfParser(registry.Parser):
                              if (p.ref or {}).get("scanned")}
             pages_to_draw = sorted(set(pages_to_draw) | scanned_pages)
         pages_by_index = {int(p.index): p for p in doc.pages}
+        # 问题3（标签回填）逐页计数：仅当开关开启时非空
+        label_repair_counts: dict[int, int] = {}
 
         try:
             for page_no in pages_to_draw:
@@ -2489,6 +3008,17 @@ class PdfParser(registry.Parser):
                     replacements: list[tuple[fitz.Rect, str]] = []
                     ops = _merge_ops(ops_by_page.get(page_no, []), warnings)
                     ops = _sort_ops_for_text_order(ops)
+                    # 问题3：redaction 前记录实体 span 前后 ≤12 字的非实体片段
+                    # （默认开关关闭 → 不记录、不改变任何行为）
+                    fragment_records: list[dict[str, Any]] = []
+                    if (_label_repair_enabled() and not scanned_page
+                            and udm_page is not None and ops):
+                        try:
+                            fragment_records = _capture_removed_fragments(
+                                page, udm_page, entities, decisions, ops)
+                        except Exception as exc:
+                            warnings.append(
+                                f"第 {page_no + 1} 页标签回填记录失败：{exc}")
                     for op in ops:
                         rect = _to_pdf_space(op["rect"], page)
                         rect.normalize()
@@ -2501,6 +3031,17 @@ class PdfParser(registry.Parser):
                             replacements.append((rect, op["text"]))
                     if ops:
                         page.apply_redactions()
+                    # 问题3：redaction 后检测被整段误删的非实体片段并原位回填
+                    if fragment_records:
+                        try:
+                            repaired = _repair_removed_fragments(
+                                page, fragment_records, entities, warnings)
+                        except Exception as exc:
+                            repaired = 0
+                            warnings.append(
+                                f"第 {page_no + 1} 页标签回填失败：{exc}")
+                        if repaired:
+                            label_repair_counts[int(page_no)] = int(repaired)
                     # F3：扫描页先写不可见文本层，再写可见替换文字，
                     # 纯文本抽取时正文在前、假值在后。
                     if ai_text_layer and scanned_page:
@@ -2517,11 +3058,38 @@ class PdfParser(registry.Parser):
                     for rect, text in replacements:
                         placed = False
                         if ai_text_layer and scanned_page:
-                            placed = _insert_replacement_image(page, rect, text)
+                            image_meta: dict = {}
+                            placed = _insert_replacement_image(
+                                page, rect, text, meta=image_meta)
+                            if placed and image_meta.get("xref"):
+                                # 问题1：记录假值图位置 + xref，供回件精准删图/重绘
+                                _record_scan_ai_image(
+                                    doc, page_no, page, rect, text,
+                                    xref=image_meta.get("xref"))
                         if not placed:
                             _insert_replacement(page, rect, text)
+                            if ai_text_layer and scanned_page:
+                                # 图片路径失败回退可见文字：也要记录（kind=text），
+                                # 否则回件在该位置漏还原真值。
+                                _record_scan_ai_text_hint(
+                                    doc, page_no, page, rect, text)
                 except Exception as exc:
                     warnings.append(f"第 {page_no + 1} 页导出失败：{exc}")
+
+            if label_repair_counts:
+                total_repaired = sum(label_repair_counts.values())
+                try:
+                    doc.extra["label_repair"] = {
+                        "version": 1,
+                        "pages": {str(k): int(v)
+                                  for k, v in sorted(label_repair_counts.items())},
+                        "total": int(total_repaired),
+                    }
+                except Exception:
+                    pass
+                warnings.append(
+                    f"标签回填：已恢复 {total_repaired} 处被 redaction 误删的"
+                    "非实体片段（YINZHAN_AI_LABEL_REPAIR）")
 
             try:
                 pdf.set_metadata({})
@@ -2557,6 +3125,12 @@ class PdfParser(registry.Parser):
                 except OSError:
                     pass
                 raise ExportError(f"覆盖原 PDF 失败：{exc}") from exc
+        # 问题1：成品保存后重开，按 hint rect 解析稳定 xref（garbage 回收可能重排
+        # 对象号；回件侧用 delete_image(xref) 精准删图，需要成品内的实际 xref）。
+        try:
+            _resolve_scan_ai_hint_xrefs(doc, out_path)
+        except Exception:
+            pass
         # 解析器侧成品复检：P1-B 内嵌图片区域必须已被实心涂黑（黑像素≥95%）。
         # 不通过只写 warning，最终由 pipeline.verify 的视觉残留/复检兜底。
         try:
