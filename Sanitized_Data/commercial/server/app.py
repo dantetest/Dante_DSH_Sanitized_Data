@@ -515,9 +515,11 @@ def create_app(config: Config | None = None) -> FastAPI:
         provider_name = "mock" if channel == "mock" else cfg.PAYMENT_PROVIDER
         try:
             provider = get_provider(provider_name, cfg)
-        except PaymentError:
-            logger.warning("provider unavailable: channel=%s provider=%s order=%s",
-                           channel, provider_name, order_no)
+        except PaymentError as exc:
+            logger.warning("provider unavailable: channel=%s provider=%s order=%s code=%s detail=%s",
+                           channel, provider_name, order_no,
+                           getattr(exc, "code", "channel_unavailable"),
+                           getattr(exc, "message", type(exc).__name__))
             database.close_order(order_no, "provider_unavailable")
             return _error(503, "payment_create_failed", "支付通道暂不可用，请稍后重试")
 
@@ -535,8 +537,9 @@ def create_app(config: Config | None = None) -> FastAPI:
             payment = provider.create(provider_order, cfg)
         except Exception as exc:  # 含 T2 的 PaymentError / 网络错误
             code = getattr(exc, "code", "payment_create_failed")
-            logger.warning("payment create failed: provider=%s order=%s code=%s",
-                           provider_name, order_no, code)
+            detail = getattr(exc, "message", "") or type(exc).__name__
+            logger.warning("payment create failed: provider=%s order=%s code=%s detail=%s",
+                           provider_name, order_no, code, str(detail)[:300])
             database.close_order(order_no, f"payment_create_failed:{code}")
             return _error(503, "payment_create_failed",
                           "支付下单失败，请稍后重试或更换支付方式")

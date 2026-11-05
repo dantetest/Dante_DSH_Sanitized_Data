@@ -267,7 +267,8 @@ CLI 以「能读本地 DB 文件」为管理员权限；`COMMERCIAL_ADMIN_TOKEN`
 | 现象 | 排查 |
 |---|---|
 | `/api/catalog` 502/连不上 | 服务是否启动、端口/防火墙、`COMMERCIAL_BASE_URL` 是否正确 |
-| 下单 503 `payment_create_failed` | 看服务日志：支付宝配置/密钥/网络，或 `PAYMENT_PROVIDER` 指向 alipay 但 `payments/alipay.py` 缺失 |
+| 下单 503 `payment_create_failed` | 先跑 `python commercial/scripts/check_deploy.py`。若日志带 `detail=...alipay_key_invalid`，检查 `ALIPAY_APP_PRIVATE_KEY_PATH` / `ALIPAY_PUBLIC_KEY_PATH` 是否真的上传到服务器（`commercial/var/keys/` 默认被 Git 忽略，不会随 Git/桌面安装包发布） |
+| 支付成功但授权签发失败 `license_issue_failed` | 检查服务器 `LICENSE_PRIVATE_KEY_PATH` 是否为 Linux 路径、私钥是否加密、systemd 是否注入 `LICENSE_KEY_PASSWORD`；`admin.py check` 可看 `signer` 状态 |
 | 模拟支付 503 `license_key_missing` | 配置 `LICENSE_PRIVATE_KEY_PATH`（生产）或测试私钥（测试）；`admin.py check` 可看 `signer` 状态 |
 | 扫码后一直 pending | 支付宝回调是否可达（公网 HTTPS/域名/防火墙），`admin.py order` 看 events |
 | 客户导入授权提示签名无效 | 签发 key_id 与产品内置公钥是否匹配（生产密钥签 → `prod-2026b`） |

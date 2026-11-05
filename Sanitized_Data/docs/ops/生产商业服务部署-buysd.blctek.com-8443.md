@@ -1,4 +1,4 @@
-﻿# 生产商业服务部署说明（buysd.blctek.com:8443）
+# 生产商业服务部署说明（buysd.blctek.com:8443）
 
 > 目标：把 `commercial/` 商业服务部署到公网 `https://buysd.blctek.com:8443`，供本机客户端购买/查单使用。
 > 注意：商业服务只处理订单/授权，不接收用户文件；文件处理仍在本机。
@@ -68,6 +68,11 @@ LICENSE_KEY_PASSWORD_ENV=LICENSE_KEY_PASSWORD
 ```
 
 `ALIPAY_NOTIFY_URL` 可留空，代码会推导为 `${COMMERCIAL_BASE_URL}/notify/alipay`。
+
+> **密钥不随 Git/桌面安装包发布**：`commercial/var/` 被 `.gitignore` 忽略；服务器必须单独上传
+> `alipay_app_private.pem`、`alipay_public.pem` 和 license 私钥。缺文件时下单会报
+> `payment_create_failed`；部署后先跑 `python commercial/scripts/check_deploy.py`。
+> 完整排查/上传步骤见 [KEY_DEPLOY_FIX_2026-11-05.md](KEY_DEPLOY_FIX_2026-11-05.md)。
 
 ## 5. 客户端默认地址
 
