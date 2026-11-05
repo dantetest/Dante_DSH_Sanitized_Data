@@ -1784,7 +1784,15 @@ function bindSelection(host, overlay, preview, kind) {
       w: Math.abs(x - draft.startX), h: Math.abs(y - draft.startY),
     };
     if (mq) mq.remove();
-    if (cancelled || rect.w < 8 || rect.h < 8) { closeMarkMenu(); return; }
+    if (cancelled) { closeMarkMenu(); return; }
+    if (draft.kind === 'raster') {
+      if (rect.w < 8 || rect.h < 8) { closeMarkMenu(); return; }
+    } else {
+      // flow 是“拖选文字”：同一行纯水平拖选时 marquee 的 h≈0，不能按矩形
+      // 最小尺寸拒绝；用起点/终点移动距离判断是否是一次有效拖选。
+      const moved = Math.abs(ev.clientX - draft.clientX0) + Math.abs(ev.clientY - draft.clientY0);
+      if (moved < 4) { closeMarkMenu(); return; }
+    }
     if (draft.kind !== 'raster') {
       // DOCX/XLSX/TXT 等 flow 格式没有稳定的页面矩形：必须把选中文字传给后端，
       // 由后端定位 block/char 区间；否则导出器无法映射，会静默漏掉。

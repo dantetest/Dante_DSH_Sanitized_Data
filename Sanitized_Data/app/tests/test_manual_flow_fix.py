@@ -138,6 +138,9 @@ class ManualFlowMarkTest(unittest.TestCase):
         js = (REPO / "app" / "web" / "app.js").read_text(encoding="utf-8")
         self.assertIn("draft.selText = picked", js)
         self.assertIn("payload.value = picked", js)
+        self.assertIn("function flowSelectedText", js)
+        # 同一行纯水平拖选（marquee h≈0）不能按矩形最小尺寸拒绝；flow 用移动距离判断。
+        self.assertIn("moved < 4", js)
 
 
 if __name__ == "__main__":
