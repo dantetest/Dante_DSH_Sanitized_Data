@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""离线授权服务（W1）：机器码、Ed25519 license、14 天试用、本地状态。
+"""离线授权服务（W1）：机器码、Ed25519 license、3 天试用、本地状态。
 
 设计约束：
 - 文件处理引擎保持零外呼；本模块只做本地读写和密码学校验。
@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from . import keys, machine, tiers
 
 SCHEMA = 1
-TRIAL_DAYS = 14
+TRIAL_DAYS = 3
 DEFAULT_GRACE_DAYS = 14
 _CLOCK_ROLLBACK_HOURS = 48
 _STATE_SECRET = b"BLCTEK-license-state-v1"
@@ -472,7 +472,7 @@ class LicenseService:
                     return self.status()
                 raise LicenseError("trial_expired", "本机试用已结束", 403)
             # 冗余校验（licensing.md §5/T4）：state 被删后 events.jsonl 里的
-            # trial_start 历史仍能阻止重新试用，避免删单个文件白拿 14 天。
+            # trial_start 历史仍能阻止重新试用，避免删单个文件白拿 3 天。
             if self._trial_history():
                 raise LicenseError("trial_expired", "本机试用已结束", 403)
             expires = effective_now + timedelta(days=TRIAL_DAYS)

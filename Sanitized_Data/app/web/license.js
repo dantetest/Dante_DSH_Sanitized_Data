@@ -218,7 +218,7 @@
     try {
       await api('/api/trial/start', { method: 'POST' });
       await load();
-      $('statusMsg').textContent = '试用已开始，14 天内全功能。';
+      $('statusMsg').textContent = '试用已开始，3 天内全功能。';
       $('statusMsg').className = 'msg ok';
     } catch (err) {
       $('statusMsg').textContent = err.message || '试用启用失败';

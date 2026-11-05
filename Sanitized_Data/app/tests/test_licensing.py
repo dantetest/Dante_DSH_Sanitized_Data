@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey 
 
 from yinzhan.licensing import keys, machine, tiers  # noqa: E402
 from yinzhan.licensing.service import (  # noqa: E402
-    LicenseError, LicenseService, canonical_payload, sign_payload,
+    LicenseError, LicenseService, TRIAL_DAYS, canonical_payload, sign_payload,
 )
 
 
@@ -112,14 +112,15 @@ class TestLicenseService(unittest.TestCase):
         info = self.svc.status()
         self.assertEqual(info["state"], "free")
         self.assertFalse(info["trial"]["used"])
+        self.assertEqual(TRIAL_DAYS, 3)
         trial = self.svc.start_trial()
         self.assertEqual(trial["state"], "trial")
-        self.assertGreaterEqual(trial["trial"]["days_left"], 13)
+        self.assertGreaterEqual(trial["trial"]["days_left"], TRIAL_DAYS - 1)
         self.assertIn("trial_start", (self.data_dir / "license" / "events.jsonl").read_text(encoding="utf-8"))
         # 幂等
         again = self.svc.start_trial()
         self.assertEqual(again["state"], "trial")
-        self.now.advance(days=15)
+        self.now.advance(days=TRIAL_DAYS + 1)
         expired = self.svc.status()
         self.assertEqual(expired["state"], "free")
         with self.assertRaises(LicenseError):

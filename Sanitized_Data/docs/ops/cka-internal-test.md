@@ -94,7 +94,7 @@ Environment=YINZHAN_BUILD_CHANNEL=release
 
 ```bash
 python deploy/smoke_cka.py --base https://cka.blctek.com:8443 --expect release
-# 浏览器：免费版 · 今日剩余 3/3；上传 TIF 应提示升级；/api/trial/start 可开 14 天试用
+# 浏览器：免费版 · 今日剩余 3/3；上传 TIF 应提示升级；/api/trial/start 可开 3 天试用
 ```
 
 ## 4. 回滚
@@ -113,7 +113,7 @@ systemctl restart sanitized-data
 
 1. **不要手改** `data/license/state.json` / `.state_seen`；额度/试用状态有 HMAC 与历史防刷。
 2. 内测全功能期间 `state.json` 不会扣免费额度（`consume_job` 在未启用门禁时直接返回），所以上线后免费额度从 0 开始，不需要手工重置。
-3. 试用（14 天，全功能、不限量）是**整机一次**；对外前可以保留给客户体验，但不宜在内测期间用掉。
+3. 试用（3 天，全功能、不限量）是**整机一次**；对外前可以保留给客户体验，但不宜在内测期间用掉。
 4. 朋友测试数据只在内测期存在；对外前务必清理上传件/成品/日志中的客户数据。
 5. 每次切换都要重启服务；正在跑的任务会丢失，选不测试的时间点。
 6. 切正式后先自己走一遍：免费上传、TIF 拦截、试用、签发 license 导入，再发公告。
