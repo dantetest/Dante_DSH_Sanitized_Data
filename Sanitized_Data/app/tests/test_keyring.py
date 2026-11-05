@@ -90,6 +90,18 @@ class TestSignedKeyring(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(error)
 
+    def test_existing_prod_license_still_verifies(self):
+        fixture = REPO / "out" / "audit" / "rotation_import_data" / "license" / "license.json"
+        if not fixture.is_file():
+            self.skipTest("生产测试 license 不存在")
+        svc = LicenseService(self.tmp / "existing")
+        svc._machine_cache = {"code": "ZH397N5C98CDA8GB",
+                              "display": "ZH39-7N5C-98CD-A8GB",
+                              "source": "test"}
+        result = svc.import_license(fixture.read_text(encoding="utf-8"))
+        self.assertEqual(result["state"], "paid")
+        self.assertEqual(result["sku"], "personal")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
