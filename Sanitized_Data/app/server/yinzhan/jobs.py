@@ -966,7 +966,9 @@ class JobManager:
             if media_count and not options.get("allow_unprocessed_media"):
                 err = YinzhanError(
                     f"检测到 {media_count} 个无法自动脱敏的隐藏对象"
-                    "（图表/文本框/OLE 等），继续导出会保留它们。要继续吗？")
+                    "（图表/文本框/OLE 等）。它们可能包含未替换的敏感信息；"
+                    "继续导出会在成品中原样保留，存在泄露风险。"
+                    "建议先在 Word 中删除或展开处理该对象。仍要继续吗？")
                 err.code = "media_confirmation_required"
                 err.media_count = media_count
                 raise err

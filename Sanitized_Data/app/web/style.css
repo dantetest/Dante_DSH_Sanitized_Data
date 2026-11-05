@@ -41,13 +41,22 @@ body::after{
   background:linear-gradient(180deg, rgba(255,252,244,.85), rgba(246,240,226,.5));
   backdrop-filter:blur(6px);
 }
-.seal{
+.seal:not(.btn){
   width:38px; height:38px; border-radius:3px; background:var(--seal);
   color:#FBF7EC; display:grid; grid-template-columns:1fr 1fr; place-items:center;
   font:700 12px/1 var(--font-song); transform:rotate(-5deg);
   box-shadow:0 0 0 2px rgba(178,58,46,.18), inset 0 0 0 1.5px rgba(255,255,255,.3);
   flex:0 0 auto;
 }
+/* .seal 是印章图标样式；带 .btn 时只作为红色按钮，不能继承 38px 固定章形 */
+.btn.seal{
+  background:var(--seal); color:#FBF7EC; border-color:var(--seal);
+  font:400 12px/1 var(--font-song); letter-spacing:.1em;
+  padding:9px 16px; display:inline-flex; align-items:center; gap:7px;
+  white-space:nowrap;
+}
+.btn.seal:hover:not(:disabled){background:#9c3126; color:#FBF7EC; border-color:#9c3126;}
+.btn.seal:disabled{opacity:.42; cursor:default;}
 .brandmark{width:38px; height:38px; display:block; flex:0 0 auto; border-radius:9px; filter:drop-shadow(0 1px 1px rgba(60,40,20,.16)); transition:transform .16s;}
 .brand{font-size:17px; font-weight:700; letter-spacing:.22em; white-space:nowrap;}
 .brand small{display:block; font:400 10px/1.4 var(--font-mono); letter-spacing:.14em; color:var(--ink-3); margin-top:3px;}

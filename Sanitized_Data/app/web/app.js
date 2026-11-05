@@ -2319,7 +2319,28 @@ function renderExportResult(card, mode, info) {
   link.className = 'dl';
   link.href = '/api/jobs/' + jobPath() + '/file?mode=' + mode;
   link.setAttribute('download', fileName);
-  link.textContent = '下载这一份 ↓';
+  link.textContent = '保存到… ↓';
+  link.title = '选择保存位置';
+  link.addEventListener('click', (ev) => {
+    const bridge = window.pywebview && window.pywebview.api;
+    if (!bridge || typeof bridge.save_export !== 'function' || !info.path) return;
+    ev.preventDefault();
+    if (link.dataset.saving === '1') return;
+    link.dataset.saving = '1';
+    Promise.resolve(bridge.save_export(info.path, fileName)).then((res) => {
+      if (res && res.ok) {
+        toast('已保存到：' + res.path, null, 8000);
+      } else if (res && res.canceled) {
+        toast('已取消保存，成品仍在导出目录。');
+      } else {
+        toast('保存失败：' + ((res && res.error) || '请重试'), null, 8000);
+      }
+    }).catch((err) => {
+      toast('保存失败：' + (err && err.message ? err.message : '请重试'), null, 8000);
+    }).finally(() => {
+      link.dataset.saving = '';
+    });
+  });
   card.appendChild(link);
 }
 /* 内嵌媒体二次确认（docs/red-lines.md E3，后端 jobs.export）：

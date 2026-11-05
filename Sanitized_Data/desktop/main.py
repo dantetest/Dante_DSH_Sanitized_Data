@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import socket
 import sys
@@ -153,11 +154,52 @@ def _run_window(url: str) -> str:
         webbrowser.open(url)
         return "browser"
 
+    class DesktopApi:
+        """暴露给页面的原生能力（只在本机窗口模式使用）。"""
+
+        def save_export(self, source_path: str, suggested_name: str = "") -> dict:
+            """弹出系统“另存为”对话框，把导出成品复制到用户选择的位置。
+
+            只允许保存 OUTPUT_DIR 下的成品，避免被页面诱导写任意路径。
+            """
+            try:
+                root = Path(config.OUTPUT_DIR).expanduser().resolve()
+                src = Path(str(source_path or "")).expanduser().resolve()
+                try:
+                    src.relative_to(root)
+                except ValueError:
+                    return {"ok": False, "error": "文件不在本机导出目录"}
+                if not src.is_file():
+                    return {"ok": False, "error": "导出文件不存在，请重新导出"}
+                if not webview.windows:
+                    return {"ok": False, "error": "窗口尚未就绪"}
+                safe_name = Path(str(suggested_name or src.name)).name or src.name
+                dialog_type = getattr(getattr(webview, "FileDialog", None), "SAVE", None)
+                if dialog_type is None:
+                    dialog_type = webview.SAVE_DIALOG
+                result = webview.windows[0].create_file_dialog(
+                    dialog_type,
+                    directory=str(src.parent),
+                    allow_multiple=False,
+                    save_filename=safe_name,
+                    file_types=(),
+                )
+                if not result:
+                    return {"ok": False, "canceled": True}
+                dest = Path(result[0] if isinstance(result, (list, tuple)) else result)
+                if dest.resolve() != src:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dest)
+                return {"ok": True, "path": str(dest)}
+            except Exception as exc:  # noqa: BLE001 - 前端只显示简短错误
+                return {"ok": False, "error": type(exc).__name__}
+
     try:
         webview.create_window(
             WINDOW_TITLE, url,
             width=1360, height=900, min_size=(1024, 700),
             background_color="#F4EEE1",
+            js_api=DesktopApi(),
         )
         webview.start()
         return "window"

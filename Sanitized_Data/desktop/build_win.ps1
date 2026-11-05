@@ -49,6 +49,10 @@ $buildExit = $LASTEXITCODE
 if (Test-Path $flagFile) { Remove-Item $flagFile -Force -ErrorAction SilentlyContinue }
 if ($buildExit -ne 0) { throw 'PyInstaller 失败' }
 
+Write-Host "`n[3.5/7] 本地化：移除下载页/下载入口" -ForegroundColor Cyan
+python (Join-Path $PSScriptRoot 'strip_local_web.py') --web-dir (Join-Path $Root 'dist\Sanitized_Data\_internal\web')
+if ($LASTEXITCODE -ne 0) { throw '本地化 web 处理失败' }
+
 Write-Host "`n[4/6] 补 VC++ 运行库 DLL（免装 VC++ 也能跑）" -ForegroundColor Cyan
 $dist = Join-Path $Root 'dist\Sanitized_Data'
 # PyInstaller 6 的 datas 会落到 _internal；客户端只认安装根目录/数据目录，
