@@ -7,7 +7,6 @@
 <link rel="stylesheet" href="site.css">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body>
 
@@ -24,97 +23,55 @@
       <a href="/pricing">价格</a>
       <a href="/license">授权</a>
       <a href="/mcp">MCP 接入</a>
-      <a href="/console" class="cta">开始使用 →</a>
     </nav>
   </div>
 </header>
 
 <main class="wrap">
-
   <section class="dl-hero" style="border-bottom:0;padding-bottom:0">
-    <div class="eyebrow">DOWNLOAD · 本地安装</div>
+    <div class="eyebrow">DOWNLOAD · WINDOWS</div>
     <h1 style="font-size:clamp(26px,3.4vw,36px)">下载数据隐站</h1>
-    <p class="lead" style="max-width:780px">
-      Windows 用户推荐使用 <b>桌面安装包</b>：离线可用、不需要本机装 Python，双击安装即用；
-      也可使用免安装的绿色版。macOS 用户用下方 DMG（Apple Silicon / Intel）。
-    </p>
-    <p class="muted" style="font-size:12px;max-width:780px">
-      源码包已下架；如需 Linux / 服务器部署的源码，请联系项目维护者。
-    </p>
+    <p class="lead">Windows 10/11 x64 · 离线安装 · 无需 Python</p>
     <div class="chips">
-      <span class="chip" id="dlVersion">版本 v1.3.5</span>
+      <span class="chip">v1.5.2</span>
       <span class="chip">Windows x64</span>
-      <span class="chip" id="chipMac">macOS 双架构</span>
-      <span class="chip">离线可用</span>
     </div>
   </section>
 
-  <section style="padding-top:34px">
+  <section style="padding-top:28px">
     <div class="dl-grid">
-      <div class="dl" id="winInstallerCard">
-        <div class="os">WINDOWS · x64 · 桌面安装包</div>
-        <div class="file" id="winInstallerFile">Sanitized_Data_Setup_1.3.5_x64.exe</div>
-        <div class="size" id="winInstallerSize">162.3 MiB · 双击安装</div>
+      <div class="dl">
+        <div class="os">WINDOWS · x64 · 安装包</div>
+        <div class="file">Sanitized_Data_Setup_1.5.2_x64.exe</div>
+        <div class="size">165.1 MiB · 双击安装</div>
         <div class="act">
-          <a class="btn primary" id="winInstallerLink" href="#" data-download>下载安装包 ↓</a>
+          <a class="btn primary" href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/download/v1.5.2/Sanitized_Data_Setup_1.5.2_x64.exe">下载安装包 ↓</a>
         </div>
       </div>
-
       <div class="dl">
         <div class="os">WINDOWS · x64 · 绿色版</div>
-        <div class="file" id="winPortableFile">Sanitized_Data-1.3.5-win64-portable.zip</div>
-        <div class="size" id="winPortableSize">209.9 MiB · 解压即用</div>
+        <div class="file">Sanitized_Data-1.5.2-win64-portable.zip</div>
+        <div class="size">213.6 MiB · 解压即用</div>
         <div class="act">
-          <a class="btn primary" id="winPortableLink" href="#" data-download>下载绿色版 ↓</a>
+          <a class="btn primary" href="https://gitea.blctek.com:8443/baoluo/DSH_DESKTOP_WORKSPACE/releases/download/v1.5.2/Sanitized_Data-1.5.2-win64-portable.zip">下载绿色版 ↓</a>
         </div>
       </div>
     </div>
 
     <table class="spec">
-      <tr><th>SHA-256</th><td id="dlSha">正在读取更新清单…</td></tr>
-      <tr><th>运行环境</th><td>Windows 10/11 x64 · 无需 Python · 离线可用</td></tr>
-      <tr><th>macOS 版</th><td id="dlMac">本服务器暂未发布 macOS 包</td></tr>
+      <tr><th>SHA-256</th><td>
+        <div><code>1B006BB956BDBE8DF0DA5A16EEDB90664A37B862C0DCA2587B60A94FE5E3D9E1</code> · 安装包</div>
+        <div><code>0AF2A4C3C9638021B3432A6AD62FAE01308A72727CFA076C4063FF8ACFDD6040</code> · 绿色版</div>
+      </td></tr>
     </table>
-  </section>
 
-  <section>
-    <h2>macOS 桌面版</h2>
-    <p class="muted" style="margin-bottom:14px">
-      按芯片选择；ad-hoc 测试包未公证，首次打开如被拦，右键「打开」即可。
-    </p>
-    <div class="dl-grid">
-      <div class="dl">
-        <div class="os">MACOS · ARM64 · APPLE SILICON</div>
-        <div class="file" id="macArmFile">macOS arm64 DMG</div>
-        <div class="size" id="macArmSize">M 系列芯片</div>
-        <div class="act">
-          <a class="btn primary" id="macArmLink" href="#" data-download>下载 DMG ↓</a>
-        </div>
-      </div>
-      <div class="dl">
-        <div class="os">MACOS · x64 · INTEL</div>
-        <div class="file" id="macX64File">macOS x64 DMG</div>
-        <div class="size" id="macX64Size">Intel Mac</div>
-        <div class="act">
-          <a class="btn primary" id="macX64Link" href="#" data-download>下载 DMG ↓</a>
-        </div>
-      </div>
-    </div>
+    <p class="muted" style="margin-top:18px">macOS 暂未发布。Linux / 服务器部署请从源码仓库获取。</p>
   </section>
-
-  <section>
-    <h2>服务器部署</h2>
-    <p class="muted">
-      源码仓库自带 <code>deploy/sanitized-data.service</code> 与 <code>deploy/nginx.conf</code>（源码包已下架，内部部署请从仓库获取）。
-      对外服务时请用 <code>./start.sh --host 127.0.0.1</code> 只监听本机，由 nginx 提供 HTTPS；不要把引擎直接暴露在公网。
-    </p>
-  </section>
-
 </main>
 
 <footer>
   <div class="wrap inner">
-    <span>数据隐站 · Sanitized_Data <span id="dlFooterVersion">v1.3.5</span></span>
+    <span>数据隐站 · Sanitized_Data v1.5.2</span>
     <span>·</span>
     <span>本机处理 · 不联网 · 不留存</span>
     <span style="margin-left:auto">
@@ -127,83 +84,6 @@
     运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 增值电信业务经营许可证：川B2-20261782
   </div>
 </footer>
-
-
-<script>
-(async function () {
-  const $ = (id) => document.getElementById(id);
-  const fmt = (n) => (n ? (n / 1048576).toFixed(1) + ' MiB' : '');
-  function disable(downloadNodes, message) {
-    document.querySelectorAll('[data-download]').forEach((a) => {
-      a.removeAttribute('href');
-      a.removeAttribute('download');
-      a.textContent = '暂未发布';
-      a.style.opacity = '.55';
-      a.style.pointerEvents = 'none';
-    });
-    const sha = $('dlSha');
-    if (sha) sha.textContent = message || '本服务器尚未发布安装包，请联系管理员。';
-  }
-  function applyAsset(asset, fileEl, sizeEl, linkEl) {
-    if (!asset || !asset.url) return false;
-    if (fileEl) fileEl.textContent = asset.name || '安装包';
-    if (sizeEl) sizeEl.textContent = [fmt(asset.size), sizeEl.dataset.base || ''].filter(Boolean).join(' · ');
-    if (linkEl) {
-      linkEl.href = asset.url;
-      linkEl.setAttribute('download', '');
-      linkEl.textContent = '下载 ↓';
-      linkEl.style.opacity = '1';
-      linkEl.style.pointerEvents = 'auto';
-    }
-    return true;
-  }
-  try {
-    const r = await fetch('/updates/latest.json', { cache: 'no-store' });
-    if (!r.ok) throw new Error('no manifest');
-    const m = await r.json();
-    const assets = m.assets || {};
-    if ($('dlVersion')) $('dlVersion').textContent = '版本 v' + (m.version || '');
-    if ($('dlFooterVersion')) $('dlFooterVersion').textContent = 'v' + (m.version || '');
-    const installOk = applyAsset(assets.windows_installer, $('winInstallerFile'), $('winInstallerSize'), $('winInstallerLink'));
-    const portableOk = applyAsset(assets.windows_portable, $('winPortableFile'), $('winPortableSize'), $('winPortableLink'));
-    const macArmOk = applyAsset(assets.macos_arm64, $('macArmFile'), $('macArmSize'), $('macArmLink'));
-    const macX64Ok = applyAsset(assets.macos_x64, $('macX64File'), $('macX64Size'), $('macX64Link'));
-    const hashes = [];
-    for (const key of ['windows_installer', 'windows_portable']) {
-      const a = assets[key];
-      if (a && a.sha256) hashes.push(key === 'windows_installer' ? '安装包' : '绿色版');
-    }
-    if ($('dlSha')) {
-      const install = assets.windows_installer || {};
-      const portable = assets.windows_portable || {};
-      $('dlSha').innerHTML = '安装包 <code>' + (install.sha256 || '—') + '</code><br>绿色版 <code>' + (portable.sha256 || '—') + '</code>';
-    }
-    if ($('dlSizes')) $('dlSizes').textContent = (installOk ? fmt(assets.windows_installer.size) : '—') + ' · 绿色版 ' + (portableOk ? fmt(assets.windows_portable.size) : '—') + ' · Windows 10/11 x64，无需 Python';
-    if (!installOk && $('winInstallerCard')) $('winInstallerCard').style.display = 'none';
-    if (!installOk && !portableOk) disable(null, '本服务器尚未发布 Windows 安装包，请联系管理员。');
-    [['macArmLink', macArmOk], ['macX64Link', macX64Ok]].forEach(([id, ok]) => {
-      const a = $(id);
-      if (a && !ok) {
-        a.removeAttribute('href');
-        a.removeAttribute('download');
-        a.textContent = '暂未发布';
-        a.style.opacity = '.55';
-        a.style.pointerEvents = 'none';
-      }
-    });
-    if ($('chipMac') && !macArmOk && !macX64Ok) $('chipMac').style.display = 'none';
-    if ($('dlMac')) {
-      $('dlMac').textContent = (macArmOk || macX64Ok)
-        ? '由本服务器提供：arm64 / Intel DMG（如已发布）'
-        : '本服务器暂未发布 macOS 包；Windows 版可直接下载。';
-    }
-  } catch (e) {
-    disable(null, '本服务器尚未发布更新清单，请联系管理员。');
-    if ($('dlVersion')) $('dlVersion').textContent = '版本未发布';
-    if ($('dlFooterVersion')) $('dlFooterVersion').textContent = '';
-  }
-})();
-</script>
 
 </body>
 </html>
