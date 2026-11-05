@@ -106,6 +106,9 @@ class TestIssue(unittest.TestCase):
 
     def test_perpetual(self):
         container = self._issue(term="perpetual")
+        payload = container["payload"]
+        self.assertIsNone(payload["expires_at"])
+        self.assertIsNotNone(payload["updates_until"])
         result = self.svc.import_license(container)
         self.assertEqual(result["state"], "paid")
         self.assertEqual(result["term"], "perpetual")

@@ -35,6 +35,11 @@ class Sku:
     features: tuple[str, ...]
     #: Config 上对应的价格属性名
     price_attr: str
+    #: annual / perpetual
+    term: str = TERM
+    term_label: str = TERM_LABEL
+    #: 年费续费价（仅首年优惠的 SKU）
+    renewal_price_attr: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,8 +55,12 @@ class ContactSku:
 
 
 SELF_SERVE_SKUS: tuple[Sku, ...] = (
-    Sku("personal", "个人版", "个人版", 1,
-        tuple(tiers.PERSONAL_FEATURES), "COMMERCIAL_PRICE_PERSONAL_CENTS"),
+    Sku("personal", "个人版·年付", "个人版", 1,
+        tuple(tiers.PERSONAL_FEATURES), "COMMERCIAL_PRICE_PERSONAL_CENTS",
+        term="annual", term_label="首年", renewal_price_attr="COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS"),
+    Sku("personal_perpetual", "个人版·买断", "个人版", 1,
+        tuple(tiers.PERSONAL_FEATURES), "COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS",
+        term="perpetual", term_label="买断 · 含 1 年更新"),
     Sku("pro", "专业版", "专业版", 2,
         tuple(tiers.PRO_FEATURES), "COMMERCIAL_PRICE_PRO_CENTS"),
 )
@@ -82,27 +91,34 @@ def is_contact_sales_sku(sku_id: str | None) -> bool:
     return get_contact_sku(sku_id) is not None
 
 
-def price_cents(sku: Sku, config) -> int:
+def price_cents(sku: Sku, config, *, renewal: bool = False) -> int:
     """按服务端 SKU 表 + 配置取价（int 分）。"""
-    return int(getattr(config, sku.price_attr))
+    attr = sku.price_attr
+    if renewal and sku.renewal_price_attr:
+        attr = sku.renewal_price_attr
+    return int(getattr(config, attr))
 
 
 def sku_payload(sku: Sku, config) -> dict:
-    return {
+    payload = {
         "id": sku.id,
         "name": sku.name,
         "edition": sku.edition,
         "price_cents": price_cents(sku, config),
         "currency": CURRENCY,
-        "term": TERM,
+        "term": sku.term,
+        "term_label": sku.term_label,
         "devices": sku.devices,
         "features": list(sku.features),
     }
+    if sku.renewal_price_attr:
+        payload["renewal_price_cents"] = price_cents(sku, config, renewal=True)
+    return payload
 
 
 def subject_for(sku: Sku) -> str:
-    """订单标题，例：``数据隐站 专业版 · 1年``。"""
-    return f"{PRODUCT_NAME} {sku.edition} · {TERM_LABEL}"
+    """订单标题，例：``数据隐站 个人版 · 首年`` / ``数据隐站 个人版 · 买断 · 含 1 年更新``。"""
+    return f"{PRODUCT_NAME} {sku.edition} · {sku.term_label}"
 
 
 def contact_sales_payload(config) -> dict:

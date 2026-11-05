@@ -122,8 +122,24 @@ def _license_public(license_row: dict[str, Any] | None) -> dict[str, Any] | None
         "sku": license_row.get("sku"),
         "machine_code": license_row.get("machine_code"),
         "expires_at": license_row.get("expires_at") or payload.get("expires_at"),
+        "updates_until": payload.get("updates_until"),
+        "term": payload.get("term"),
         "edition": payload.get("edition") or "",
     }
+
+
+def _issue_for_order(license_signer, order: dict[str, Any]):
+    """按订单 SKU 签发：personal_perpetual → personal / perpetual term。"""
+    order_sku = str(order.get("sku") or "")
+    perpetual = order_sku.endswith("_perpetual")
+    license_sku = "personal" if order_sku == "personal_perpetual" else order_sku
+    return license_signer.issue(
+        sku=license_sku,
+        machine_code=str(order.get("machine_code") or ""),
+        order_no=str(order.get("order_no") or ""),
+        term="perpetual" if perpetual else "annual",
+        updates_days=365 if perpetual else None,
+    )
 
 
 def _order_view(order: dict[str, Any], license_row: dict[str, Any] | None,
@@ -341,8 +357,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             return None
 
         try:
-            license_data = license_signer.issue(
-                sku=order["sku"], machine_code=order["machine_code"], order_no=order_no)
+            license_data = _issue_for_order(license_signer, order)
         except signer.SignerError as exc:
             logger.error("license issue failed (query): order=%s code=%s", order_no, exc.code)
             try:
@@ -463,8 +478,13 @@ def create_app(config: Config | None = None) -> FastAPI:
             return _error(403, "channel_unavailable", "模拟支付未启用")
 
         # 金额/SKU/有效期全部服务端决定（忽略客户端传入的金额）
-        amount_cents = catalog.price_cents(sku, cfg)
+        # 个人版年付：首次购买 99，已有历史已支付订单则按续费 129。
+        renewal = (sku.id == "personal"
+                   and database.has_paid_order_for_machine(machine_code, ("personal",)))
+        amount_cents = catalog.price_cents(sku, cfg, renewal=renewal)
         subject = catalog.subject_for(sku)
+        if renewal:
+            subject = f"{catalog.PRODUCT_NAME} {sku.edition} · 续费"
         token = secrets.token_urlsafe(32)
         expires_at = db_module.iso(
             db_module.utcnow() + timedelta(seconds=int(cfg.COMMERCIAL_ORDER_TTL_SECONDS)))
@@ -599,8 +619,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             return _error(400, "order_not_payable", "订单当前状态不可支付")
 
         try:
-            license_data = license_signer.issue(
-                sku=order["sku"], machine_code=order["machine_code"], order_no=order_no)
+            license_data = _issue_for_order(license_signer, order)
         except signer.SignerError as exc:
             logger.error("license issue failed (mock): order=%s code=%s", order_no, exc.code)
             database.log_event(order_no, "license_issue_failed", {"code": exc.code})
@@ -711,8 +730,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             return PlainTextResponse("success", status_code=200)
 
         try:
-            license_data = license_signer.issue(
-                sku=order["sku"], machine_code=order["machine_code"], order_no=order_no)
+            license_data = _issue_for_order(license_signer, order)
         except signer.SignerError as exc:
             logger.error("license issue failed (notify): order=%s code=%s", order_no, exc.code)
             database.log_event(order_no, "license_issue_failed", {"code": exc.code})

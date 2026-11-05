@@ -46,13 +46,16 @@
     badge.textContent = testMode ? '测试版' : (TEXT[st] || st);
     badge.className = 'badge ' + (testMode ? 'paid' : (['free', 'trial', 'paid', 'grace'].includes(st) ? st : 'free'));
     $('edition').textContent = testMode ? '测试版 · 全功能' : (s.edition || '未授权');
+    const lic = s.license || {};
+    const perpetual = lic.term === 'perpetual';
     $('stateText').textContent = testMode ? '收费门禁未开启（内部测试）'
-      : st === 'paid' ? '离线授权有效'
+      : st === 'paid' ? (perpetual ? '买断授权有效' : '离线授权有效')
       : st === 'trial' ? '全功能试用'
       : st === 'grace' ? '已到期，宽限期内仍可使用'
       : (s.trial && s.trial.used) ? '3 天试用已结束' : '未授权';
-    $('expiresText').textContent = s.license && s.license.expires_at
-      ? fmtDate(s.license.expires_at) : '—';
+    $('expiresText').textContent = perpetual
+      ? (lic.updates_until ? `永久 · 更新至 ${fmtDate(lic.updates_until).slice(0, 10)}` : '永久')
+      : (lic.expires_at ? fmtDate(lic.expires_at) : '—');
     $('machineCode').textContent = s.machine_display || s.machine_code || '—';
     const q = s.quota || {};
     if (testMode) {

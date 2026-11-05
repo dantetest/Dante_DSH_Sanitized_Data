@@ -41,13 +41,17 @@ def test_config_defaults_contract():
     assert cfg.LICENSE_KEY_ID == "prod-2026"
     assert cfg.COMMERCIAL_ORDER_TTL_SECONDS == 15 * 60
     assert cfg.COMMERCIAL_RATE_LIMIT_ORDERS_PER_MINUTE == 10
-    assert cfg.prices == {"personal": 19900, "pro": 49900, "team": 199900}
+    assert cfg.prices == {"personal": 9900, "personal_renewal": 12900,
+                          "personal_perpetual": 39900, "pro": 49900,
+                          "team": 199900}
     # 属性名与 env 同名（T2 依赖）
     for name in ("ALIPAY_APP_ID", "ALIPAY_APP_PRIVATE_KEY_PATH", "ALIPAY_PUBLIC_KEY_PATH",
                  "ALIPAY_GATEWAY", "ALIPAY_PAY_MODE", "ALIPAY_NOTIFY_URL",
                  "ALIPAY_SELLER_ID", "ALIPAY_APP_ID_CHECK", "COMMERCIAL_BASE_URL",
                  "COMMERCIAL_DB", "COMMERCIAL_DATA_DIR", "LICENSE_PRIVATE_KEY_PATH",
                  "LICENSE_KEY_PASSWORD_ENV", "COMMERCIAL_PRICE_PERSONAL_CENTS",
+                 "COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS",
+                 "COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS",
                  "COMMERCIAL_PRICE_PRO_CENTS", "COMMERCIAL_PRICE_TEAM_CENTS",
                  "COMMERCIAL_CORS_EXTRA_ORIGINS"):
         assert hasattr(cfg, name), name
@@ -62,8 +66,14 @@ def test_catalog_contract(client, config):
     assert [channel["id"] for channel in data["channels"]] == ["alipay", "mock"]
     assert all(channel["enabled"] for channel in data["channels"])
     skus = {sku["id"]: sku for sku in data["skus"]}
-    assert set(skus) == {"personal", "pro"}
+    assert set(skus) == {"personal", "personal_perpetual", "pro"}
     assert skus["personal"]["price_cents"] == config.COMMERCIAL_PRICE_PERSONAL_CENTS
+    assert skus["personal"]["renewal_price_cents"] == \
+        config.COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS
+    assert skus["personal_perpetual"]["price_cents"] == \
+        config.COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS
+    assert skus["personal_perpetual"]["term"] == "perpetual"
+    assert skus["personal"]["term"] == "annual"
     assert skus["pro"]["price_cents"] == config.COMMERCIAL_PRICE_PRO_CENTS
     assert skus["pro"]["currency"] == "CNY"
     assert skus["pro"]["term"] == "annual"
@@ -118,6 +128,43 @@ def test_create_order_ignores_client_supplied_amount(client, config, valid_machi
     })
     assert response.status_code == 200
     assert response.json()["amount_cents"] == config.COMMERCIAL_PRICE_PERSONAL_CENTS
+
+
+def test_personal_first_year_then_renewal_price(client, config, valid_machine_code):
+    first = client.post("/api/orders", json={
+        "sku": "personal", "machine_code": valid_machine_code, "channel": "alipay"})
+    assert first.status_code == 200, first.text
+    first_data = first.json()
+    assert first_data["amount_cents"] == config.COMMERCIAL_PRICE_PERSONAL_CENTS
+    paid = client.post("/api/mock/pay", json={
+        "order_no": first_data["order_no"], "token": first_data["order_token"]})
+    assert paid.status_code == 200, paid.text
+    second = client.post("/api/orders", json={
+        "sku": "personal", "machine_code": valid_machine_code, "channel": "alipay"})
+    assert second.status_code == 200, second.text
+    assert second.json()["amount_cents"] == \
+        config.COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS
+
+
+def test_buyout_order_issues_perpetual_license(client, config, valid_machine_code):
+    import json
+    response = client.post("/api/orders", json={
+        "sku": "personal_perpetual", "machine_code": valid_machine_code,
+        "channel": "alipay"})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["amount_cents"] == config.COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS
+    assert data["sku"] == "personal_perpetual"
+    paid = client.post("/api/mock/pay", json={
+        "order_no": data["order_no"], "token": data["order_token"]})
+    assert paid.status_code == 200, paid.text
+    view = paid.json()
+    payload = json.loads(view["license"]["text"])["payload"]
+    assert payload["term"] == "perpetual"
+    assert payload["expires_at"] is None
+    assert payload["updates_until"] is not None
+    assert "mcp" in payload["features"]
+    assert view["license"]["term"] == "perpetual"
 
 
 def test_create_order_accepts_compact_machine_code(client):

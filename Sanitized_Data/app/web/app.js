@@ -332,7 +332,11 @@ function renderLicenseChip() {
     text = `试用 · 剩 ${Number((s.trial && s.trial.days_left) || 0)} 天`;
   } else if (st === 'paid' || st === 'grace') {
     const exp = s.license && s.license.expires_at;
-    text = `${s.edition || '已授权'}${exp ? ' · ' + licenseDate(exp) + ' 到期' : ''}`;
+    if (!exp && s.license && s.license.term === 'perpetual') {
+      text = `${s.edition || '已授权'} · 永久`;
+    } else {
+      text = `${s.edition || '已授权'}${exp ? ' · ' + licenseDate(exp) + ' 到期' : ''}`;
+    }
   } else {
     text = s.edition || '授权';
   }

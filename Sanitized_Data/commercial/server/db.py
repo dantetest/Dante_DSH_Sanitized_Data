@@ -314,6 +314,20 @@ class Database:
             return self._row(conn.execute(
                 "SELECT * FROM licenses WHERE license_id=?", (str(license_id),)).fetchone())
 
+    def has_paid_order_for_machine(self, machine_code: str,
+                                   sku_ids: tuple[str, ...]) -> bool:
+        """该机器码是否已有指定 SKU 的已支付订单（用于首年/续费价判断）。"""
+        if not machine_code or not sku_ids:
+            return False
+        placeholders = ",".join("?" for _ in sku_ids)
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM orders WHERE machine_code=? AND status=? "
+                f"AND sku IN ({placeholders}) LIMIT 1",
+                (str(machine_code), STATUS_PAID, *sku_ids),
+            ).fetchone()
+        return row is not None
+
     def finalize_payment(self, *, order_no: str, provider: str, transaction_id: str,
                          amount_cents: int, raw: dict[str, Any] | str | None,
                          license: dict[str, Any], trade_status: str = "TRADE_SUCCESS",

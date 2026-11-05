@@ -48,6 +48,7 @@ def build_payload(*,
                   max_devices: int | None = None,
                   days: int = 365,
                   expires_at: str | None = None,
+                  updates_days: int | None = 365,
                   customer_name: str = "",
                   customer_org: str = "",
                   team_id: str = "",
@@ -85,8 +86,12 @@ def build_payload(*,
             exp = now + timedelta(days=max(1, int(days)))
         if exp <= now:
             raise ValueError("到期时间必须晚于当前时间")
+        updates = exp
     else:
         exp = None
+        # 买断：永久使用 + 约定更新期（默认 1 年），不是永久免费升级
+        updates = (now + timedelta(days=max(1, int(updates_days)))
+                   if updates_days else None)
     license_id = license_id or "lic_" + now.strftime("%Y%m%d") + "_" + secrets.token_hex(4)
     payload = {
         "license_id": license_id,
@@ -102,7 +107,7 @@ def build_payload(*,
         "issued_at": now.isoformat(),
         "not_before": now.isoformat(),
         "expires_at": exp.isoformat() if exp else None,
-        "updates_until": exp.isoformat() if exp else None,
+        "updates_until": updates.isoformat() if updates else None,
         "grace_days": 14,
         "features": default_features(sku),
         "team_id": team_id or None,

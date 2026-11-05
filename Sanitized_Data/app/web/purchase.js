@@ -50,7 +50,8 @@
     audit_export: '审计 / 复检报告导出',
   };
   const TERM_TEXT = { annual: '/ 年', perpetual: '/ 永久', monthly: '/ 月' };
-  const SKU_NAME = { personal: '个人版', pro: '专业版', team: '团队版', org: '机构版' };
+  const SKU_NAME = { personal: '个人版·年付', personal_perpetual: '个人版·买断',
+                     pro: '专业版', team: '团队版', org: '机构版' };
 
   // ── 基础工具 ──────────────────────────────────────────────
 
@@ -304,7 +305,8 @@
 
   function featureLabels(features) {
     const list = Array.isArray(features) ? features : [];
-    return list.map((f) => FEATURE_TEXT[String(f)] || String(f));
+    const labels = list.map((f) => FEATURE_TEXT[String(f)] || String(f));
+    return [...new Set(labels)];
   }
 
   function skuCardHtml(sku) {
@@ -312,13 +314,17 @@
     const id = String(item.id || '').trim();
     const name = String(item.name || SKU_NAME[id] || id || '版本');
     const edition = String(item.edition || name);
-    const term = TERM_TEXT[String(item.term || '')]
+    const term = String(item.term_label || '')
+      || TERM_TEXT[String(item.term || '')]
       || (item.term ? '/ ' + String(item.term) : '');
     const devices = Number(item.devices);
     const devicesText = Number.isFinite(devices) && devices > 0
       ? devices + ' 台设备' : '';
     const features = featureLabels(item.features);
-    const selfServe = id === 'personal' || id === 'pro';
+    const selfServe = id === 'personal' || id === 'personal_perpetual' || id === 'pro';
+    const renewalNote = Number(item.renewal_price_cents) > 0
+      ? '<p class="sku-note">续费 ' + esc(fmtYuan(item.renewal_price_cents)) + ' / 年</p>'
+      : '';
     const action = selfServe
       ? '<button class="btn seal" type="button" data-action="buy" data-sku="'
         + esc(id) + '">支付宝扫码</button>'
@@ -329,6 +335,7 @@
       + '</div>'
       + '<div class="sku-price"><b>' + esc(fmtYuan(item.price_cents)) + '</b>'
       + '<span>' + esc(term) + '</span></div>'
+      + renewalNote
       + (name && name !== edition ? '<p class="sku-note">' + esc(name) + '</p>' : '')
       + '<ul class="sku-features">'
       + (features.length

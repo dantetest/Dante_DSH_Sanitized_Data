@@ -91,6 +91,19 @@ def test_sign_license_is_compact_verifiable_json(test_license_key):
     public_key.verify(base64.b64decode(container["sig"]), canonical_payload(payload))
 
 
+def test_perpetual_license_has_no_expiry_but_one_year_updates(test_license_key):
+    signer = _make_signer(test_license_key)
+    data = signer.issue(
+        sku="personal", machine_code="ZH39-7N5C-98CD-A8GB",
+        order_no="ord_20260101000000_00000009", term="perpetual",
+        updates_days=365)
+    payload = json.loads(data["text"])["payload"]
+    assert payload["term"] == "perpetual"
+    assert payload["expires_at"] is None
+    assert payload["updates_until"] is not None
+    assert data["term"] == "perpetual"
+
+
 def test_license_imported_by_product_license_service(test_license_key, license_service,
                                                      real_machine_code):
     signer = _make_signer(test_license_key)

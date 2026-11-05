@@ -146,9 +146,11 @@ class PurchaseStaticTest(unittest.TestCase):
         self.assertIn("dataset.sku", js)
         html = read_text(WEB / "pricing.html")
         self.assertIn('data-sku="personal"', html)
-        # 2026-11-04 业务调整：价格页只保留 199 个人版，其他价位已移除
+        self.assertIn('data-sku="personal_perpetual"', html)
         self.assertNotIn('data-sku="pro"', html)
-        self.assertIn("¥199", html)
+        self.assertIn("¥99", html)
+        self.assertIn("¥129", html)
+        self.assertIn("¥399", html)
         self.assertNotIn("¥499", html)
         # 2026-11-05：MCP 并入个人版；不再写“本地页为参考价/以官网为准”这类
         # 自相矛盾的描述；专业版/团队版/机构版只留商务联系。

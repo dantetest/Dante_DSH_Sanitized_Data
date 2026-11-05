@@ -158,7 +158,11 @@ class Config:
         self.LICENSE_KEY_ID = _get(env, "LICENSE_KEY_ID", "prod-2026")
 
         # ── 价格（分） ──
-        self.COMMERCIAL_PRICE_PERSONAL_CENTS = _get_int(env, "COMMERCIAL_PRICE_PERSONAL_CENTS", 19900)
+        self.COMMERCIAL_PRICE_PERSONAL_CENTS = _get_int(env, "COMMERCIAL_PRICE_PERSONAL_CENTS", 9900)
+        self.COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS = _get_int(
+            env, "COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS", 12900)
+        self.COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS = _get_int(
+            env, "COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS", 39900)
         self.COMMERCIAL_PRICE_PRO_CENTS = _get_int(env, "COMMERCIAL_PRICE_PRO_CENTS", 49900)
         self.COMMERCIAL_PRICE_TEAM_CENTS = _get_int(env, "COMMERCIAL_PRICE_TEAM_CENTS", 199900)
         # 线上自助只保留个人版（价格页/授权页已只展示 199）；专业版仍可由后台/人工开通。
@@ -181,6 +185,8 @@ class Config:
         self.cors_extra_origins = _split_origins(self.COMMERCIAL_CORS_EXTRA_ORIGINS)
         self.prices: dict[str, int] = {
             "personal": self.COMMERCIAL_PRICE_PERSONAL_CENTS,
+            "personal_renewal": self.COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS,
+            "personal_perpetual": self.COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS,
             "pro": self.COMMERCIAL_PRICE_PRO_CENTS,
             "team": self.COMMERCIAL_PRICE_TEAM_CENTS,
         }
@@ -223,7 +229,10 @@ class Config:
             raise ConfigError("ALIPAY_QUERY_TIMEOUT 必须在 1~60 秒之间")
         if not (0 < int(self.COMMERCIAL_PORT) <= 65535):
             raise ConfigError(f"COMMERCIAL_PORT 非法：{self.COMMERCIAL_PORT}")
-        for name in ("COMMERCIAL_PRICE_PERSONAL_CENTS", "COMMERCIAL_PRICE_PRO_CENTS",
+        for name in ("COMMERCIAL_PRICE_PERSONAL_CENTS",
+                     "COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS",
+                     "COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS",
+                     "COMMERCIAL_PRICE_PRO_CENTS",
                      "COMMERCIAL_PRICE_TEAM_CENTS"):
             if int(getattr(self, name)) <= 0:
                 raise ConfigError(f"{name} 必须为正整数（单位：分）")
@@ -269,6 +278,10 @@ class Config:
             "LICENSE_KEY_PASSWORD_ENV": self.LICENSE_KEY_PASSWORD_ENV,
             "LICENSE_KEY_ID": self.LICENSE_KEY_ID,
             "COMMERCIAL_PRICE_PERSONAL_CENTS": str(self.COMMERCIAL_PRICE_PERSONAL_CENTS),
+            "COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS": str(
+                self.COMMERCIAL_PRICE_PERSONAL_RENEWAL_CENTS),
+            "COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS": str(
+                self.COMMERCIAL_PRICE_PERSONAL_PERPETUAL_CENTS),
             "COMMERCIAL_PRICE_PRO_CENTS": str(self.COMMERCIAL_PRICE_PRO_CENTS),
             "COMMERCIAL_PRICE_TEAM_CENTS": str(self.COMMERCIAL_PRICE_TEAM_CENTS),
             "COMMERCIAL_SELF_SERVE_PRO_ENABLED": (

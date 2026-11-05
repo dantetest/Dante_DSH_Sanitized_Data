@@ -169,9 +169,11 @@ class LicenseSigner:
 
     # ── 签发 ──
     def issue(self, *, sku: str, machine_code: str, order_no: str,
-              days: int | None = None) -> dict[str, Any]:
+              days: int | None = None, term: str = "annual",
+              updates_days: int | None = 365) -> dict[str, Any]:
         """构造并签名 license；返回供 API/DB 使用的字段字典。
 
+        term=annual 使用到期时间；term=perpetual 永久使用但更新期默认 1 年。
         失败抛 :class:`SignerError`（不会把私钥/口令写进消息或日志）。
         """
         key = self._load_key()
@@ -179,12 +181,16 @@ class LicenseSigner:
             raise SignerError("license_issue_failed", "缺少订单号，无法签发授权", 500)
         if sku not in tiers.TIERS or sku in ("free", "trial"):
             raise SignerError("license_issue_failed", "套餐不支持签发授权", 500)
+        if term not in ("annual", "perpetual"):
+            raise SignerError("license_issue_failed", "授权 term 非法", 500)
         try:
             payload = build_payload(
                 sku=sku,
                 machine_codes=[machine_code],
                 order_id=str(order_no),
+                term=term,
                 days=int(days if days is not None else self.days),
+                updates_days=updates_days,
                 notes=LICENSE_NOTES,
             )
             container = sign_license(payload, key, self.key_id)
@@ -203,6 +209,8 @@ class LicenseSigner:
             "machine_code": str((payload.get("machine_codes") or [""])[0]),
             "issued_at": str(payload.get("issued_at") or ""),
             "expires_at": payload.get("expires_at"),
+            "updates_until": payload.get("updates_until"),
+            "term": payload.get("term"),
             "edition": payload.get("edition"),
         }
 

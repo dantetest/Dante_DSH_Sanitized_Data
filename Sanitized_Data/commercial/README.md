@@ -1,4 +1,6 @@
-﻿# 数据隐站 · L3 商业服务（commercial/）
+# 数据隐站 · L3 商业服务（commercial/）
+
+> **2026-11-05 价格/SKU 更新**：个人版首年 ¥99（`personal`）、续费 ¥129、买断 ¥399（`personal_perpetual`）；本文后面的 199/499 示例为历史值，以 `catalog.py` / `/api/catalog` 为准。
 
 本目录是「购买 → 扫码支付 → 自动签发 Ed25519 授权 → 本机解锁」链路中的**商业服务端**：
 FastAPI + SQLite（WAL），默认 mock 支付通道用于本地演示，真实收款走支付宝（T2 适配器）。
