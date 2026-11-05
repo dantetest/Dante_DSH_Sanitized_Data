@@ -267,7 +267,7 @@
     } else {
       link.removeAttribute('href');
       show(link, false);
-      $('fallbackHint').textContent = '可联系交付顾问人工开通：把上方「本机识别码」发给顾问，收到授权文件后在授权页导入即可解锁。';
+      $('fallbackHint').textContent = '可联系人工开通：把上方「本机识别码」发给 contact@blctek.com，收到授权文件后在授权页导入即可解锁。';
     }
   }
 

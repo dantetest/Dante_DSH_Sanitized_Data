@@ -36,6 +36,6 @@
     });
     if (note) note.textContent = '购买将在系统浏览器打开购买页；本机文件不会上传。价格以购买页实时显示为准。';
   } else if (note) {
-    note.textContent = '购买入口尚未配置；可先在授权页导入已有授权，或联系交付顾问人工开通。价格以购买页实时显示为准。';
+    note.textContent = '购买入口尚未配置；可先在授权页导入已有授权，或联系 contact@blctek.com 人工开通。价格以购买页实时显示为准。';
   }
 })();

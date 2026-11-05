@@ -120,7 +120,7 @@
       const note = document.createElement('p');
       note.className = 'hint paid-no-buy-note';
       note.style.marginTop = '10px';
-      note.textContent = '已购买用户不再显示购买入口；如需换机或续费，请联系交付顾问。';
+      note.textContent = '已购买用户不再显示购买入口；如需换机或续费，请联系 contact@blctek.com。';
       statusCard.appendChild(note);
     }
   }
