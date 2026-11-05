@@ -410,6 +410,21 @@ class SigningTests(AlipayTestBase):
         alipay.sign_params(params, self.app_key)
         self.assertEqual(snapshot, params)
 
+    def test_unsigned_error_response_exposes_business_code(self):
+        raw = (
+            '{"alipay_trade_precreate_response":{'
+            '"code":"40004","msg":"Business Failed",'
+            '"sub_code":"ACQ.ACCESS_FORBIDDEN","sub_msg":"应用未签约当面付"}}'
+        )
+        with self.assertRaises(alipay.PaymentError) as ctx:
+            alipay.parse_signed_response(raw, "alipay_trade_precreate_response",
+                                         self.alipay_public_key)
+        message = str(ctx.exception)
+        self.assertIn("payment_create_failed", message)
+        self.assertIn("40004", message)
+        self.assertIn("ACQ.ACCESS_FORBIDDEN", message)
+        self.assertIn("应用未签约当面付", message)
+
 
 # ===========================================================================
 # 密钥读取

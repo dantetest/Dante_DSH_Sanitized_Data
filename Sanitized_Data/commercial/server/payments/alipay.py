@@ -702,8 +702,23 @@ def parse_signed_response(
         )
     signature = envelope.get("sign")
     if not signature:
+        # 支付宝部分网关/沙箱在业务失败时返回未签名响应；先暴露业务码，
+        # 否则只会看到「缺少签名」，无法判断是权限、app_id 还是产品未签约。
+        body = envelope.get(response_key)
+        detail = ""
+        if isinstance(body, dict):
+            code = str(body.get("code") or "").strip()
+            sub_code = str(body.get("sub_code") or "").strip()
+            sub_msg = str(body.get("sub_msg") or body.get("msg") or "").strip()
+            if code and code != "10000":
+                detail = f"；网关业务码：{code}"
+                if sub_code:
+                    detail += f" / {sub_code}"
+                if sub_msg:
+                    detail += f" / {sub_msg}"
         raise PaymentError(
-            "payment_create_failed", f"支付宝响应缺少签名（sign），已拒绝：{response_key}"
+            "payment_create_failed",
+            f"支付宝响应缺少签名（sign），已拒绝：{response_key}{detail}",
         )
     if not verify_content(content, str(signature), public_key):
         raise PaymentError(
