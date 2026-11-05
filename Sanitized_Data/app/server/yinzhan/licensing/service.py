@@ -515,7 +515,7 @@ class LicenseService:
             usage = self._usage_today(state, effective_now, clock_suspect)
             self._save_state(state)
             free = status.get("state") == "free"
-            limit = int(tiers.FREE_LIMITS.get("jobs_per_day") or 3)
+            limit = int(tiers.FREE_LIMITS.get("jobs_per_day", 0))
             used = max(0, int(usage.get("jobs") or 0))
             today = effective_now.astimezone().date()
             reset_at = datetime.combine(today + timedelta(days=1),

@@ -131,14 +131,14 @@ const ERROR_CN = {
   bad_response: '本机回了看不懂的内容，请重新试一次。',
   busy: '本机正在忙，等这一份处理完再试。',
   forbidden: '这项操作被拦下了，原件没有被改动。',
-  quota_exceeded: '今天的 3 份免费额度用完了。明天 0 点恢复；也可以现在升级，今天就能继续。',
-  free_page_limit: '免费版单份最多 20 页。升级后不限页数。',
-  free_ocr_limit: '免费版单份最多识别 10 页扫描件。升级后可整份识别。',
-  free_format: 'TIF / 三维文件需要个人版及以上。免费版可先用 PDF、Word、Excel、图片。',
-  free_size_limit: '免费版单文件限 100MB。更大的文件建议升级后处理。',
+  quota_exceeded: '本版本不提供免费使用，请先开始 3 天试用或购买个人版。',
+  free_page_limit: '本版本不提供免费使用，请先开始 3 天试用或购买个人版。',
+  free_ocr_limit: '本版本不提供免费使用，请先开始 3 天试用或购买个人版。',
+  free_format: '本版本不提供免费使用，请先开始 3 天试用或购买个人版。',
+  free_size_limit: '本版本不提供免费使用，请先开始 3 天试用或购买个人版。',
   pack_requires_paid: '该行业规则包需要个人版及以上；请切换通用规则，或升级后使用。',
-  quota_busy: '当前免费任务还没处理完，请等它完成后再建下一个。',
-  license_required: '这项能力需要个人版及以上授权；可先导入授权文件。',
+  quota_busy: '当前任务还没处理完，请等它完成后再建下一个。',
+  license_required: '本版本不提供免费使用；请先在授权页开始 3 天全功能试用，或购买个人版授权。',
 };
 class AppError extends Error {
   constructor(code, human) { super(human || '这一步没走通，请重新试一次。'); this.code = code; this.human = this.message; }
@@ -325,7 +325,9 @@ function renderLicenseChip() {
     // 必须显示“测试版·全功能”，否则朋友会误以为只剩 3 份而不敢测。
     text = '测试版 · 全功能';
   } else if (st === 'free') {
-    text = `免费版 · 今日剩余 ${Math.max(0, Number(q.remaining || 0))}/${Number(q.limit_today || 3)}`;
+    text = (s.trial && s.trial.used)
+      ? '试用已结束 · 需购买'
+      : '未授权 · 可开始 3 天试用';
   } else if (st === 'trial') {
     text = `试用 · 剩 ${Number((s.trial && s.trial.days_left) || 0)} 天`;
   } else if (st === 'paid' || st === 'grace') {
@@ -341,14 +343,14 @@ function renderLicenseChip() {
 function openLicenseLimit(err) {
   const code = err && err.code;
   const title = {
-    quota_exceeded: '今天的免费额度用完了',
-    free_page_limit: '这份文件超出免费页数',
-    free_ocr_limit: '这份扫描件超出免费识别页数',
-    free_format: '这个格式需要升级',
-    free_size_limit: '文件超过免费版大小',
+    quota_exceeded: '需要开始试用或购买',
+    free_page_limit: '需要开始试用或购买',
+    free_ocr_limit: '需要开始试用或购买',
+    free_format: '需要开始试用或购买',
+    free_size_limit: '需要开始试用或购买',
     pack_requires_paid: '这个规则包需要升级',
     quota_busy: '先等当前任务完成',
-    license_required: '这项能力需要授权',
+    license_required: '需要开始试用或购买',
   }[code] || '继续使用，需要升级';
   const message = (err && (err.human || (code && ERROR_CN[code]))) || '升级后可以继续处理这份文件。';
   ui.licenseLimitTitle.textContent = title;

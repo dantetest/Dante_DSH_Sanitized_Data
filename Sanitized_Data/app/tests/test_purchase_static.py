@@ -157,9 +157,11 @@ class PurchaseStaticTest(unittest.TestCase):
         self.assertNotIn("本地页为参考价", html)
         self.assertNotIn("参考价", html)
         self.assertNotIn("价格与活动以官网为准", html)
-        self.assertIn("免费版（长期）：每天 3 份", html)
+        # 2026-11-05 定版：取消免费版，只保留一次 3 天全功能试用
+        self.assertIn("本版本不提供免费版", html)
         self.assertIn("3 天全功能试用", html)
         self.assertIn("试用期内不限份数/页数", html)
+        self.assertNotIn("免费版（长期）", html)
 
     # ── Python 侧注入 ─────────────────────────────────────────
     def test_api_exposes_purchase_route_and_commercial_url(self):

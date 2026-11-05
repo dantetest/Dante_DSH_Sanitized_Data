@@ -16,16 +16,16 @@ TEAM_FEATURES = PRO_FEATURES + ["team_admin"]
 ORG_FEATURES = TEAM_FEATURES + ["org_deploy"]
 
 FREE_LIMITS = {
-    "jobs_per_day": 3,
-    "max_pages": 20,
-    "ocr_pages_per_file": 10,
-    "max_file_mb": 100,
-    "packs": "common",
-    "formats": ["pdf", "docx", "xlsx", "image", "text"],
+    "jobs_per_day": 0,
+    "max_pages": 0,
+    "ocr_pages_per_file": 0,
+    "max_file_mb": 0,
+    "packs": (),
+    "formats": [],
 }
 
 TIERS = {
-    "free": {"edition": "免费版", "features": [], "limits": FREE_LIMITS},
+    "free": {"edition": "未授权", "features": [], "limits": FREE_LIMITS},
     "trial": {"edition": "试用版", "features": TRIAL_FEATURES, "limits": None},
     "personal": {"edition": "个人版", "features": PERSONAL_FEATURES, "limits": None},
     "pro": {"edition": "专业版", "features": PRO_FEATURES, "limits": None},

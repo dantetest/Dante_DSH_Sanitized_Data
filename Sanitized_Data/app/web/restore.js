@@ -358,7 +358,7 @@
     if (notEnforced) {
       text = '测试版 · 全功能';
     } else if (st === 'free') {
-      text = '免费版 · 今日剩余 ' + Math.max(0, num(q.remaining)) + '/' + num(q.limit_today);
+      text = (s.trial && s.trial.used) ? '试用已结束 · 需购买' : '未授权 · 可开始 3 天试用';
     } else if (st === 'trial') {
       text = '试用 · 剩 ' + num(s.trial && s.trial.days_left) + ' 天';
     } else {

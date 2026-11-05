@@ -34,7 +34,7 @@
       <span class="seal-stamp" id="verifiedStamp">已核验</span>
       <h2><span class="no">01</span>当前授权</h2>
       <div class="status-line">
-        <span class="badge free" id="stateBadge">免费版</span>
+        <span class="badge free" id="stateBadge">未授权</span>
         <span class="hint" id="statusMsg" role="status"></span>
       </div>
       <dl class="kv">
@@ -49,11 +49,11 @@
           </div>
           <div class="hint">购买/续费/换机时提供此识别码。它由本机硬件标识哈希得到，不包含原始硬件序列号。</div>
         </dd>
-        <dt>今日额度</dt><dd id="quotaText">—</dd>
+        <dt>授权/额度</dt><dd id="quotaText">—</dd>
       </dl>
       <div id="trialRow" class="trial-row" style="display:none">
         <button class="btn seal" id="btnStartTrial" type="button">开始 3 天全功能试用</button>
-        <div class="hint" style="margin-top:6px">试用只有一次：3 天全功能、不限份数/页数；结束后自动回到免费版（每天 3 份、单份 20 页）。选择“先看看免费版”不会立即开始，之后仍可在这里启用。</div>
+        <div class="hint" style="margin-top:6px">试用只有一次：3 天全功能、不限份数/页数；本版本不提供免费版，试用结束后需购买个人版授权。开始后立即计时 3 天。</div>
       </div>
     </section>
 
@@ -103,7 +103,7 @@
       <div class="faq">
         <details open><summary>授权绑定设备吗？换电脑怎么办？</summary><p>一台设备一个授权。重装系统/软件不影响；换电脑联系我们重签，12 个月内首次免费，之后 ¥50/次。</p></details>
         <details><summary>授权文件会被上传吗？</summary><p>不会。文件只在本机 <code>data/license/</code> 目录保存，引擎和本页都不联网。</p></details>
-        <details><summary>试用结束会怎样？</summary><p>自动回到免费版：每天 3 份、单份 20 页、扫描件 10 页；已导出的成品不受影响。</p></details>
+        <details><summary>试用结束会怎样？</summary><p>试用结束后需购买个人版授权才能继续使用；已导出的成品不受影响，本机数据和映射库不会删除。</p></details>
         <details><summary>为什么导入后显示无效？</summary><p>常见原因是授权文件属于另一台机器、已过期、被修改，或复制不完整。用本机识别码重新签发即可。</p></details>
       </div>
     </section>

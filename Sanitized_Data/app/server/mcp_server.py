@@ -1965,8 +1965,8 @@ def _initialize_result(params: dict) -> dict:
     }
 
 
-# D-M1：MCP 只读小工具免费；文件写/复核/导出等需要 mcp 功能位（Pro 及以上/试用）
-_MCP_FREE_TOOLS = {"list_rules", "check_support", "redact_text"}
+# 2026-11-05 起取消免费版：所有 MCP 工具都需要 3 天试用或个人版及以上授权。
+_MCP_FREE_TOOLS: set[str] = set()
 
 
 def _require_mcp_entitlement(name: str) -> None:
@@ -1978,7 +1978,7 @@ def _require_mcp_entitlement(name: str) -> None:
     except Exception:
         pass
     raise ToolError(
-        "文件脱敏/复核/导出等 MCP 工具需要专业版授权；list_rules、check_support、redact_text 可直接用。",
+        "MCP 需要 3 天全功能试用或个人版及以上授权；请先在授权页开始试用或购买。",
         "license_required",
     )
 
@@ -1998,8 +1998,7 @@ def _require_resource_entitlement() -> None:
     except Exception:
         pass
     raise ToolError(
-        "MCP 资源（任务/实体/审计/页面）需要专业版授权；"
-        "list_rules、check_support、redact_text 可直接用。",
+        "MCP 资源（任务/实体/审计/页面）需要 3 天试用或个人版及以上授权。",
         "license_required",
     )
 

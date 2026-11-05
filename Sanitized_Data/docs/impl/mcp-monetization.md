@@ -1,5 +1,7 @@
 # MCP 服务商业化设计（定价 / 套餐 / 门禁 / 购买 / 团队·机构）
 
+> **2026-11-05 产品定版：取消免费版。MCP 已包含在个人版（¥199/年）和一次性 3 天全功能试用中，不单独收费。** 本文档中“免费只读工具/专业版功能位”段落为历史设计。
+
 > **状态**：设计规划（**本批只新增文档，未改任何代码/配置/前端**）· 2026-10-24
 > **关联**：[13 MCP 定价与收费管理调研](../research/13-MCP服务定价与收费管理系统调研.md) · [billing-system.md](billing-system.md) · [licensing.md](licensing.md) · [free-tier.md](free-tier.md) · [result-payment.md](result-payment.md)（结果付费，MCP 不参与）· [plans/05 付费与解锁](../plans/05-付费与解锁-软件内购与ICP过渡-规划.md)
 > **前提**：MCP 服务已在 v1.2.x 交付（15 工具 + 4 资源模板 + 2 prompts、独立 `Sanitized_Data_MCP.exe`、支持 WorkBuddy/Codex/Claude Desktop/Cursor/DSH）；**licensing 尚未实现**，本设计是 licensing 上线时一并落地。

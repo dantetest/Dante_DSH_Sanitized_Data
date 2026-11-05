@@ -38,7 +38,7 @@
     netErrors: 0,
   };
 
-  const STATE_TEXT = { free: '免费版', trial: '试用中', paid: '已授权', grace: '宽限期' };
+  const STATE_TEXT = { free: '未授权', trial: '试用中', paid: '已授权', grace: '宽限期' };
   const FEATURE_TEXT = {
     all_packs: '全部行业规则包',
     custom_packs: '自定义规则包',

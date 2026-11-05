@@ -4,7 +4,7 @@
   const state = { status: null };
 
   const TEXT = {
-    free: '免费版',
+    free: '未授权',
     trial: '试用中',
     paid: '已授权',
     grace: '宽限期',
@@ -45,12 +45,12 @@
     const badge = $('stateBadge');
     badge.textContent = testMode ? '测试版' : (TEXT[st] || st);
     badge.className = 'badge ' + (testMode ? 'paid' : (['free', 'trial', 'paid', 'grace'].includes(st) ? st : 'free'));
-    $('edition').textContent = testMode ? '测试版 · 全功能' : (s.edition || '免费版');
+    $('edition').textContent = testMode ? '测试版 · 全功能' : (s.edition || '未授权');
     $('stateText').textContent = testMode ? '收费门禁未开启（内部测试）'
       : st === 'paid' ? '离线授权有效'
       : st === 'trial' ? '全功能试用'
       : st === 'grace' ? '已到期，宽限期内仍可使用'
-      : '未授权';
+      : (s.trial && s.trial.used) ? '3 天试用已结束' : '未授权';
     $('expiresText').textContent = s.license && s.license.expires_at
       ? fmtDate(s.license.expires_at) : '—';
     $('machineCode').textContent = s.machine_display || s.machine_code || '—';
@@ -62,9 +62,7 @@
         ? '不限份数/页数（试用期内）'
         : '不限份数/页数';
     } else {
-      const used = Number(q.used_today || 0);
-      const limit = Number(q.limit_today || 3);
-      $('quotaText').textContent = `今日剩余 ${Math.max(0, limit - used)}/${limit} 份 · 单份 ≤20 页`;
+      $('quotaText').textContent = '无免费额度；请开始 3 天全功能试用或购买个人版';
     }
     const trial = s.trial || {};
     $('trialRow').style.display = (!testMode && st === 'free' && !trial.used) ? 'block' : 'none';

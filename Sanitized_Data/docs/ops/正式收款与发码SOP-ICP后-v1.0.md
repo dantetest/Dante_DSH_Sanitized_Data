@@ -1,5 +1,7 @@
 # 正式收款 + 发授权码 完整 SOP（ICP 已下 · v1.0）
 
+> **2026-11-05 产品定版：取消免费版；只有一次 3 天全功能试用（不限份数/页数、含 MCP/TIF/3D/OCR/审计导出），试用结束需购买个人版授权。** 本文档中“14 天试用/免费版 3 份/天”段落为历史口径。
+
 > 日期：2026-11-02 · 适用：数据隐站 v1.3.4+ 桌面版（已含 licensing 门禁）· 状态：**可执行**
 > 前置文档：[客户交付与授权SOP.md](客户交付与授权SOP.md)、[manual-license-issuance.md](manual-license-issuance.md)、
 > [order-ledger-template.csv](order-ledger-template.csv)、[payment-invoice.md](../impl/payment-invoice.md)、
