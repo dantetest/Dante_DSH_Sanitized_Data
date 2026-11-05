@@ -131,12 +131,22 @@ class TestLicenseService(unittest.TestCase):
         self.assertEqual(result["state"], "paid")
         self.assertEqual(result["sku"], "personal")
         self.assertIn("all_packs", result["features"])
+        self.assertIn("mcp", result["features"])
         self.assertTrue((self.data_dir / "license" / "license.json").is_file())
         self.assertIn("license_import", (self.data_dir / "license" / "events.jsonl").read_text(encoding="utf-8"))
         # 重新构造 service 也能读
         svc2 = LicenseService(self.data_dir, now=self.now)
         svc2._machine_cache = dict(self.svc._machine_cache)
         self.assertEqual(svc2.status()["state"], "paid")
+
+    def test_legacy_personal_license_still_gets_mcp(self):
+        """2026-11-05 MCP 归入个人版：旧个人版签名缺 mcp 时本地兼容补上。"""
+        features = [f for f in tiers.PERSONAL_FEATURES if f != "mcp"]
+        legacy = self._license(
+            license_id="lic_legacy_001", order_id="ord_legacy_001", features=features)
+        result = self.svc.import_license(legacy)
+        self.assertEqual(result["sku"], "personal")
+        self.assertIn("mcp", result["features"])
 
     def test_import_rejects_wrong_machine(self):
         lic = self._license(machine_codes=["AAAA-BBBB-CCCC-DDDD"])

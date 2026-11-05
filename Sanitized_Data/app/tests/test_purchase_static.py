@@ -150,6 +150,14 @@ class PurchaseStaticTest(unittest.TestCase):
         self.assertNotIn('data-sku="pro"', html)
         self.assertIn("¥199", html)
         self.assertNotIn("¥499", html)
+        # 2026-11-05：MCP 并入个人版；不再写“本地页为参考价/以官网为准”这类
+        # 自相矛盾的描述；专业版/团队版/机构版只留商务联系。
+        self.assertIn("MCP 接入", html)
+        self.assertIn("专业版 / 团队版 / 机构版", html)
+        self.assertNotIn("本地页为参考价", html)
+        self.assertNotIn("参考价", html)
+        self.assertNotIn("价格与活动以官网为准", html)
+        self.assertIn("免费版：每天 3 份", html)
 
     # ── Python 侧注入 ─────────────────────────────────────────
     def test_api_exposes_purchase_route_and_commercial_url(self):

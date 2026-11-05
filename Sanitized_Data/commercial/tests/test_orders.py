@@ -73,6 +73,7 @@ def test_catalog_contract(client, config):
     assert "mcp" in skus["pro"]["features"]
     assert "custom_packs" not in skus["personal"]["features"]
     assert "all_packs" in skus["personal"]["features"]
+    assert "mcp" in skus["personal"]["features"]
     # team/org 只联系商务，不建线上单
     assert data["contact_sales"]["skus"] == ["team", "org"]
     assert data["contact_sales"]["reference_prices_cents"]["team"] == \

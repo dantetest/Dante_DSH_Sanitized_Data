@@ -83,7 +83,7 @@
       buy.href = url + (url.includes('?') ? '&' : '?') + qs.toString();
       buy.target = '_blank';
       buy.rel = 'noopener';
-      $('buyHint').textContent = '将在系统浏览器打开官网购买页，并带上本机识别码；本机文件不会上传。';
+      $('buyHint').textContent = '将在系统浏览器打开购买页，并带上本机识别码；本机文件不会上传。';
     } else {
       buy.href = '/pricing';
       $('buyHint').textContent = '购买入口尚未配置；可先查看价格页，或联系交付顾问人工开通。';
@@ -97,7 +97,7 @@
     if ($('scanHint')) {
       $('scanHint').textContent = hasCommercial
         ? '支付宝扫码支付成功后自动导入授权，不需要手动复制；本机文件不会上传。'
-        : '扫码升级需要先配置商业服务入口；未配置时请在购买页使用官网链接或联系交付顾问。';
+        : '扫码升级需要先配置商业服务入口；未配置时请在购买页使用购买链接或联系交付顾问。';
     }
 
     // 已授权用户不再展示购买/升级入口，避免续费卡片干扰。

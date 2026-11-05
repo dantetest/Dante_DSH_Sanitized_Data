@@ -356,12 +356,17 @@ class LicenseService:
             lic_status = license_info.get("status")
             if lic_status in ("paid", "grace"):
                 payload = license_info["payload"]
+                # 2026-11-05：MCP 归纳到个人版。旧个人版 license 的签名 features
+                # 里没有 mcp，这里做本地兼容，避免老用户重新签发才能用 MCP。
+                features = list(payload.get("features") or [])
+                if payload.get("sku") == "personal" and "mcp" not in features:
+                    features.append("mcp")
                 result.update({
                     "state": lic_status,
                     "sku": payload["sku"],
                     "edition": payload.get("edition") or tiers.tier_info(payload["sku"])["edition"],
                     "term": payload.get("term"),
-                    "features": list(payload.get("features") or []),
+                    "features": features,
                     "limits": None,
                     "license": {
                         "license_id": payload.get("license_id"),
