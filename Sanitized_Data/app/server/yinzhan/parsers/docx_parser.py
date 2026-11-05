@@ -1792,8 +1792,16 @@ class DocxParser(Parser):
         block_by_id = {block.id: block for _page, block in doc.all_blocks()}
         tasks: dict[str, list[tuple[int, int, str]]] = {}
         unresolved = 0
+        manual_unmapped = 0
         for entity in entities:
-            if entity.status == "rejected" or not entity.value:
+            if entity.status == "rejected":
+                continue
+            if not entity.value:
+                # 历史/旧客户端可能留下“只有矩形、没有文字值”的手动实体；
+                # DOCX 是 flow 格式，矩形无法映射到 run，必须明确提示而不是静默跳过。
+                if entity.origin == "manual" or any(not s.is_text for s in entity.spans):
+                    manual_unmapped += 1
+                    unresolved += 1
                 continue
             decision = decisions.get(entity.id) or entity.decision
             if decision is None:
@@ -1803,10 +1811,14 @@ class DocxParser(Parser):
             for span in entity.spans:
                 if not span.is_text:
                     unresolved += 1
+                    if entity.origin == "manual":
+                        manual_unmapped += 1
                     continue
                 block = block_by_id.get(span.block_id or "")
                 if block is None or block.kind != "text":
                     unresolved += 1
+                    if entity.origin == "manual":
+                        manual_unmapped += 1
                     continue
                 length = max(0, int(span.end) - int(span.start))
                 replacement = _replacement_text(decision, length)
@@ -1837,6 +1849,11 @@ class DocxParser(Parser):
         if unresolved:
             warnings.append(
                 f"有 {unresolved} 处标记无法映射到 DOCX 的 run，请人工复核成品"
+            )
+        if manual_unmapped:
+            warnings.append(
+                f"有 {manual_unmapped} 处手动框选无法映射到 DOCX 文字；"
+                "DOCX 请改用「选中文字补漏」，矩形框选不会生效"
             )
 
         # 修订 / 批注 / 保护口令等 XML 级清理

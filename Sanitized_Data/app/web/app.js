@@ -1628,12 +1628,25 @@ function bindDivider() {
 }
 
 /* ─────────────── ④ 框选补漏 ─────────────── */
+function flowPreviewOnPage() {
+  try {
+    const preview = state.previews && state.previews.orig
+      ? state.previews.orig.get(state.page) : null;
+    return !!(preview && (preview.kind || '') === 'flow');
+  } catch (err) {
+    return false;
+  }
+}
 function setSelectMode(on) {
   state.selectMode = !!on;
   ui.btnSelect.classList.toggle('on', state.selectMode);
   ui.btnSelect.setAttribute('aria-pressed', String(state.selectMode));
   ui.stageOrig.classList.toggle('alt-select', state.selectMode);
-  if (state.selectMode) toast('在左边原件上拖一个框，标出遗漏的地方。按 Esc 退出。');
+  if (state.selectMode) {
+    toast(flowPreviewOnPage()
+      ? '在左边原件上选中要隐去的文字（拖选文字，不要拖框）。按 Esc 退出。'
+      : '在左边原件上拖一个框，标出遗漏的地方。按 Esc 退出。');
+  }
 }
 function closeMarkMenu() {
   $$('.menu, .marquee').forEach((node) => node.remove());
@@ -1694,6 +1707,28 @@ function flowNorm(draft, ev, rect) {
     (rect.x + rect.w) / base.width, (rect.y + rect.h) / base.height,
   ]);
 }
+function flowSelectedText(draft, ev) {
+  // pointerdown 里 preventDefault 会阻止浏览器原生文本选中；这里用起点/终点
+  // 的 caretRange 构造 Range 取选中文字，和 flowNorm 使用同一套定位。
+  try {
+    const r0 = caretRangeAt(draft.clientX0, draft.clientY0);
+    const r1 = caretRangeAt(ev.clientX, ev.clientY);
+    if (!r0 || !r1 || !r0.startContainer || !r1.startContainer) return '';
+    const rangeText = (a, b) => {
+      const range = document.createRange();
+      range.setStart(a.startContainer, a.startOffset);
+      range.setEnd(b.startContainer, b.startOffset);
+      return String(range).trim();
+    };
+    try {
+      return rangeText(r0, r1);
+    } catch (err) {
+      return rangeText(r1, r0);
+    }
+  } catch (err) {
+    return '';
+  }
+}
 function rasterNorm(preview, rect, base) {
   void preview;   // 归一化按显示框换算，后端再乘回页面坐标
   return normalizeRect([
@@ -1750,6 +1785,17 @@ function bindSelection(host, overlay, preview, kind) {
     };
     if (mq) mq.remove();
     if (cancelled || rect.w < 8 || rect.h < 8) { closeMarkMenu(); return; }
+    if (draft.kind !== 'raster') {
+      // DOCX/XLSX/TXT 等 flow 格式没有稳定的页面矩形：必须把选中文字传给后端，
+      // 由后端定位 block/char 区间；否则导出器无法映射，会静默漏掉。
+      const picked = flowSelectedText(draft, ev);
+      if (!picked) {
+        toast('请选中要隐去的文字（拖选文字，不要拖框），再选择类型。');
+        closeMarkMenu();
+        return;
+      }
+      draft.selText = picked;
+    }
     const norm = draft.kind === 'raster' ? rasterNorm(draft.preview, rect, base) : flowNorm(draft, ev, rect);
     if (!norm) { toast('这一块没能读出来，换个位置再拖一次。'); return; }
     openMarkMenu(draft, rect, norm);
@@ -1761,7 +1807,7 @@ function openMarkMenu(draft, rect, norm) {
   closeMarkMenu();
   const overlay = draft.overlay;
   const menu = mk('div', 'menu');
-  menu.appendChild(mk('div', 'mh', '这一块是什么？'));
+  menu.appendChild(mk('div', 'mh', draft.kind === 'raster' ? '这一块是什么？' : '这段文字是什么？'));
   MENU_ETYPES.forEach((item) => {
     const btn = mk('button', null, item.label);
     btn.type = 'button';
@@ -1780,15 +1826,25 @@ function openMarkMenu(draft, rect, norm) {
 }
 async function submitMark(draft, rect, norm, etype) {
   closeMarkMenu();
+  const isFlow = draft.kind !== 'raster';
+  const picked = String(draft.selText || '').trim();
+  if (isFlow && !picked) {
+    draft.overlay.querySelectorAll('.manual-bar').forEach((node) => node.remove());
+    toast('没有读到选中文字，请重新拖选文字后再选择类型。');
+    return;
+  }
   const bar = mk('div', 'manual-bar');
   bar.style.left = rect.x + 'px'; bar.style.top = rect.y + 'px';
   bar.style.width = rect.w + 'px'; bar.style.height = rect.h + 'px';
   draft.overlay.appendChild(bar);
   try {
+    const payload = { page: state.page, etype, propagate: true };
+    if (isFlow) payload.value = picked;
+    else payload.rect = norm;
     const res = await api('/api/jobs/' + jobPath() + '/mark', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ page: state.page, rect: norm, etype, propagate: true }),
+      body: JSON.stringify(payload),
     });
     const propagated = num(res && res.propagated);
     const added = Math.max(1, num(res && res.added) || 1);

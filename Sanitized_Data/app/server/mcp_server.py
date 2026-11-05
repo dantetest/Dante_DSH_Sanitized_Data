@@ -1029,7 +1029,9 @@ TOOLS = [
     {
         "name": "mark_sanitize_region",
         "description": ("人工框选补漏：在指定页面上按归一化矩形 0-1 标记一个敏感区域，"
-                        "返回新实体 id。用于规则/OCR 漏检的签章、批注、表格区域等。"),
+                        "返回新实体 id。用于规则/OCR 漏检的签章、批注、表格区域等。"
+                        "文字排版格式（DOCX/XLSX/TXT）请改用 value 传选中文字，"
+                        "或 block_id+start+end 传文字区间；只传 rect 会明确报错。"),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1038,12 +1040,20 @@ TOOLS = [
                          "description": "页码（0 基）"},
                 "rect": {"type": "array", "items": {"type": "number"},
                          "minItems": 4, "maxItems": 4,
-                         "description": "[x0,y0,x1,y1]，归一化 0-1，相对页面宽高"},
+                         "description": "[x0,y0,x1,y1]，归一化 0-1，相对页面宽高（图片/PDF 用）"},
+                "value": {"type": "string",
+                          "description": "文字排版格式（DOCX/XLSX/TXT）的要隐去文字；优先于 rect"},
+                "block_id": {"type": "string",
+                             "description": "文字区间定位：block id"},
+                "start": {"type": "integer", "minimum": 0,
+                          "description": "文字区间起点（与 block_id 配套）"},
+                "end": {"type": "integer", "minimum": 0,
+                        "description": "文字区间终点（与 block_id 配套）"},
                 "label": {"type": "string", "description": "可选展示名"},
                 "etype": {"type": "string",
                           "description": "可选实体类型（如 SIGNATURE/SECRET/OTHER）"},
             },
-            "required": ["job_id", "page", "rect"],
+            "required": ["job_id", "page"],
         },
     },
     {
@@ -1404,24 +1414,41 @@ def tool_mark_sanitize_region(args: dict) -> dict:
         raise ToolError("page 必须是整数", "bad_request")
     if page < 0:
         raise ToolError("page 不能为负数", "bad_request")
+
+    payload: dict = {"page": page}
+    value = str(args.get("value") or "").strip()
+    block_id = str(args.get("block_id") or "").strip()
+    if value:
+        payload["value"] = value
+    if block_id:
+        payload["block_id"] = block_id
+        try:
+            payload["start"] = int(args.get("start") or 0)
+            payload["end"] = int(args.get("end") or 0)
+        except (TypeError, ValueError):
+            raise ToolError("start/end 必须是整数", "bad_request")
+        if payload["start"] < 0 or payload["end"] < payload["start"]:
+            raise ToolError("文字区间 start/end 不合法", "bad_request")
+
     rect = args.get("rect")
-    if not isinstance(rect, (list, tuple)) or len(rect) != 4:
-        raise ToolError("rect 必须是 [x0,y0,x1,y1] 四个数字", "bad_request")
-    try:
-        values = [float(v) for v in rect]
-    except (TypeError, ValueError):
-        raise ToolError("rect 必须是数字", "bad_request")
-    if any(v != v for v in values):           # NaN
-        raise ToolError("rect 含非法数值", "bad_request")
-    if any(v < -0.0001 or v > 1.0001 for v in values):
-        raise ToolError("rect 必须是 0-1 归一化坐标（相对页面宽高）",
-                        "bad_request")
-    if values[2] <= values[0] or values[3] <= values[1]:
-        raise ToolError("rect 的 x1/y1 必须大于 x0/y0", "bad_request")
-    payload: dict = {
-        "page": page,
-        "rect": [max(0.0, min(1.0, v)) for v in values],
-    }
+    if rect is not None:
+        if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+            raise ToolError("rect 必须是 [x0,y0,x1,y1] 四个数字", "bad_request")
+        try:
+            values = [float(v) for v in rect]
+        except (TypeError, ValueError):
+            raise ToolError("rect 必须是数字", "bad_request")
+        if any(v != v for v in values):           # NaN
+            raise ToolError("rect 含非法数值", "bad_request")
+        if any(v < -0.0001 or v > 1.0001 for v in values):
+            raise ToolError("rect 必须是 0-1 归一化坐标（相对页面宽高）",
+                            "bad_request")
+        if values[2] <= values[0] or values[3] <= values[1]:
+            raise ToolError("rect 的 x1/y1 必须大于 x0/y0", "bad_request")
+        payload["rect"] = [max(0.0, min(1.0, v)) for v in values]
+
+    if not value and not block_id and rect is None:
+        raise ToolError("rect、value、block_id 至少要传一个", "bad_request")
     label = str(args.get("label") or "").strip()
     if label:
         payload["label"] = label

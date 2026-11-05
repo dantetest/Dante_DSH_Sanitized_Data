@@ -424,7 +424,7 @@ class TestJobsTools(unittest.TestCase):
 
         marked = payload(tool("mark_sanitize_region", {
             "job_id": job_id, "page": 0,
-            "rect": [0.10, 0.10, 0.40, 0.20], "label": "人工框选测试"}))
+            "value": "联系人", "label": "人工文字补漏测试"}))
         self.assertEqual(marked["added"], 1)
         self.assertTrue(str(marked["entity_id"]).startswith("e_"))
         self.assertEqual(marked["counts"]["total"], before + 1)

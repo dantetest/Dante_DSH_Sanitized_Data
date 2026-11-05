@@ -297,6 +297,68 @@ class Job:
             }
 
 
+def _compact_with_map(text: str) -> tuple[str, list[int]]:
+    """把一段文字去掉空白，并记录每个字符在原串中的位置。"""
+    chars: list[str] = []
+    index: list[int] = []
+    for i, ch in enumerate(text or ""):
+        if not ch.isspace():
+            chars.append(ch)
+            index.append(i)
+    return "".join(chars), index
+
+
+def _manual_value_spans(doc, value: str, page: int) -> list[Span]:
+    """flow 格式手动补漏：把选中的文字定位到 block/char 区间。
+
+    先按原文精确匹配；匹配不到时退化为「忽略空白」匹配（浏览器选中多行时
+    常带换行/空格）。只返回 text block 上的 span，导出器才能落到 run/单元格。
+    """
+    value = (value or "").strip()
+    if not value:
+        return []
+    pages = list(doc.pages)
+    if 0 <= page < len(pages):
+        pages = [pages[page]]
+    blocks = []
+    for page_obj in pages:
+        for block in getattr(page_obj, "blocks", []) or []:
+            if getattr(block, "kind", "") != "text":
+                continue
+            text = getattr(block, "text", "") or ""
+            if text:
+                blocks.append((block, text))
+
+    spans: list[Span] = []
+
+    def add(block_id: str, start: int, end: int) -> None:
+        key = (block_id, int(start), int(end))
+        if any((s.block_id, s.start, s.end) == key for s in spans):
+            return
+        spans.append(Span(block_id=block_id, start=int(start), end=int(end)))
+
+    for block, text in blocks:
+        pos = text.find(value)
+        while pos >= 0:
+            add(block.id, pos, pos + len(value))
+            pos = text.find(value, pos + len(value))
+    if spans:
+        return spans
+
+    compact_value, _ = _compact_with_map(value)
+    if not compact_value:
+        return []
+    for block, text in blocks:
+        compact_text, index = _compact_with_map(text)
+        pos = compact_text.find(compact_value)
+        while pos >= 0:
+            start = index[pos]
+            end = index[pos + len(compact_value) - 1] + 1
+            add(block.id, start, end)
+            pos = compact_text.find(compact_value, pos + len(compact_value))
+    return spans
+
+
 class JobManager:
     def __init__(self) -> None:
         self._jobs: dict[str, Job] = {}
@@ -672,8 +734,17 @@ class JobManager:
             page = int(payload.get("page") or 0)
             spans: list[Span] = []
             value = ""
+            text_value = str(payload.get("value") or "").strip()
 
-            if payload.get("block_id"):
+            if text_value:
+                # flow 格式（DOCX/XLSX/TXT 等）没有稳定的页面矩形；
+                # 手动补漏必须落到文字区间，导出器才能按 run/单元格替换。
+                spans = _manual_value_spans(job.doc, text_value, page)
+                if not spans:
+                    raise YinzhanError(
+                        "未在正文定位到所选文字，请重新选中要隐去的文字（不要包含多余标点/换行）")
+                value = text_value
+            elif payload.get("block_id"):
                 bid = payload["block_id"]
                 start = int(payload.get("start") or 0)
                 end = int(payload.get("end") or 0)
@@ -685,7 +756,10 @@ class JobManager:
                 value = block.text[start:end]
                 spans.append(Span(block_id=bid, start=start, end=end))
 
-            if payload.get("rect"):
+            if not spans and payload.get("rect"):
+                if not getattr(job.parser, "can_render", True):
+                    raise YinzhanError(
+                        "这种文字排版格式不支持矩形框选，请改为选中要隐去的文字再补漏")
                 r = [float(v) for v in payload["rect"]]
                 pg = job.doc.pages[page] if page < len(job.doc.pages) else None
                 w = pg.width if pg else 1.0
@@ -706,7 +780,9 @@ class JobManager:
                 confidence=1.0, origin="manual", status="accepted",
             )
             propagated = 0
-            if payload.get("propagate") and value and len(value) >= 2:
+            if text_value:
+                propagated = max(0, len(spans) - 1)
+            elif payload.get("propagate") and value and len(value) >= 2:
                 propagated = self._propagate(job, ent, value, page)
 
             ent.decision = Decision(strategy="black", black=True, replacement=None)
