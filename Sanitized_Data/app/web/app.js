@@ -53,6 +53,13 @@ const TYPE_CN = {
   EXIF: 'EXIF 拍摄信息', META: '文件元数据',
   OTHER: '其他敏感',
 };
+// P0：高敏感 PII 类型取消脱敏前需要二次确认（低风险类型可一键取消并撤销）
+const HIGH_RISK_PII = new Set([
+  'PERSON', 'ID_CARD', 'ID_NUMBER', 'ID_NAME', 'ID_ADDRESS', 'ID_PHOTO',
+  'ID_AUTHORITY', 'ID_VALIDITY', 'PHONE', 'EMAIL', 'ADDRESS', 'BANK',
+  'BANK_CARD', 'BANK_ACCOUNT', 'PASSPORT', 'LICENSE', 'SOCIAL_CREDIT',
+  'MEDICAL', 'INSURANCE', 'PASSWORD', 'SECRET', 'STUDENT_ID', 'EMPLOYEE_ID',
+]);
 const TYPE_ORDER = [
   'PERSON', 'ID_CARD', 'ADDRESS', 'PHONE', 'ORG', 'CASE_NO', 'AMOUNT', 'BANK', 'LICENSE', 'EMAIL', 'DATE', 'IP',
   'FACE', 'ID_DOCUMENT', 'ID_PHOTO', 'ID_NAME', 'ID_NUMBER', 'ID_ADDRESS', 'ID_AUTHORITY', 'ID_VALIDITY',
@@ -1273,6 +1280,9 @@ function entityBoxes(ent) {
   return [];
 }
 function labelOf(ent) { return (ent && (ent.label || TYPE_CN[ent.type])) || '敏感内容'; }
+function entityById(eid) {
+  return (state.entities || []).find((ent) => ent && ent.id === eid) || null;
+}
 function surrogateOf(ent) {
   if (!ent) return '＊';
   if (ent.surrogate) return String(ent.surrogate);
@@ -1319,6 +1329,14 @@ function renderRaster(frame, preview, side) {
     node.style.height = pct((bottom - top) / H);
     if (className) node.className = className;
     if (title) node.title = title;
+    if (side === 'out' && eid && /\bbox (black|sur)\b/.test(String(className || ''))) {
+      node.title = (title ? title + '；' : '') + '双击不脱敏';
+      node.addEventListener('dblclick', (ev) => {
+        ev.stopPropagation();
+        const ent = entityById(eid);
+        if (ent) requestRejectEntity(ent);
+      });
+    }
     overlay.appendChild(node);
     return node;
   };
@@ -1487,6 +1505,13 @@ function markedSpan(raw, ent, side) {
   } else {
     span.className = 'redacted sur';
     span.textContent = surrogateOf(ent);
+  }
+  if (side === 'out' && ent.id && ent.status !== 'rejected') {
+    span.title = (span.title ? span.title + '；' : '') + '双击不脱敏';
+    span.addEventListener('dblclick', (ev) => {
+      ev.stopPropagation();
+      requestRejectEntity(ent);
+    });
   }
   return span;
 }
@@ -1978,8 +2003,29 @@ async function doWholePageMark() {
     if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
   }
 }
-async function rejectEntity(ent) {
+function isHighRiskPII(ent) {
+  if (!ent) return false;
+  const type = String(ent.type || '').toUpperCase();
+  const label = String(ent.label || '');
+  return HIGH_RISK_PII.has(type) || /身份证|手机号|电话|住址|地址|银行卡|护照|姓名|密码|密钥/.test(label);
+}
+function requestRejectEntity(ent) {
   if (!ent || !ent.id || state.busy) return;
+  if (isHighRiskPII(ent)) {
+    toast('「' + labelOf(ent) + '」属于高敏感个人信息。不脱敏会保留原文，仍然继续吗？', [
+      { label: '仍不脱敏', fn: () => rejectEntity(ent, true) },
+      { label: '取消', fn: () => toast('已取消，这一处仍保持脱敏。') },
+    ], 15000);
+    return;
+  }
+  rejectEntity(ent);
+}
+async function rejectEntity(ent, confirmed = false) {
+  if (!ent || !ent.id || state.busy) return;
+  if (isHighRiskPII(ent) && !confirmed) {
+    requestRejectEntity(ent);
+    return;
+  }
   state.busy = true;
   try {
     await api('/api/jobs/' + jobPath() + '/entities/' + encodeURIComponent(ent.id), {
@@ -1987,10 +2033,29 @@ async function rejectEntity(ent) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'reject' }),
     });
-    toast('已撤销「' + labelOf(ent) + '」，这一处不再涂黑。');
+    toast('已设为不脱敏：' + labelOf(ent) + '，原文会保留。', [
+      { label: '撤销', fn: () => restoreEntity(ent) },
+    ], 12000);
     await refreshLive();
   } catch (err) {
-    toast((err && err.human) || '这一处没能撤销，请再试一次。');
+    toast((err && err.human) || '这一处没能取消脱敏，请再试一次。');
+  } finally {
+    state.busy = false;
+  }
+}
+async function restoreEntity(ent) {
+  if (!ent || !ent.id || state.busy) return;
+  state.busy = true;
+  try {
+    await api('/api/jobs/' + jobPath() + '/entities/' + encodeURIComponent(ent.id), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'restore' }),
+    });
+    toast('已恢复「' + labelOf(ent) + '」的脱敏。');
+    await refreshLive();
+  } catch (err) {
+    toast((err && err.human) || '恢复失败，请再试一次。');
   } finally {
     state.busy = false;
   }
@@ -2036,15 +2101,25 @@ function buildRail() {
       } else {
         row.title = '点一下定位';
       }
-      // 手动补记/整图涂黑的条目可以撤销（后端 update_entity action=reject 已支持）
-      if (ent.origin === 'manual') {
-        const undo = mk('button', 'row-undo', '撤销');
+      // 所有自动/手动实体都可以取消脱敏；手动条目沿用“撤销”，自动识别用“不脱敏”
+      if (!isMeta) {
+        const isManual = ent.origin === 'manual';
+        const undo = mk('button', 'row-undo', isManual ? '撤销' : '不脱敏');
         undo.type = 'button';
-        undo.title = '撤销这一处，不再涂黑';
-        undo.setAttribute('aria-label', '撤销「' + labelOf(ent) + '」');
-        undo.addEventListener('click', (ev) => { ev.stopPropagation(); rejectEntity(ent); });
+        undo.title = isManual
+          ? '撤销这一处，不再涂黑'
+          : (isHighRiskPII(ent)
+            ? '取消这一处脱敏；高敏感个人信息会二次确认'
+            : '取消这一处脱敏，原文会保留，可撤销');
+        undo.setAttribute('aria-label', (isManual ? '撤销「' : '不脱敏「') + labelOf(ent) + '」');
+        undo.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          requestRejectEntity(ent);
+        });
         row.appendChild(undo);
-        row.title = '点一下定位 · 手动添加，可撤销';
+        row.title = ent.status === 'pending'
+          ? '点一下确认 · 右侧可取消脱敏'
+          : (isManual ? '点一下定位 · 手动添加，可撤销' : '点一下定位 · 右侧可不脱敏');
       }
       row.addEventListener('click', () => { if (!isMeta) onRailRow(ent); });
       group.appendChild(row);

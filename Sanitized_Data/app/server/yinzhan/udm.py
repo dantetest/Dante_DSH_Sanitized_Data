@@ -162,6 +162,8 @@ class Entity:
     origin: str = "regex"
     status: str = "accepted"
     decision: Decision | None = None
+    #: 人工“不脱敏”时暂存原决策，供撤销/恢复使用；不参与序列化/导出。
+    rejected_decision: Decision | None = None
     box: Box | None = None        # 由管线按 spans 算好，方便前端
 
     @staticmethod

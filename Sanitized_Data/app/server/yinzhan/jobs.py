@@ -811,15 +811,24 @@ class JobManager:
             if ent is None:
                 raise YinzhanError("实体不存在")
             action = payload.get("action")
-            if action == "accept":
+            if action in ("accept", "restore"):
+                if ent.status == "rejected" and ent.rejected_decision is not None:
+                    ent.decision = ent.rejected_decision
+                else:
+                    _ensure_rect_black_decision(ent)
+                ent.rejected_decision = None
                 ent.status = "accepted"
-                _ensure_rect_black_decision(ent)
             elif action == "reject":
+                if ent.status != "rejected":
+                    # 暂存原决策，撤销时恢复；不改变既有 export/preview 的 keep 语义
+                    ent.rejected_decision = (copy.copy(ent.decision)
+                                             if ent.decision is not None else None)
                 ent.status = "rejected"
                 ent.decision = Decision(strategy="keep", replacement=ent.value)
             elif action == "replace":
                 repl = payload.get("replacement") or ""
                 ent.status = "accepted"
+                ent.rejected_decision = None
                 ent.decision = Decision(strategy="surrogate", replacement=repl)
             self.invalidate_preview(job)
             return ent.to_dict()

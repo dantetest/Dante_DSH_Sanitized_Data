@@ -141,6 +141,27 @@ class ManualFlowMarkTest(unittest.TestCase):
         self.assertIn("function flowSelectedText", js)
         # 同一行纯水平拖选（marquee h≈0）不能按矩形最小尺寸拒绝；flow 用移动距离判断。
         self.assertIn("moved < 4", js)
+        # P0：自动实体也必须有不脱敏按钮；高敏 PII 需确认；reject 后可 restore。
+        self.assertIn("不脱敏", js)
+        self.assertIn("requestRejectEntity", js)
+        self.assertIn("restoreEntity", js)
+        self.assertIn("HIGH_RISK_PII", js)
+
+    def test_reject_auto_entity_then_restore_decision(self):
+        mgr, job = self._new_docx_job()
+        ent = next((e for e in job.entities
+                    if e.status != "rejected" and e.decision is not None), None)
+        self.assertIsNotNone(ent, "样本里应至少有一个已决策实体")
+        old_strategy = ent.decision.strategy
+        old_replacement = ent.decision.replacement
+        rejected = mgr.update_entity(job.id, ent.id, {"action": "reject"})
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(ent.decision.strategy, "keep")
+        restored = mgr.update_entity(job.id, ent.id, {"action": "restore"})
+        self.assertEqual(restored["status"], "accepted")
+        self.assertIsNotNone(ent.decision)
+        self.assertEqual(ent.decision.strategy, old_strategy)
+        self.assertEqual(ent.decision.replacement, old_replacement)
 
 
 if __name__ == "__main__":

@@ -468,6 +468,13 @@ main{flex:1; min-height:0; position:relative;}
   font:400 9px/1 var(--font-mono); letter-spacing:.08em; color:var(--seal);
   border:1px solid rgba(178,58,46,.4); background:transparent; border-radius:2px;
   padding:2px 4px;
+  opacity:0; pointer-events:none; transition:opacity .14s, background .14s;
+}
+.row:hover .row-undo,
+.row:focus-within .row-undo,
+.row.pend .row-undo{opacity:1; pointer-events:auto;}
+@media (hover:none){
+  .row .row-undo{opacity:1; pointer-events:auto;}
 }
 .row .row-undo:hover{background:var(--seal); color:#FBF7EC;}
 .row .row-undo:focus-visible{outline:2px solid var(--seal); outline-offset:1px;}
