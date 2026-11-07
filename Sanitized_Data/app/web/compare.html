@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据隐站对比：本机脱敏 vs 云端处理 · 换名版 vs 涂黑版</title>
+<meta name="description" content="数据隐站与把原件直接交给云端 AI 的处理方式对比；换名可还原版与涂黑不可还原版的适用场景与边界。v1.5.2 · 2026-11-06。">
+<link rel="stylesheet" href="/site.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
+<style>
+.faq-hero{padding:54px 0 26px;border-bottom:1px solid var(--rule)}
+.faq-hero h1{font-size:clamp(30px,4.2vw,46px);line-height:1.18;margin:10px 0 14px}
+.faq-hero p{max-width:760px;color:var(--ink-2);font-size:16px;line-height:1.8}
+.price-note{margin:18px 0 0;padding:12px 16px;border-left:3px solid #b23a2e;background:#f6f1e8;color:var(--ink-2);font-size:14px;line-height:1.8}
+.faq-list{max-width:900px;margin:34px auto 64px}
+.faq-item{padding:22px 0;border-bottom:1px solid var(--rule)}
+.faq-item h2{font-size:19px;margin:0 0 10px;line-height:1.5}
+.faq-item p{margin:0;color:var(--ink-2);font-size:15px;line-height:1.9}
+.faq-meta{font:400 11px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.06em;margin-bottom:6px}
+.compare-wrap{max-width:1080px;margin:34px auto 64px}
+.compare-wrap h2{font-size:24px;margin:34px 0 12px}
+.table-scroll{overflow-x:auto;border:1px solid var(--rule)}
+table.compare{width:100%;border-collapse:collapse;min-width:760px;font-size:14px;line-height:1.75}
+table.compare th,table.compare td{padding:12px 14px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}
+table.compare th{background:#f2ece1;font-weight:700;white-space:nowrap}
+table.compare td:first-child{font-weight:600;white-space:nowrap}
+table.compare tr:last-child td{border-bottom:0}
+.compare-note{color:var(--ink-3);font-size:12px;line-height:1.8;margin-top:12px}
+@media(max-width:700px){.faq-hero{padding-top:34px}.faq-item h2{font-size:17px}.faq-item p{font-size:14px}}
+
+
+
+@media(max-width:760px){
+  html,body{width:100%!important;max-width:100%!important;overflow-x:hidden!important}
+  body{position:relative;display:block}
+  main{display:block;width:100%!important;max-width:100%!important;overflow:hidden}
+  .wrap{display:block;width:auto!important;max-width:100%!important;margin-left:0!important;margin-right:0!important;padding-left:16px!important;padding-right:16px!important}
+  section.wrap{width:auto!important;max-width:100%!important}
+  .faq-hero{padding:34px 16px 20px!important}
+  .faq-hero p,.faq-item p,.price-note,.faq-list{width:auto!important;max-width:100%!important}
+  .faq-hero h1{font-size:30px!important;overflow-wrap:anywhere}
+  .faq-hero p{font-size:15px!important;line-height:1.9}
+  .price-note{font-size:13px!important;padding:10px 12px!important}
+  .faq-list{margin:24px auto 48px!important}
+  .faq-item h2{font-size:17px!important}
+  .faq-item p{font-size:14px!important;line-height:1.9}
+  .sitebar{width:100%!important;max-width:100%!important;overflow:hidden}
+  .sitebar .inner{display:block!important;width:100%!important;max-width:100%!important;padding:10px 16px!important}
+  .sitebar nav{display:flex!important;width:100%!important;max-width:100%!important;overflow-x:visible!important;flex-wrap:wrap!important;justify-content:flex-start!important;margin:8px 0 0!important;gap:2px 4px!important}
+  .sitebar nav a{white-space:normal!important;padding:6px 8px!important;font-size:12.5px!important}
+  footer .inner{gap:8px}
+}
+</style>
+</head>
+<body>
+<header class="sitebar"><div class="inner">
+<a class="logo" href="/"><img class="brandmark" src="/logo.svg" width="38" height="38" alt="数据隐站"><span class="name">数据隐站<small>SANITIZED_DATA</small></span></a>
+<nav>
+      <a href="/">首页</a>
+      <a href="/demo">演示</a>
+      <a href="/download">下载</a>
+      <a href="/pricing">价格</a>
+      <a href="/mcp">MCP</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">对比</a>
+      <a href="/download" class="cta">下载桌面版</a>
+    </nav></div></header>
+<main><section class="wrap faq-hero"><div class="eyebrow">COMPARE · 2026-11-06</div><h1>本机脱敏，还是把原件直接交给云端？</h1><p>不是反对用大模型，而是别把原始文件直接递过去。下面两张表，把「数据隐站」和「把原件上传给在线 AI」的差别拆开讲清楚；边界也写出来，方便你按场景选。</p></section>
+<div class="wrap compare-wrap">
+<h2>一、处理方式对比</h2><div class="table-scroll"><table class="compare"><thead><tr><th>维度</th><th>数据隐站 · 本机脱敏</th><th>把原件直接交给云端 AI</th></tr></thead><tbody>
+<tr><td>文件位置</td><td>留在你的电脑；处理引擎只监听本机 / 本地 stdio</td><td>先上传到服务商，再由对方处理</td></tr>
+<tr><td>处理时机</td><td>交给 AI 之前，先在本机完成脱敏</td><td>先上传，敏感信息已离开电脑</td></tr>
+<tr><td>给 AI 的版本</td><td>换名版：可还原；或涂黑版：不可还原</td><td>通常是原件，或平台自行做有限处理</td></tr>
+<tr><td>照片 EXIF / GPS</td><td>重编码并剥离/中性化，正射影像的地理标签单独处理</td><td>取决于平台策略，不一定清理</td></tr>
+<tr><td>扫描件 OCR</td><td>本机离线 OCR，逐页进度，可停</td><td>上传后由云端 OCR</td></tr>
+<tr><td>断网可用</td><td>可以；核心处理不需要外呼</td><td>不可以，必须联网</td></tr>
+<tr><td>适合文件</td><td>合同、病历、报表、照片、正射 TIF 等</td><td>通用文本/图片，敏感文件需自行评估</td></tr>
+<tr><td>边界</td><td>不承诺 100% 检出；重要文件需人工复核、成品复检</td><td>数据处理与留存规则由服务商条款决定</td></tr>
+</tbody></table></div><p class="compare-note">说明：上表是处理方式层面的通用对比，不针对任何具体厂商；「云端 AI」指把原件上传给在线模型/平台的常见用法。</p>
+<h2>二、换名版 vs 涂黑版</h2><div class="table-scroll"><table class="compare"><thead><tr><th>维度</th><th>换名版（可还原）</th><th>涂黑版（不可还原）</th></tr></thead><tbody>
+<tr><td>处理方式</td><td>敏感值替换为可还原假名，版式保留</td><td>破坏性重写，黑块覆盖并删除文本层</td></tr>
+<tr><td>能否还原</td><td>可以；按本机映射还原</td><td>不可以</td></tr>
+<tr><td>给谁看</td><td>给 AI 读、后续还要按映射回填</td><td>给对方、法院、保险公司、公开材料</td></tr>
+<tr><td>风险</td><td>映射库要保管好；还原报告含真值，不要外传</td><td>不可逆；导出前确认版本，避免给错对象</td></tr>
+<tr><td>典型场景</td><td>让 AI 改合同、读病历、做摘要</td><td>对外提交、归档、给非授权方</td></tr>
+</tbody></table></div><p class="compare-note">边界：涂黑版不可还原；换名版可还原但映射库只存本机。两条出口不要混用。更多细节见 <a href="/faq">FAQ</a> 与 <a href="/pricing">价格页</a>。</p>
+<p style="margin-top:26px"><a class="btn primary" href="/download">下载桌面版</a> <a class="btn" href="/pricing">看价格与试用</a> <a class="btn" href="/mcp">接入 MCP</a></p>
+</div></main>
+<footer>
+<div class="wrap inner"><span id="siteVersion">数据隐站 · Sanitized_Data v1.5.2</span><span>·</span><span>本机处理 · 不联网 · 不留存</span><span style="margin-left:auto"><a href="/faq">FAQ</a> · <a href="/compare">对比</a> · <a href="/download">下载</a></span></div>
+<div class="wrap" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--rule);font:400 11px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.06em">运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 联系：<a href="mailto:contact@blctek.com">contact@blctek.com</a></div>
+</footer>
+</body></html>

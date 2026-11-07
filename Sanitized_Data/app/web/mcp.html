@@ -19,12 +19,13 @@
     </a>
     <nav>
       <a href="/">首页</a>
-      <a href="/console">控制台</a>
+      <a href="/demo">演示</a>
       <a href="/download">下载</a>
       <a href="/pricing">价格</a>
-      <a href="/license">授权</a>
-      <a href="/mcp" class="on">MCP 接入</a>
-      <a href="/console" class="cta">开始使用 →</a>
+      <a href="/mcp">MCP</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">对比</a>
+      <a href="/download" class="cta">下载桌面版</a>
     </nav>
   </div>
 </header>
@@ -127,7 +128,7 @@ get_sanitize_audit { "job_id": "..." }</pre>
         <p>大模型拿着换名版干完活交回新文件后，用 <code>restore_sanitize_file</code>
         在本机按同一 <code>job_id</code> 的映射把假值换回真值。默认只返回统计与
         本机成品路径，<b>不把真值明细回给 Agent</b>；需要人工核对时到
-        <a href="/restore">回件还原</a>页查看替换明细。</p>
+        <a href="/demo#restore">回件还原</a>页查看替换明细。</p>
         <pre style="margin-top:12px"><span class="c">// 回件：docx / xlsx / pptx / pdf（文本层）/ 图片</span>
 restore_sanitize_file { "path": "D:\\回件.docx",
   "job_id": "j_ab12cd34", "include_originals": false }
@@ -365,7 +366,7 @@ python -X utf8 app/server/mcp_server.py
             AI 拿着换名版干完活交回新文件后，说：
             <code>用 restore_sanitize_file 把 D:\回件.docx 按 job_id j_... 还原成本机真值文件</code>。
             工具默认只返回统计与成品路径（不把真值明细回给 Agent）；要看假值→真值明细、下载成品，打开
-            <a href="/restore">回件还原</a>页。
+            <a href="/demo#restore">回件还原</a>页。
           </p>
         </div>
       </div>
@@ -411,7 +412,7 @@ python -X utf8 app/server/mcp_server.py
     <span>本机处理 · 不联网 · 不留存</span>
     <span style="margin-left:auto">
       <a href="/">首页</a> ·
-      <a href="/console">控制台</a> ·
+      <a href="/download">下载桌面版</a> ·
       <a href="/download">下载</a> ·
       <a href="mailto:contact@blctek.com">contact@blctek.com</a>
     </span>

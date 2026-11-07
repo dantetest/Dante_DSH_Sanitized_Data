@@ -18,11 +18,13 @@
     </a>
     <nav>
       <a href="/">首页</a>
-      <a href="/console">控制台</a>
-      <a href="/download" class="on">下载</a>
+      <a href="/demo">演示</a>
+      <a href="/download">下载</a>
       <a href="/pricing">价格</a>
-      <a href="/license">授权</a>
-      <a href="/mcp">MCP 接入</a>
+      <a href="/mcp">MCP</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">对比</a>
+      <a href="/download" class="cta">下载桌面版</a>
     </nav>
   </div>
 </header>
@@ -33,7 +35,7 @@
     <h1 style="font-size:clamp(26px,3.4vw,36px)">下载数据隐站</h1>
     <p class="lead">Windows 10/11 x64 · 离线安装 · 无需 Python</p>
     <div class="chips">
-      <span class="chip" id="dlVersion">读取中…</span>
+      <span class="chip" id="dlVersion">v1.5.2</span>
       <span class="chip">Windows x64</span>
     </div>
   </section>
@@ -42,16 +44,16 @@
     <div class="dl-grid">
       <div class="dl">
         <div class="os">WINDOWS · x64 · 安装包</div>
-        <div class="file" id="installerName">读取中…</div>
-        <div class="size" id="installerSize">—</div>
+        <div class="file" id="installerName">数据隐站_v1.5.2_x64_安装包.exe</div>
+        <div class="size" id="installerSize">约 173 MB</div>
         <div class="act">
           <a class="btn primary" id="installerLink" href="#" hidden>下载安装包 ↓</a>
         </div>
       </div>
       <div class="dl">
         <div class="os">WINDOWS · x64 · 绿色版</div>
-        <div class="file" id="portableName">读取中…</div>
-        <div class="size" id="portableSize">—</div>
+        <div class="file" id="portableName">数据隐站_v1.5.2_x64_绿色版.zip</div>
+        <div class="size" id="portableSize">约 172 MB</div>
         <div class="act">
           <a class="btn primary" id="portableLink" href="#" hidden>下载绿色版 ↓</a>
         </div>
@@ -60,8 +62,8 @@
 
     <table class="spec">
       <tr><th>SHA-256</th><td>
-        <div><code id="installerSha">—</code> · 安装包</div>
-        <div><code id="portableSha">—</code> · 绿色版</div>
+        <div><code id="installerSha">以服务器返回为准</code> · 安装包</div>
+        <div><code id="portableSha">以服务器返回为准</code> · 绿色版</div>
       </td></tr>
     </table>
 
@@ -77,7 +79,7 @@
     <span>本机处理 · 不联网 · 不留存</span>
     <span style="margin-left:auto">
       <a href="/">首页</a> ·
-      <a href="/console">控制台</a> ·
+      <a href="/download">下载桌面版</a> ·
       <a href="/mcp">MCP</a>
     </span>
   </div>
@@ -116,8 +118,8 @@
     .catch((err) => {
       const el = $('dlError');
       el.hidden = false;
-      el.textContent = '下载配置暂不可用：' + err.message;
-      set('dlVersion', '未配置');
+      el.textContent = '下载配置暂不可用；请稍后刷新，或联系 contact@blctek.com。';
+      set('dlVersion', 'v1.5.2');
     });
 })();
 </script>

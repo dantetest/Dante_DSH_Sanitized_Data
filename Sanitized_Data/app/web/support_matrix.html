@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>支持矩阵 · 数据隐站</title>
+<meta name="description" content="数据隐站支持的文件格式、敏感目标与能力边界：PDF/Word/Excel/图片/正射 TIF/文本/三维；自动/待确认/不支持三档。v1.5.2。">
+
+<link rel="stylesheet" href="/site.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>
+.geo-hero{padding:54px 0 26px;border-bottom:1px solid var(--rule)}
+.geo-hero h1{font-size:clamp(30px,4.2vw,46px);line-height:1.2;margin:10px 0 14px}
+.geo-hero p{max-width:820px;color:var(--ink-2);font-size:16px;line-height:1.9}
+.geo-wrap{max-width:1000px;margin:34px auto 64px}
+.geo-wrap .lead{font-size:15px;line-height:1.9}
+.geo-table{width:100%;border-collapse:collapse;font-size:14px;line-height:1.8;margin-top:12px}
+.geo-table th,.geo-table td{border-bottom:1px solid var(--rule);padding:11px 12px;text-align:left;vertical-align:top}
+.geo-table th{background:#f2ece1;font-weight:700;white-space:nowrap}
+.geo-table td:first-child{font-weight:600}
+.table-scroll{overflow-x:auto;border:1px solid var(--rule);margin-top:12px}
+.geo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:20px 0}
+.geo-card{border:1px solid var(--rule);background:rgba(255,252,244,.62);padding:18px 16px}
+.geo-card .k{font:400 10px/1 var(--mono);letter-spacing:.2em;color:var(--seal);margin-bottom:8px}
+.geo-card h3{font-size:16px;margin-bottom:6px}
+.geo-card p,.geo-card li{font-size:13px;line-height:1.8;color:var(--ink-2)}
+.geo-card ul{padding-left:18px}
+.geo-note{border-left:3px solid var(--seal);background:rgba(178,58,46,.05);padding:12px 16px;font-size:13px;line-height:1.9;color:var(--ink-2);margin:20px 0}
+.legal-body{max-width:900px;margin:30px auto 64px;font-size:14px;line-height:1.95;color:var(--ink-2)}
+.legal-body h1,.legal-body h2,.legal-body h3{color:var(--ink);margin:26px 0 10px;line-height:1.4}
+.legal-body h2{font-size:22px}.legal-body h3{font-size:17px}.legal-body p{margin:10px 0}.legal-body ul{padding-left:22px;margin:10px 0}.legal-body li{margin:4px 0}.legal-body table{border-collapse:collapse;width:100%;font-size:13px}.legal-body th,.legal-body td{border:1px solid var(--rule);padding:8px 10px;text-align:left}.draft-banner{background:#B23A2E;color:#fff;font:400 12px/1.7 var(--mono);padding:10px 16px;margin:18px auto;max-width:900px;letter-spacing:.04em}
+.changelog{max-width:900px;margin:30px auto 64px}
+.log-item{border-left:2px solid var(--rule);padding:0 0 26px 22px;position:relative}
+.log-item::before{content:'';position:absolute;left:-5px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--seal)}
+.log-item .v{font:700 18px/1.4 var(--mono);color:var(--ink)}.log-item .d{font:400 11px/1.8 var(--mono);color:var(--ink-3);margin:2px 0 8px}.log-item p,.log-item li{font-size:14px;line-height:1.9;color:var(--ink-2)}.log-item ul{padding-left:18px}
+@media(max-width:760px){.geo-hero{padding:34px 0 20px}.geo-hero h1{font-size:30px}.geo-grid{grid-template-columns:1fr}.geo-wrap{margin:24px auto 48px}.legal-body{margin:20px auto 48px}}
+</style>
+</head>
+<body>
+<header class="sitebar"><div class="inner">
+<a class="logo" href="/"><img class="brandmark" src="/logo.svg" width="38" height="38" alt="数据隐站"><span class="name">数据隐站<small>SANITIZED_DATA</small></span></a>
+<nav>
+      <a href="/">首页</a>
+      <a href="/demo">演示</a>
+      <a href="/download">下载</a>
+      <a href="/pricing">价格</a>
+      <a href="/mcp">MCP</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">对比</a>
+      <a href="/download" class="cta">下载桌面版</a>
+    </nav>
+</div></header>
+<main>
+<section class="wrap geo-hero"><div class="eyebrow">SUPPORT MATRIX · v1.5.2</div><h1>支持矩阵与能力边界</h1><p>按格式、敏感目标和交付形态列出「自动 / 待确认 / 不支持」三档。重要文件请人工复核，不承诺 100% 检出。</p></section>
+<div class="wrap geo-wrap">
+<h2>一、文件格式</h2><div class="table-scroll"><table class="geo-table"><thead><tr><th>格式</th><th>能力</th><th>边界</th></tr></thead><tbody>
+<tr><td>PDF（文本层）</td><td>文本/表格实体涂黑或换名；附件/批注/表单/JS 默认剥离；内嵌图片扫描</td><td>图片内手写/艺术字、异常版式建议人工复核</td></tr>
+<tr><td>PDF（扫描件）</td><td>离线 OCR 后走文本规则；页面图像人脸/证件/车牌/码类扫描</td><td>手写体、低分辨率扫描不承诺</td></tr>
+<tr><td>Word .docx</td><td>正文/表格实体；清修订/批注/作者；内嵌图片扫描</td><td>图表/文本框/OLE 等隐藏对象导出前确认</td></tr>
+<tr><td>Excel .xlsx/.xlsm</td><td>单元格实体；表头列级 + 金额；清隐藏表/定义名/批注；内嵌图片</td><td>.xlsm 导出后不保留宏（告警）</td></tr>
+<tr><td>图片 .jpg/.png/.bmp/.webp</td><td>文本规则；人脸/证件/二维码/红章/签署区/聊天截图；剥离 EXIF/GPS</td><td>窗外景观、镜面反光、指纹/虹膜不支持自动；车牌/手写进待确认</td></tr>
+<tr><td>正射 TIF</td><td>地理标签/sidecar/元数据剥离；LOCAL_CS 坐标中性化；图面文字/视觉目标打码</td><td>rasterio 大图 Orientation 不转正；多帧 TIFF 只剥离不中性化</td></tr>
+<tr><td>文本 / CSV / TSV</td><td>规则包文本实体；表头列级脱敏；保持编码/分隔符</td><td>无表头退化为普通规则</td></tr>
+<tr><td>三维 OBJ/PLY/GLB/STL</td><td>仅注释/名称等文本清理；OBJ/PLY 顶点平移</td><td>几何重定位仅 OBJ/PLY；贴图/MTL/OSGB/3D Tiles/LAS 不支持</td></tr>
+<tr><td>老版 Office / 压缩包</td><td>不支持</td><td>请另存为 .docx/.xlsx 后逐文件处理</td></tr>
+</tbody></table></div>
+<h2>二、敏感目标</h2><div class="table-scroll"><table class="geo-table"><thead><tr><th>档位</th><th>目标</th><th>口径</th></tr></thead><tbody>
+<tr><td>自动</td><td>姓名/证件号/手机号/地址/账号/金额/案号/病历号等；人脸/11 类证件/二维码/红章/签署区；文件元数据</td><td>默认直接处理；导出前成品复检，残留 warning 或阻断</td></tr>
+<tr><td>待确认</td><td>车牌、门牌/路牌/店招/铭牌、手写签名/批注</td><td>只检出、进待确认清单；确认后才处理</td></tr>
+<tr><td>不支持自动</td><td>窗外景观、室内装修、镜面反光、指纹/虹膜</td><td>用框选补漏或整图涂黑兜底</td></tr>
+</tbody></table></div>
+<h2>三、不能承诺</h2><div class="geo-note">不承诺 100% 检出；不承诺「合规」或「匿名化」；去标识化后的数据仍可能属于个人信息。三维不支持倾斜摄影主产物（OSGB/3D Tiles/LAS）。具体以产品实际版本与官网 FAQ 为准。</div>
+<p><a class="btn primary" href="/download">下载桌面版</a> <a class="btn" href="/faq">看 FAQ</a> <a class="btn" href="/compare">看对比</a></p>
+</div>
+</main>
+<footer><div class="wrap inner"><span>数据隐站 · Sanitized_Data v1.5.2</span><span>·</span><span>本机处理 · 不联网 · 不留存</span><span style="margin-left:auto"><a href="/demo">演示</a> · <a href="/download">下载</a> · <a href="/faq">FAQ</a></span></div>
+<div class="wrap" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--rule);font:400 11px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.06em">运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 联系：<a href="mailto:contact@blctek.com">contact@blctek.com</a></div></footer>
+</body></html>

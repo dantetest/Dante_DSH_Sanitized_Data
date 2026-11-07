@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据隐站 FAQ · 本机脱敏、双出口、格式与边界</title>
+<meta name="description" content="数据隐站常见问题：文件是否上传、换名版/涂黑版、支持格式、OCR、PDF 真涂黑、敏感信息识别与边界。v1.5.2 · 2026-11-06。">
+<link rel="stylesheet" href="/site.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "数据隐站是什么？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "数据隐站（Sanitized Data）是 Windows 本地文件脱敏软件：把合同、病历、报表里的姓名、证件号、账号等敏感信息在本机替换或涂黑，再把处理过的版本交给 AI 或对方。文件不上传、引擎零外呼，附带本地 stdio MCP（16 个工具）。v1.5.2（2026-11-06）。边界：只处理受支持格式。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "文件会不会上传到服务器？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "不会。文件处理引擎只监听本机 127.0.0.1 或走本地 stdio，不发起外呼、不上传文件、不采集遥测；临时副本退出时清理。唯一会联网的是你主动点「购买」时的商业服务页，仅涉及订单、不涉及文件。v1.5.2（2026-11-06）。边界：以断网实测与官网隐私说明为准。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "换名版和涂黑版有什么区别？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "换名版把敏感值替换成可还原的假名，文件仍可读，适合给 AI 读、后续还能按映射还原；涂黑版是破坏性重写、不可还原，适合给对方、法院、保险公司。导出前对成品再检测，原文残留就拦下。两种出口各对应一类场景，选错会增加返工。v1.5.2（2026-11-06）。边界：涂黑版不可还原，导出前请确认版本。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "换名版怎么还原？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "在本机「回件还原」页导入 AI 交回的文件，按导出时保存的映射把假名换回真名，支持 Word、Excel、PPT、PDF 文本层和图片 OCR。映射库只存本机，不联网。还原报告可能含真值，不要把它传回云端。v1.5.2（2026-11-06）。边界：图片还原依赖 OCR，识别质量受扫描清晰度影响。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "支持哪些文件格式？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "支持 PDF（含 OCR）、Word .docx、Excel .xlsx/.xlsm、图片、正射 TIF、TXT/CSV/TSV，以及 OBJ/PLY/GLB/STL 的有限清理。不支持老版 Office、压缩包整包、pptx 与倾斜摄影主产物。v1.5.2（2026-11-06）。边界：以官网支持矩阵为准。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "扫描件、图片里的字能识别吗？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "能。扫描件先做 OCR 再走文本规则，页面图像再做人脸、证件、车牌、码类扫描；图片会重编码并剥离 EXIF/GPS。单页 OCR 约 2 秒。手写体、低分辨率、强倾斜扫描可能漏检，需要人工复核。v1.5.2（2026-11-06）。边界：不承诺 100% 识别，重要文件请逐页对照。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "PDF 涂黑后还能恢复吗？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "涂黑版是破坏性重写，文本层内容被真删除，正常手段不能恢复；换名版存有映射，可在本机还原。判断一个 PDF 是否「真涂黑」，可以复制涂黑处看是否还有字、看文档属性与附件是否残留。v1.5.2（2026-11-06）。边界：不要把「盖一个黑框」当成涂黑；导出后请用成品复检确认。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "PDF 里的附件、批注、表单会处理吗？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "默认剥离 PDF 附件、批注、表单与 JS，并在导出前对成品再检测，残留就告警或拦截。若你显式选择保留附件，系统会写警告，保留后的内容由你负责。v1.5.2（2026-11-06）。边界：显式保留隐藏数据会扩大外发风险，非必要不要开。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "能自动识别哪些敏感信息？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "姓名、身份证号、手机号、地址、银行账号、金额、案号、病历号、快递单号、VIN、IMEI/SN、MAC/IP 等文本实体；人脸、11 类证件、二维码/条形码、红色公章；与文件元数据（作者、GPS、EXIF 等）。内置 8 套中文规则包。v1.5.2（2026-11-06）。边界：低置信实体进「待确认」，需确认。"
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "能保证 100% 不漏吗？",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "不能，我们也不做这种承诺。强侧脸、手写体、低分辨率扫描、遮挡、窗外景观、镜面反光等都可能漏检；产品会提示低置信项，导出前也会做成品复检。建议重要文件人工逐页复核，漏掉的用框选补漏或整图涂黑兜底。v1.5.2（2026-11-06）。边界：检出率随文件质量变化，不承诺固定数值。"
+      }
+    }
+  ]
+}</script>
+<style>
+.faq-hero{padding:54px 0 26px;border-bottom:1px solid var(--rule)}
+.faq-hero h1{font-size:clamp(30px,4.2vw,46px);line-height:1.18;margin:10px 0 14px}
+.faq-hero p{max-width:760px;color:var(--ink-2);font-size:16px;line-height:1.8}
+.price-note{margin:18px 0 0;padding:12px 16px;border-left:3px solid #b23a2e;background:#f6f1e8;color:var(--ink-2);font-size:14px;line-height:1.8}
+.faq-list{max-width:900px;margin:34px auto 64px}
+.faq-item{padding:22px 0;border-bottom:1px solid var(--rule)}
+.faq-item h2{font-size:19px;margin:0 0 10px;line-height:1.5}
+.faq-item p{margin:0;color:var(--ink-2);font-size:15px;line-height:1.9}
+.faq-meta{font:400 11px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.06em;margin-bottom:6px}
+.compare-wrap{max-width:1080px;margin:34px auto 64px}
+.compare-wrap h2{font-size:24px;margin:34px 0 12px}
+.table-scroll{overflow-x:auto;border:1px solid var(--rule)}
+table.compare{width:100%;border-collapse:collapse;min-width:760px;font-size:14px;line-height:1.75}
+table.compare th,table.compare td{padding:12px 14px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}
+table.compare th{background:#f2ece1;font-weight:700;white-space:nowrap}
+table.compare td:first-child{font-weight:600;white-space:nowrap}
+table.compare tr:last-child td{border-bottom:0}
+.compare-note{color:var(--ink-3);font-size:12px;line-height:1.8;margin-top:12px}
+@media(max-width:700px){.faq-hero{padding-top:34px}.faq-item h2{font-size:17px}.faq-item p{font-size:14px}}
+
+
+
+@media(max-width:760px){
+  html,body{width:100%!important;max-width:100%!important;overflow-x:hidden!important}
+  body{position:relative;display:block}
+  main{display:block;width:100%!important;max-width:100%!important;overflow:hidden}
+  .wrap{display:block;width:auto!important;max-width:100%!important;margin-left:0!important;margin-right:0!important;padding-left:16px!important;padding-right:16px!important}
+  section.wrap{width:auto!important;max-width:100%!important}
+  .faq-hero{padding:34px 16px 20px!important}
+  .faq-hero p,.faq-item p,.price-note,.faq-list{width:auto!important;max-width:100%!important}
+  .faq-hero h1{font-size:30px!important;overflow-wrap:anywhere}
+  .faq-hero p{font-size:15px!important;line-height:1.9}
+  .price-note{font-size:13px!important;padding:10px 12px!important}
+  .faq-list{margin:24px auto 48px!important}
+  .faq-item h2{font-size:17px!important}
+  .faq-item p{font-size:14px!important;line-height:1.9}
+  .sitebar{width:100%!important;max-width:100%!important;overflow:hidden}
+  .sitebar .inner{display:block!important;width:100%!important;max-width:100%!important;padding:10px 16px!important}
+  .sitebar nav{display:flex!important;width:100%!important;max-width:100%!important;overflow-x:visible!important;flex-wrap:wrap!important;justify-content:flex-start!important;margin:8px 0 0!important;gap:2px 4px!important}
+  .sitebar nav a{white-space:normal!important;padding:6px 8px!important;font-size:12.5px!important}
+  footer .inner{gap:8px}
+}
+</style>
+</head>
+<body>
+<header class="sitebar"><div class="inner">
+<a class="logo" href="/"><img class="brandmark" src="/logo.svg" width="38" height="38" alt="数据隐站"><span class="name">数据隐站<small>SANITIZED_DATA</small></span></a>
+<nav>
+      <a href="/">首页</a>
+      <a href="/demo">演示</a>
+      <a href="/download">下载</a>
+      <a href="/pricing">价格</a>
+      <a href="/mcp">MCP</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">对比</a>
+      <a href="/download" class="cta">下载桌面版</a>
+    </nav></div></header>
+<main><section class="wrap faq-hero"><div class="eyebrow">FAQ · v1.5.2</div><h1>数据隐站 FAQ</h1><p>合同、病历、照片、正射影像，先在本机脱敏，再交给 AI。下面 10 个问题覆盖本机处理、双出口、格式与边界；更多问题将在 4 周内扩到 30 问。</p><p class="price-note"><strong>价格口径：</strong>个人版首年 ¥99 / 续费 ¥129/年 / 买断 ¥399（含 1 年更新）；首次安装可开一次性 3 天全功能试用；无免费版；价格与活动以官网价格页实时显示为准。</p></section>
+<section class="wrap faq-list"><article class="faq-item" id="q1"><div class="faq-meta">Q1 · 2026-11-06</div><h2>数据隐站是什么？</h2><p>数据隐站（Sanitized Data）是 Windows 本地文件脱敏软件：把合同、病历、报表里的姓名、证件号、账号等敏感信息在本机替换或涂黑，再把处理过的版本交给 AI 或对方。文件不上传、引擎零外呼，附带本地 stdio MCP（16 个工具）。v1.5.2（2026-11-06）。边界：只处理受支持格式。</p></article>
+<article class="faq-item" id="q2"><div class="faq-meta">Q2 · 2026-11-06</div><h2>文件会不会上传到服务器？</h2><p>不会。文件处理引擎只监听本机 127.0.0.1 或走本地 stdio，不发起外呼、不上传文件、不采集遥测；临时副本退出时清理。唯一会联网的是你主动点「购买」时的商业服务页，仅涉及订单、不涉及文件。v1.5.2（2026-11-06）。边界：以断网实测与官网隐私说明为准。</p></article>
+<article class="faq-item" id="q3"><div class="faq-meta">Q3 · 2026-11-06</div><h2>换名版和涂黑版有什么区别？</h2><p>换名版把敏感值替换成可还原的假名，文件仍可读，适合给 AI 读、后续还能按映射还原；涂黑版是破坏性重写、不可还原，适合给对方、法院、保险公司。导出前对成品再检测，原文残留就拦下。两种出口各对应一类场景，选错会增加返工。v1.5.2（2026-11-06）。边界：涂黑版不可还原，导出前请确认版本。</p></article>
+<article class="faq-item" id="q4"><div class="faq-meta">Q4 · 2026-11-06</div><h2>换名版怎么还原？</h2><p>在本机「回件还原」页导入 AI 交回的文件，按导出时保存的映射把假名换回真名，支持 Word、Excel、PPT、PDF 文本层和图片 OCR。映射库只存本机，不联网。还原报告可能含真值，不要把它传回云端。v1.5.2（2026-11-06）。边界：图片还原依赖 OCR，识别质量受扫描清晰度影响。</p></article>
+<article class="faq-item" id="q5"><div class="faq-meta">Q5 · 2026-11-06</div><h2>支持哪些文件格式？</h2><p>支持 PDF（含 OCR）、Word .docx、Excel .xlsx/.xlsm、图片、正射 TIF、TXT/CSV/TSV，以及 OBJ/PLY/GLB/STL 的有限清理。不支持老版 Office、压缩包整包、pptx 与倾斜摄影主产物。v1.5.2（2026-11-06）。边界：以官网支持矩阵为准。</p></article>
+<article class="faq-item" id="q6"><div class="faq-meta">Q6 · 2026-11-06</div><h2>扫描件、图片里的字能识别吗？</h2><p>能。扫描件先做 OCR 再走文本规则，页面图像再做人脸、证件、车牌、码类扫描；图片会重编码并剥离 EXIF/GPS。单页 OCR 约 2 秒。手写体、低分辨率、强倾斜扫描可能漏检，需要人工复核。v1.5.2（2026-11-06）。边界：不承诺 100% 识别，重要文件请逐页对照。</p></article>
+<article class="faq-item" id="q7"><div class="faq-meta">Q7 · 2026-11-06</div><h2>PDF 涂黑后还能恢复吗？</h2><p>涂黑版是破坏性重写，文本层内容被真删除，正常手段不能恢复；换名版存有映射，可在本机还原。判断一个 PDF 是否「真涂黑」，可以复制涂黑处看是否还有字、看文档属性与附件是否残留。v1.5.2（2026-11-06）。边界：不要把「盖一个黑框」当成涂黑；导出后请用成品复检确认。</p></article>
+<article class="faq-item" id="q8"><div class="faq-meta">Q8 · 2026-11-06</div><h2>PDF 里的附件、批注、表单会处理吗？</h2><p>默认剥离 PDF 附件、批注、表单与 JS，并在导出前对成品再检测，残留就告警或拦截。若你显式选择保留附件，系统会写警告，保留后的内容由你负责。v1.5.2（2026-11-06）。边界：显式保留隐藏数据会扩大外发风险，非必要不要开。</p></article>
+<article class="faq-item" id="q9"><div class="faq-meta">Q9 · 2026-11-06</div><h2>能自动识别哪些敏感信息？</h2><p>姓名、身份证号、手机号、地址、银行账号、金额、案号、病历号、快递单号、VIN、IMEI/SN、MAC/IP 等文本实体；人脸、11 类证件、二维码/条形码、红色公章；与文件元数据（作者、GPS、EXIF 等）。内置 8 套中文规则包。v1.5.2（2026-11-06）。边界：低置信实体进「待确认」，需确认。</p></article>
+<article class="faq-item" id="q10"><div class="faq-meta">Q10 · 2026-11-06</div><h2>能保证 100% 不漏吗？</h2><p>不能，我们也不做这种承诺。强侧脸、手写体、低分辨率扫描、遮挡、窗外景观、镜面反光等都可能漏检；产品会提示低置信项，导出前也会做成品复检。建议重要文件人工逐页复核，漏掉的用框选补漏或整图涂黑兜底。v1.5.2（2026-11-06）。边界：检出率随文件质量变化，不承诺固定数值。</p></article>
+<p class="compare-note">没有找到答案？发邮件到 <a href="mailto:contact@blctek.com">contact@blctek.com</a>，或看 <a href="/compare">本机脱敏 vs 云端处理</a>。</p></section></main>
+<footer>
+<div class="wrap inner"><span id="siteVersion">数据隐站 · Sanitized_Data v1.5.2</span><span>·</span><span>本机处理 · 不联网 · 不留存</span><span style="margin-left:auto"><a href="/faq">FAQ</a> · <a href="/compare">对比</a> · <a href="/download">下载</a></span></div>
+<div class="wrap" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--rule);font:400 11px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.06em">运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 联系：<a href="mailto:contact@blctek.com">contact@blctek.com</a></div>
+</footer>
+</body></html>

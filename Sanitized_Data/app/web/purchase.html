@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="license.css">
 <link rel="stylesheet" href="purchase.css">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="robots" content="noindex">
 </head>
 <body>
 <header class="topbar">
@@ -16,10 +17,13 @@
   </a>
   <div class="spacer"></div>
   <nav class="topnav" aria-label="导航">
-    <a href="/console">控制台</a>
-    <a href="/license">授权</a>
-    <a href="/pricing">价格</a>
+    <a href="/">首页</a>
+    <a href="/demo">演示</a>
     <a href="/download">下载</a>
+    <a href="/pricing">价格</a>
+    <a href="/mcp">MCP</a>
+    <a href="/faq">FAQ</a>
+    <a href="/compare">对比</a>
   </nav>
 </header>
 
@@ -43,7 +47,7 @@
     <p class="hint hidden" id="paidHint" style="margin-top:8px">当前已是授权版；如需续费或升级可直接下单，新授权会覆盖本机旧授权。</p>
     <p class="hint hidden" id="paidNote" style="margin-top:8px">已购买用户不再显示购买入口；授权码已自动导入本机，无需重复购买。</p>
     <div class="copyrow hidden" id="paidActions" style="margin-top:14px">
-      <a class="btn seal" href="/console">进入控制台</a>
+      <a class="btn seal" href="/download">下载桌面版</a>
       <a class="btn ghost" href="/license">查看授权详情</a>
     </div>
     <div class="msg" id="statusMsg" role="status"></div>
@@ -110,7 +114,7 @@
       <dt>到期</dt><dd id="successExpires">—</dd>
     </dl>
     <div class="copyrow" style="margin-top:14px">
-      <a class="btn seal" href="/console">进入控制台</a>
+      <a class="btn seal" href="/download">下载桌面版</a>
       <a class="btn ghost" href="/license">查看授权详情</a>
     </div>
   </section>

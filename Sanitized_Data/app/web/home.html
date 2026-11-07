@@ -4,12 +4,60 @@
 <meta charset="UTF-8">
 <script>document.documentElement.className += ' js';</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>数据隐站 · Sanitized_Data</title>
+<title>数据隐站 · 先把敏感抹掉，再交给 AI</title>
 <meta name="description" content="把敏感抹掉，让文件放行。合同、病历、报表、扫描件先在本机脱敏，再交给大模型。">
 <link rel="stylesheet" href="site.css">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "name": "四川步络骞科技有限公司",
+      "brand": {
+        "@type": "Brand",
+        "name": "数据隐站"
+      },
+      "url": "https://sd.blctek.com:8443/",
+      "logo": "https://sd.blctek.com:8443/logo.svg",
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "contactType": "customer support",
+        "email": "contact@blctek.com",
+        "availableLanguage": "zh-CN"
+      }
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "数据隐站 Sanitized_Data",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Windows",
+      "softwareVersion": "1.5.2",
+      "url": "https://sd.blctek.com:8443/",
+      "downloadUrl": "https://sd.blctek.com:8443/download",
+      "description": "Windows 本地文件脱敏软件：合同、病历、报表、照片、正射影像先在本机脱敏，再交给 AI；换名版可还原，涂黑版不可还原。",
+      "featureList": [
+        "本机处理，文件不上传",
+        "换名版可还原 / 涂黑版不可还原",
+        "PDF/Word/Excel/图片/正射 TIF 等格式",
+        "本地 stdio MCP，16 个工具"
+      ],
+      "publisher": {
+        "@type": "Organization",
+        "name": "四川步络骞科技有限公司"
+      }
+    }
+  ]
+}</script>
+<style data-geo-navfix="1">
+@media(max-width:900px){
+  .sitebar .inner{flex-wrap:wrap;padding:10px 16px;gap:8px}
+  .sitebar nav{margin-left:0;flex:1 1 100%;flex-wrap:wrap;gap:2px 4px;justify-content:flex-start}
+  .sitebar nav a{white-space:normal;padding:6px 8px;font-size:12.5px}
+}
+</style>
 </head>
 <body>
 
@@ -20,14 +68,14 @@
       <span class="name">数据隐站<small>SANITIZED_DATA</small></span>
     </a>
     <nav>
-      <a href="/" class="on">首页</a>
-      <a href="/console">控制台</a>
-      <a href="/restore">回件还原</a>
+      <a href="/">首页</a>
+      <a href="/demo">演示</a>
       <a href="/download">下载</a>
       <a href="/pricing">价格</a>
-      <a href="/license">授权</a>
-      <a href="/mcp">MCP 接入</a>
-      <a href="/console" class="cta">开始使用 →</a>
+      <a href="/mcp">MCP</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">对比</a>
+      <a href="/download" class="cta">下载桌面版</a>
     </nav>
   </div>
 </header>
@@ -47,8 +95,8 @@
         AI 只看到换过名字、涂黑过的那一份。
       </p>
       <div class="btns">
-        <a class="btn primary" href="/console">打开控制台 →</a>
-        <a class="btn" href="/download">下载桌面版</a>
+        <a class="btn primary" href="/download">下载桌面版 →</a>
+        <a class="btn" href="/demo">在线看演示</a>
         <a class="btn" href="/mcp">接入 MCP</a>
       </div>
       <div class="chips">
@@ -74,6 +122,14 @@
         争议标的额：<span class="bar" style="width:104px"></span>
       </p>
       <div class="stamp">已 隐 去</div>
+    </div>
+  </section>
+
+  <section class="wrap" style="padding:8px 0 6px">
+    <div style="display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;justify-content:space-between;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:12px 0;font:400 12px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.04em">
+      <span>最后更新 2026-11-06 · v1.5.2</span>
+      <span>本机处理 · 文件不上传 · 16 个 MCP 工具</span>
+      <span><a href="/faq">FAQ（先上 10 问，扩到 30 问）</a> · <a href="/compare">本机 vs 云端对比</a></span>
     </div>
   </section>
 
@@ -122,11 +178,11 @@
     <h2>三个入口</h2>
     <p class="muted" style="margin-bottom:26px">本机跑引擎，浏览器做界面，Agent 走 MCP —— 同一个内核</p>
     <div class="grid g3">
-      <a class="card" href="/console">
+      <a class="card" href="/download">
         <div class="ico">CONSOLE</div>
-        <h3>控制台</h3>
+        <h3>下载桌面版</h3>
         <p>拖入文件 → 左右对照 → 框选补漏 → 交付。最直观的方式，适合第一次使用。</p>
-        <div class="go">打开控制台 →</div>
+        <div class="go">下载桌面版 →</div>
       </a>
       <a class="card" href="/download">
         <div class="ico">DOWNLOAD</div>
@@ -151,7 +207,7 @@
     <span>·</span>
     <span>本机处理 · 不联网 · 不留存</span>
     <span style="margin-left:auto">
-      <a href="/console">控制台</a> ·
+      <a href="/demo">演示</a> ·
       <a href="/download">下载</a> ·
       <a href="/mcp">MCP</a>
     </span>

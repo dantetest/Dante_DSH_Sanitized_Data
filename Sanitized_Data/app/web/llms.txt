@@ -1,0 +1,46 @@
+# 数据隐站 Sanitized_Data
+
+> Windows 本地文件脱敏软件：合同、病历、报表、照片、正射影像先在本机脱敏，再交给 AI；换名版可还原，涂黑版不可还原；文件不上传、引擎零外呼，附本地 stdio MCP（16 个工具）。
+
+- 版本：v1.5.2（2026-11-06）
+- 官网：https://sd.blctek.com:8443/
+- 价格：个人版首年 ¥99；续费 ¥129/年；买断 ¥399（含 1 年更新）；无免费版；首次安装可开一次性 3 天全功能试用；以 https://sd.blctek.com:8443/pricing 为准
+- 适用：Windows 桌面版（本地处理）；MCP 需在安装版/试用授权下使用
+- 支持：PDF（含 OCR）、Word .docx、Excel .xlsx/.xlsm、图片、正射 TIF、TXT/CSV/TSV，以及 OBJ/PLY/GLB/STL 的有限清理
+- 边界：不承诺 100% 检出；不承诺合规/PIPL；涂黑版不可还原；重要文件请人工复核
+
+## 关键页面
+- FAQ：https://sd.blctek.com:8443/faq
+- 本机 vs 云端对比：https://sd.blctek.com:8443/compare
+- MCP 接入：https://sd.blctek.com:8443/mcp
+- 价格与试用：https://sd.blctek.com:8443/pricing
+- 在线演示：https://sd.blctek.com:8443/demo
+- 下载：https://sd.blctek.com:8443/download
+- 授权：https://sd.blctek.com:8443/license
+- 支持矩阵：https://sd.blctek.com:8443/support-matrix
+- 安全说明：https://sd.blctek.com:8443/security
+- 更新日志：https://sd.blctek.com:8443/changelog
+
+## 16 个 MCP 工具
+1. sanitize_document
+2. redact_text
+3. check_support
+4. list_rules
+5. sanitize_file
+6. get_sanitize_job
+7. list_sanitize_jobs
+8. get_sanitize_entities
+9. update_sanitize_entity
+10. mark_sanitize_region
+11. accept_all_sanitize_entities
+12. export_sanitize_job
+13. get_sanitize_audit
+14. rehydrate_sanitize_text
+15. open_sanitize_workbench
+16. restore_sanitize_file
+
+## 使用边界
+- 文件处理在本机完成；唯一联网是用户主动点「购买」时的商业服务页，仅订单、不涉及文件。
+- 换名版映射库只存本机；还原报告可能含真值，不要回传云端。
+- 涂黑版是破坏性重写，不可还原。
+- 演示数据均为虚构，不对应真实个人/机构。

@@ -1,0 +1,46 @@
+# 数据隐站 robots.txt
+# 2026-11-06：按站点所有者决定，全部放行（含训练型爬虫）。
+# 如后续调整策略，只改本文件并在 Search Console / 各平台复核。
+
+User-agent: *
+Allow: /
+
+# 搜索引擎
+User-agent: Googlebot
+Allow: /
+User-agent: Bingbot
+Allow: /
+User-agent: Baiduspider
+Allow: /
+User-agent: Sogou web spider
+Allow: /
+User-agent: 360Spider
+Allow: /
+
+# AI 搜索 / 引用 / 训练（按所有者要求全部放行）
+User-agent: GPTBot
+Allow: /
+User-agent: OAI-SearchBot
+Allow: /
+User-agent: ChatGPT-User
+Allow: /
+User-agent: Google-Extended
+Allow: /
+User-agent: ClaudeBot
+Allow: /
+User-agent: Claude-SearchBot
+Allow: /
+User-agent: PerplexityBot
+Allow: /
+User-agent: CCBot
+Allow: /
+User-agent: Bytespider
+Allow: /
+User-agent: Applebot-Extended
+Allow: /
+User-agent: Amazonbot
+Allow: /
+User-agent: meta-externalagent
+Allow: /
+
+Sitemap: https://sd.blctek.com:8443/sitemap.xml
