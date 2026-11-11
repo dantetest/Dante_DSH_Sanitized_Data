@@ -17,6 +17,7 @@
 | 签名 | ad-hoc（`codesign --force --deep --sign -`），**未 Apple 公证** |
 | 最低系统 | macOS 11.0（`app.spec` 的 `LSMinimumSystemVersion`） |
 | 构建结论 | macOS (arm64) ✅ / macOS (x64) ✅ / Release 挂载 ✅ |
+| 分发状态 | GitHub Release `v1.5.2` ✅（3 资产）· Gitea Release `v1.5.2` ✅（已追加 3 资产，2026-11-11 10:11 完成）· 下载页/清单 ✅（代码已合并，待部署到 CKA `/updates/`） |
 
 ## 1. 产物清单（SHA-256 已用 GitHub Release 的 `SHA256SUMS-macos.txt` 交叉复核）
 
@@ -99,6 +100,9 @@ ad-hoc 签名 → 打包 DMG（`hdiutil`）→ **冒烟测试** → upload-artif
 | 5 | 依赖未锁版本导致双架构 ORT 版本不同 | 已知 | 后续在 requirements 中按平台锁定 `onnxruntime` 版本 |
 
 ## 6. 复现命令（本机 Windows，仅复核用）
+
+> 下列脚本位于工作区 `scripts/`，为本次发布临时编写、**未纳入 git 仓库**（`scripts/` 目录整体未跟踪）；
+> 仅用于复核，不是产品运行时依赖。
 
 ```powershell
 # 1) 结构校验 + SHA-256（应输出 DMG STRUCTURE RESULT: PASS）
