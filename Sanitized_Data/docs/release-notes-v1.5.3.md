@@ -16,6 +16,7 @@
 | 校验 | `SHA256SUMS-v1.5.3-release.txt`、`SHA256SUMS-macos.txt` | SHA-256 清单 |
 
 - 构建证据：[构建与产物验证记录](qa/v1.5.3-build-20261111.md)（SHA-256/大小/冒烟/架构复核在此回填）
+- 下载：GitHub Release `v1.5.3`（公开，含 macOS DMG 与 `SHA256SUMS-macos.txt`）；公司 Gitea Release `v1.5.3`（内部主仓，含 Windows/macOS 全部资产）
 - 安装步骤与已知限制见下文 §4、§5。
 
 ## 2. 本版变更

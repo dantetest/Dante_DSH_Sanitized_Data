@@ -70,9 +70,11 @@ Windows 优先级/手动回退、跨平台拒绝、扩展名与架构校验、�
 
 - `deploy/publish_update.py` 已原生支持 4 个资产键（Windows installer/portable + macOS arm64/x64）；
   v1.5.3 发布时同一次 `latest.json` 即可服务两个平台，**不需要两份清单**。
-- 本记录对应代码已在 `main`，**版本号尚未 bump 到 1.5.3、安装包尚未重建**；
-  出 v1.5.3 包时需：改 `config.py VERSION` 与 `desktop/installer.iss MyAppVersion` → 重打 Windows 安装包/绿色版 →
-  GitHub Actions 出 macOS DMG → Gitea/GitHub Release → 重新生成 `latest.json` → 部署到 CKA `/updates/`。
+- **v1.5.3 已按本记录出包**（2026-11-11）：版本号 1.5.3、BUILD_ID `20261111-platform-update`；
+  Windows 安装包/绿色版由本机构建，macOS 双架构 DMG 由 GitHub Actions 构建；产物与 SHA-256 见
+  [`v1.5.3-build-20261111.md`](v1.5.3-build-20261111.md)，发行说明见
+  [`release-notes-v1.5.3.md`](../release-notes-v1.5.3.md)。
+- 仍需运维执行：把 `latest.json` + 4 个安装包部署到 CKA `/updates/`（客户端检查更新依赖该静态目录）。
 - macOS 应用内自动替换（helper 进程）仍不在范围：v1.5.3 为「提示 + 手动下载 DMG」，避免破坏 `.app`。
 
 ## 7. 复核依据
