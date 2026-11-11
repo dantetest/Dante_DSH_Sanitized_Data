@@ -227,3 +227,71 @@ build → tests → tag/Gitea Release → 上传安装包/绿色版/SHA256SUMS
 - 交互：启动后自动检查一次，只有用户点「立即更新」才下载；「稍后」24h；手动检查始终可用；
 - 测试：	est_updater.py 5/5，API 本地 manifest 下载/校验/源码模式拒绝通过；
 - 未完成：v1.3.4 构建、CKA latest.json 发布、安装器修复。
+
+## 14. 平台隔离：Windows 只更新 Windows 包，macOS 只更新 macOS 包（v1.5.3，2026-11-11）
+
+### 14.1 问题与根因
+
+v1.5.2 的 `check()` 只查 `windows_portable` / `windows_installer`。一旦清单出现比当前版本更高的版本，
+**macOS 客户端会看到 Windows 绿色版 zip**，点「立即更新」会下载 Windows 包，`install()` 还会调用
+PowerShell helper（macOS 上必然失败）。根因不是清单字段缺失（`deploy/publish_update.py` 早已同时发布
+`macos_arm64` / `macos_x64`），而是**客户端选包逻辑没有平台维度**。
+
+### 14.2 清单契约（服务端发布的就是这一份）
+
+| 资产键 | 平台/架构 | 文件类型 | 客户端行为 |
+|---|---|---|---|
+| `windows_portable` | Windows x64 | `.zip`（绿色版） | `auto`：应用内下载 → SHA-256 校验 → 自替换 → 重启 |
+| `windows_installer` | Windows x64 | `.exe`（Inno 安装包） | `manual`：只给下载入口，不静默执行安装器 |
+| `macos_arm64` | macOS Apple Silicon | `.dmg` | `manual`：只给 DMG 下载入口，提示拖入「应用程序」覆盖 |
+| `macos_x64` | macOS Intel | `.dmg` | `manual`：同上 |
+
+同一份 `latest.json` 同时带四个键；**客户端按平台各取所需，服务端不需要维护两份清单**。
+
+### 14.3 客户端选择规则（`app/server/yinzhan/updater.py`）
+
+- `_platform_id()`：`sys.platform` → `windows` / `macos` / `other`
+- `_arch_id()`：`platform.machine()` → `arm64` / `x64`
+- `_platform_asset_keys()`：当前平台允许的候选有序表（Windows：portable → installer；macOS：按架构取一个 dmg）
+- `_select_update_asset()` + `_asset_matches()` 做四重硬校验：
+  1. **键的平台归属**必须等于当前平台（键名本身就是平台命名空间）；
+  2. **扩展名**必须匹配（Windows 只收 `.zip`/`.exe`，macOS 只收 `.dmg`）；
+  3. **反平台标记黑名单**：Windows 端资产名/URL 出现 `macos/darwin/.dmg/apple` 一律拒绝；macOS 端出现 `windows/win32/win64/.exe/.zip/setup` 一律拒绝；
+  4. **macOS 架构互斥**：arm64 端拒绝名字里带 `x64` 的包，反之亦然。
+- **没有跨平台回退**：当前平台没有可用资产时直接 `phase=error` + 人类可读提示 + `release_url`，绝不拿另一个平台的包顶上。
+- `install()` 增加平台门禁：非 Windows 直接拒绝自动替换，避免在 macOS 上误跑 PowerShell helper。
+- `start_download()` 只允许 `kind=portable`；`dmg` / `installer` 属 manual，不在应用内下载。
+- `/api/update/status` 的返回新增 `platform` / `arch` / `platform_label` / `mode`（`auto`/`manual`/`none`）/ `manual` / `release_url`，供前端渲染。
+
+### 14.4 前端（`app/web/app.js` + `index.html`）
+
+- **自动更新**（Windows 绿色版）：沿用「立即更新 → 下载/校验 → 安装并重启」。
+- **手动模式**（macOS DMG / Windows 安装包）：更新弹窗显示「下载 DMG 安装包 / 下载安装包」链接
+  （`#btnUpdateManual`，`target=_blank`），隐藏「立即更新」；正文带出 `platform_label`
+  （如「macOS Apple Silicon（arm64）」）与后端给的安装提示，避免用户拿错包。
+- 弹窗不会对 manual 资产调用 `/api/update/download`，因此不会出现「在 macOS 上下载 Windows zip」。
+
+### 14.5 测试（`app/tests/test_updater.py`）
+
+原 5 个用例 + 新增 12 个平台隔离用例，**17/17 通过**：
+
+- Windows：优先 portable（auto）；只有 installer 时 manual 且拒绝应用内下载；拒绝 macOS-only 清单；拒绝把 `.dmg` 错填到 `windows_portable` 键；
+- macOS：arm64 / x64 各取对应 dmg；拒绝 Windows-only 清单；缺本架构资产时不回退；拒绝错误扩展名；`install()` 拒绝自动替换；
+- 其它：未知平台报错；同版本 `no_update` 也回填 `platform/arch` 字段。
+
+运行：`python -X utf8 app\tests\test_updater.py`
+
+### 14.6 发布侧注意
+
+- `deploy/publish_update.py` 已支持 4 个资产键：可用 `--installer/--portable/--macos-arm64/--macos-x64` 指定本地文件，
+  或从 Gitea Release 按文件名自动挑选；发布时先传安装包、后更新 `latest.json`。
+- 客户端只依赖一份 `latest.json`；**不要**为 Windows/macOS 拆成两个清单。
+- v1.5.3 暂不做 macOS 应用内自动替换（DMG 需要用户拖拽）；若后续要自动化，可新增
+  「下载 DMG → `open` 挂载 → 提示拖入」的半自动流程，但仍不应调用 Windows helper。
+
+### 14.7 未做/边界
+
+- macOS 自动替换（应用外 helper 进程）未实现，当前为「提示 + 手动下载」。
+- 清单版本不高于当前版本时，不下载任何资产（`no_update`）。
+- 更新源域名白名单仍未实现（历史遗留）；当前依赖 HTTPS + SHA-256 及平台/扩展名校验。
+

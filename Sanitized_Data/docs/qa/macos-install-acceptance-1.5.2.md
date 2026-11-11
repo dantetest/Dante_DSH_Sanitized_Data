@@ -121,7 +121,7 @@
 | C2 | 真实 Mac 全链路 | Apple Silicon 与 Intel 真机各一次完整验收 |
 | C3 | 长时间稳定性 | 长任务/大文件在 macOS 上的内存与耗时表现 |
 | C4 | 企业 MDM / 受限目录环境 | 数据目录降级、权限受限场景未验 |
-| C5 | 自动更新 | 已核对代码：macOS 包**不支持**自动更新（`updater.py` 只识别 `windows_portable`/`windows_installer`，替换走 PowerShell）；v1.5.2 清单 version 与当前版本相同不会弹错，后续 Windows 版本发布后可能让 macOS 端看到 Windows 包，建议 v1.5.3 按 `sys.platform` 分支 |
+| C5 | 自动更新 | 已核对代码：v1.5.2 macOS 包**不支持**自动更新（`updater.py` 只识别 `windows_portable`/`windows_installer`，替换走 PowerShell）；**已在 main 实现平台隔离**（Windows 只取 `windows_*`、macOS 只取 `macos_arm64/x64`，macOS 走「下载 DMG 手动安装」），待 v1.5.3 出包 |
 | C6 | MCP 入口 | `.app` 内 `Sanitized_Data_MCP` 的调用方式未在 macOS 上实测 |
 
 ## 6. 证据保存要求

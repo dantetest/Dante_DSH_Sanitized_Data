@@ -1,18 +1,25 @@
 # -*- coding: utf-8 -*-
-"""客户端更新：检查 manifest → 下载绿色版更新包 → 校验 → 重启替换 → 再启动。
+"""客户端更新：按运行平台选择自己的更新包 → 校验 → 安装/引导手动安装。
 
 设计约束：
 - 只在用户点击/启动检查时联网；文件处理引擎不调用本模块。
 - 不静默安装：必须由用户在界面上点「立即更新」「安装并重启」。
 - 更新包必须 HTTPS/HTTP + SHA-256 校验通过，才允许执行。
-- 当前优先使用 windows_portable（绿色版 zip）自替换，绕开安装器问题；
-  windows_installer 仅保留兼容，暂不自动执行。
+- **平台隔离（v1.5.3）**：清单是「按平台分键」的资产表
+  （windows_installer / windows_portable / macos_arm64 / macos_x64），
+  客户端只读自己平台、自己架构的键，且做扩展名/文件名交叉校验，
+  绝不允许 Windows 端拿到 .dmg、macOS 端拿到 .exe/.zip。
+- Windows：优先 windows_portable（绿色版 zip）自替换，绕开安装器问题；
+  windows_installer 仅保留兼容，作为「手动下载安装」入口，不自动执行。
+- macOS：只接受 macos_arm64 / macos_x64 的 .dmg；.app 自替换需要应用外 helper，
+  v1.5.3 不做自动替换，只给出 DMG 下载入口并把「拖入应用程序覆盖」写进提示。
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import platform
 import re
 import ssl
 import subprocess
@@ -27,6 +34,20 @@ from . import config
 
 _USER_AGENT = "sanitized-data-updater/1"
 _UA_COUNT = 0
+
+# 清单资产键 → (kind, 允许的扩展名, 所属平台)
+_ASSET_KINDS: dict[str, tuple[str, tuple[str, ...], str]] = {
+    "windows_portable": ("portable", (".zip",), "windows"),
+    "windows_installer": ("installer", (".exe",), "windows"),
+    "macos_arm64": ("dmg", (".dmg",), "macos"),
+    "macos_x64": ("dmg", (".dmg",), "macos"),
+}
+
+# 反向黑名单：Windows 端拒绝 macOS/磁盘映像标记；macOS 端拒绝 Windows 安装包标记。
+_FORBIDDEN_TOKENS: dict[str, tuple[str, ...]] = {
+    "windows": ("macos", "darwin", ".dmg", "apple"),
+    "macos": ("windows", "win32", "win64", ".exe", ".zip", "setup"),
+}
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -48,6 +69,95 @@ def _asset_valid(asset: dict) -> bool:
                 and re.fullmatch(r"[0-9A-F]{64}", digest) is not None)
     except Exception:
         return False
+
+
+# ── 平台识别与资产选择（平台隔离的核心） ──
+def _platform_id() -> str:
+    """当前运行平台：windows / macos / other。"""
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "other"
+
+
+def _arch_id() -> str:
+    """当前运行架构：arm64 / x64 / 其它 machine 值。"""
+    machine = (platform.machine() or "").strip().lower()
+    if machine in ("arm64", "aarch64"):
+        return "arm64"
+    if machine in ("x86_64", "amd64", "x64"):
+        return "x64"
+    return machine or "unknown"
+
+
+def _platform_label(platform_id: str, arch: str) -> str:
+    if platform_id == "windows":
+        return "Windows x64"
+    if platform_id == "macos":
+        if arch == "arm64":
+            return "macOS Apple Silicon（arm64）"
+        if arch == "x64":
+            return "macOS Intel（x64）"
+        return f"macOS（{arch}）"
+    return platform_id
+
+
+def _platform_asset_keys(platform_id: str, arch: str) -> list[tuple[str, str]]:
+    """当前平台允许的资产键顺序：(asset_key, mode)。auto=应用内自动替换，manual=手动下载安装。"""
+    if platform_id == "windows":
+        return [("windows_portable", "auto"), ("windows_installer", "manual")]
+    if platform_id == "macos":
+        if arch == "arm64":
+            return [("macos_arm64", "manual")]
+        if arch == "x64":
+            return [("macos_x64", "manual")]
+        return []
+    return []
+
+
+def _asset_matches(key: str, asset: dict, platform_id: str, arch: str) -> bool:
+    """交叉校验：键的平台归属、扩展名、反平台标记、macOS 架构标记。"""
+    meta = _ASSET_KINDS.get(key)
+    if not meta:
+        return False
+    _kind, suffixes, expected_platform = meta
+    if expected_platform != platform_id:
+        return False
+    name = str(asset.get("name") or "")
+    url = str(asset.get("url") or "")
+    if not name.lower().endswith(suffixes):
+        return False
+    haystack = (name + " " + url).lower()
+    for token in _FORBIDDEN_TOKENS[platform_id]:
+        if token in haystack:
+            return False
+    if platform_id == "macos":
+        opposite = "x64" if arch == "arm64" else ("arm64" if arch == "x64" else "")
+        if opposite and opposite in name.lower():
+            return False
+    return True
+
+
+def _select_update_asset(assets: dict, platform_id: str, arch: str):
+    """返回 (asset_key, kind, mode)；没有本平台可用资产时返回 None。"""
+    for key, mode in _platform_asset_keys(platform_id, arch):
+        asset = assets.get(key)
+        if not isinstance(asset, dict) or not _asset_valid(asset):
+            continue
+        if not _asset_matches(key, asset, platform_id, arch):
+            continue
+        return key, _ASSET_KINDS[key][0], mode
+    return None
+
+
+def _manual_hint(platform_id: str) -> str:
+    if platform_id == "macos":
+        return ("macOS 版请下载 DMG，打开后把 Sanitized_Data.app 拖入「应用程序」覆盖安装；"
+                "本程序不会自动替换 macOS 应用。")
+    if platform_id == "windows":
+        return "当前清单只有 Windows 安装包，请下载后手动安装（程序不会静默执行安装器）。"
+    return "当前平台请手动下载安装包。"
 
 
 def _ssl_context() -> ssl.SSLContext:
@@ -86,6 +196,13 @@ class UpdateManager:
             "error": "",
             "checked_at": "",
             "later_until": 0,
+            # 平台隔离相关（前端据此渲染文案/按钮）
+            "platform": "",         # windows / macos / other
+            "arch": "",             # arm64 / x64 / ...
+            "platform_label": "",   # 展示用
+            "mode": "none",         # auto（应用内替换）/ manual（手动下载安装）/ none
+            "manual": False,
+            "release_url": "",
         }
         self._download_thread: threading.Thread | None = None
 
@@ -101,10 +218,14 @@ class UpdateManager:
     # ── 检查 ──
     def check(self) -> dict:
         url = config.UPDATE_MANIFEST_URL
+        platform_id = _platform_id()
+        arch = _arch_id()
+        label = _platform_label(platform_id, arch)
+        base = {"platform": platform_id, "arch": arch, "platform_label": label}
         if not url:
-            self._set(phase="error", available=False, error="未配置更新源")
+            self._set(phase="error", available=False, error="未配置更新源", **base)
             return self.status()
-        self._set(phase="checking", error="")
+        self._set(phase="checking", error="", **base)
         try:
             manifest = _http_get_json(url, config.UPDATE_TIMEOUT)
             remote = str(manifest.get("version") or "").strip()
@@ -113,41 +234,49 @@ class UpdateManager:
             assets = manifest.get("assets") or {}
             if not isinstance(assets, dict):
                 raise ValueError("manifest assets 格式错误")
+            release_url = str(manifest.get("release_url") or "")
+            notes = str(manifest.get("notes") or "")
             if not _is_newer(remote, config.VERSION):
                 self._set(phase="no_update", available=False, version=remote,
-                          notes=str(manifest.get("notes") or ""), asset=None,
-                          progress=0, total=0, error="",
-                          checked_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+                          notes=notes, asset=None,
+                          progress=0, total=0, error="", release_url=release_url,
+                          mode="none", manual=False,
+                          checked_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"), **base)
                 return self.status()
-            # 当前优先绿色版自替换；manifest 里 installer 只做展示/备用
-            asset = assets.get("windows_portable")
-            if not _asset_valid(asset or {}):
-                # 兼容未来只有 installer 的清单：仍提示，但明确不能自更新
-                inst = assets.get("windows_installer")
-                if _is_newer(remote, config.VERSION) and _asset_valid(inst or {}):
-                    self._set(phase="available", available=True, version=remote,
-                              notes=str(manifest.get("notes") or ""),
-                              asset={"name": inst.get("name"), "size": int(inst.get("size") or 0),
-                                     "sha256": str(inst.get("sha256") or "").upper(),
-                                     "url": str(inst.get("url") or ""),
-                                     "kind": "installer"},
-                              progress=0, total=int(inst.get("size") or 0),
-                              error="当前清单没有绿色版更新包，暂不能一键更新；请下载安装包手动升级。",
-                              checked_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
-                    return self.status()
-                raise ValueError("manifest 缺少可用的 windows_portable 资产")
-            self._set(phase="available", available=True, version=remote,
-                      notes=str(manifest.get("notes") or ""),
-                      asset={"name": asset.get("name"),
-                             "size": int(asset.get("size") or 0),
-                             "sha256": str(asset.get("sha256") or "").upper(),
-                             "url": str(asset.get("url") or ""),
-                             "kind": "portable"},
-                      progress=0, total=int(asset.get("size") or 0), error="",
-                      checked_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+
+            if platform_id == "other":
+                raise ValueError(
+                    f"当前平台（{sys.platform}）不在自动更新支持范围，请到下载页手动下载。")
+
+            selected = _select_update_asset(assets, platform_id, arch)
+            if selected is None:
+                # 关键：绝不回退到其它平台的资产（Windows 不拿 dmg，macOS 不拿 exe/zip）。
+                raise ValueError(
+                    f"更新清单暂未提供适用于 {label} 的安装包，请稍后重试或到下载页手动下载。")
+
+            asset_key, kind, mode = selected
+            raw = assets[asset_key]
+            asset_state = {
+                "name": str(raw.get("name")),
+                "size": int(raw.get("size") or 0),
+                "sha256": str(raw.get("sha256") or "").upper(),
+                "url": str(raw.get("url")),
+                "kind": kind,               # portable | installer | dmg
+                "asset_key": asset_key,
+                "manual": mode == "manual",
+            }
+            self._set(
+                phase="available", available=True, version=remote, notes=notes,
+                asset=asset_state,
+                progress=0, total=int(raw.get("size") or 0),
+                error=(_manual_hint(platform_id) if mode == "manual" else ""),
+                release_url=release_url,
+                mode=mode, manual=(mode == "manual"),
+                checked_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"), **base,
+            )
             return self.status()
         except Exception as exc:
-            self._set(phase="error", available=False, error=f"检查更新失败：{exc}")
+            self._set(phase="error", available=False, error=f"检查更新失败：{exc}", **base)
             return self.status()
 
     # ── 下载 ──
@@ -156,8 +285,9 @@ class UpdateManager:
             if self._state.get("phase") not in ("available", "error", "ready"):
                 return self.status()
             asset = self._state.get("asset")
-            if not asset or not asset.get("kind") == "portable":
-                self._set(phase="error", error="没有可下载的绿色版更新包")
+            if not asset or asset.get("kind") != "portable":
+                self._set(phase="available",
+                          error="当前平台/该更新包不支持应用内自动下载，请按提示手动下载安装包。")
                 return self.status()
             if self._download_thread and self._download_thread.is_alive():
                 return self.status()
@@ -229,6 +359,11 @@ class UpdateManager:
         with self._lock:
             if self._state.get("phase") != "ready":
                 self._set(error="更新包尚未下载完成")
+                return self.status()
+            if _platform_id() != "windows":
+                # macOS / Linux：不做应用内替换，避免误执行 Windows helper 或破坏 .app。
+                self._set(phase="error",
+                          error="当前平台不支持自动替换安装，请手动下载并安装更新包。")
                 return self.status()
             asset = self._state.get("asset") or {}
             zip_path = Path(str(asset.get("path") or self._download_path()))

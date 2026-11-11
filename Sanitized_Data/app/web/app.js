@@ -394,21 +394,55 @@ function laterUpdate() {
   closeUpdateModal();
 }
 
+function updateIsManual(data) {
+  if (!data || !data.available) return false;
+  const kind = data.asset && data.asset.kind;
+  return !!(data.manual || kind === 'dmg' || kind === 'installer');
+}
+
+// 平台隔离：自动更新（Windows 绿色版）才显示「立即更新」；
+// macOS / Windows 安装包只给「下载安装包」入口，绝不跨平台取包。
+function applyUpdateMode(data) {
+  const manual = updateIsManual(data);
+  const asset = (data && data.asset) || {};
+  const link = ui.btnUpdateManual;
+  if (manual) {
+    if (link) {
+      link.href = asset.url || (data && data.release_url) || '#';
+      link.textContent = asset.kind === 'dmg' ? '下载 DMG 安装包' : '下载安装包';
+      link.style.display = '';
+    }
+    ui.btnUpdateNow.style.display = 'none';
+    ui.btnUpdateNow.disabled = true;
+  } else {
+    if (link) {
+      link.style.display = 'none';
+      link.removeAttribute('href');
+    }
+    ui.btnUpdateNow.style.display = '';
+    ui.btnUpdateNow.disabled = false;
+  }
+}
+
 function showUpdateModal(data) {
   state.update = data;
   const has = !!data.available;
   ui.btnCheckUpdate.classList.toggle('has-update', has);
   ui.btnCheckUpdate.textContent = has ? '发现新版本' : '检查更新';
   if (!has) return;
+  const plat = data.platform_label ? '（' + data.platform_label + '）' : '';
+  const manual = updateIsManual(data);
   ui.updateTitle.textContent = '发现新版本 v' + (data.version || '');
   ui.updateText.textContent = '当前 v' + (data.current_version || '') +
-    ' → 新版本 v' + (data.version || '') + '。更新会关闭并重启程序，本机文件不受影响。';
+    ' → 新版本 v' + (data.version || '') + plat + '。' +
+    (manual ? '请下载对应安装包手动安装，本机文件不受影响。'
+            : '更新会关闭并重启程序，本机文件不受影响。');
   ui.updateNotes.textContent = String(data.notes || '').slice(0, 4000);
-  ui.updateProgressWrap.hidden = true;
+  ui.updateProgressWrap.hidden = !manual;
   ui.updateBar.style.width = '0%';
-  ui.updateProgressText.textContent = '准备下载…';
-  ui.btnUpdateNow.disabled = false;
+  ui.updateProgressText.textContent = manual ? (data.error || '请下载安装包手动安装。') : '准备下载…';
   ui.btnUpdateNow.textContent = '立即更新';
+  applyUpdateMode(data);
   ui.modalUpdate.classList.add('open');
 }
 
@@ -455,9 +489,14 @@ function renderUpdateProgress(data) {
     ui.btnUpdateNow.disabled = false;
     ui.btnUpdateNow.textContent = '重试';
   } else if (data.phase === 'available') {
-    ui.updateProgressText.textContent = '准备下载…';
-    ui.btnUpdateNow.disabled = false;
-    ui.btnUpdateNow.textContent = '立即更新';
+    applyUpdateMode(data);
+    if (updateIsManual(data)) {
+      ui.updateProgressWrap.hidden = false;
+      ui.updateProgressText.textContent = data.error || '请下载安装包手动安装。';
+    } else {
+      ui.updateProgressText.textContent = '准备下载…';
+      ui.btnUpdateNow.textContent = '立即更新';
+    }
   }
 }
 
@@ -505,6 +544,7 @@ async function installUpdate() {
 
 function onUpdateNow() {
   const data = state.update || {};
+  if (updateIsManual(data)) return; // 手动模式走「下载安装包」链接
   if (data.phase === 'ready') installUpdate();
   else if (data.phase === 'available' || data.phase === 'error') startUpdateDownload();
   else if (data.phase === 'downloading' || data.phase === 'installing') {
@@ -2490,7 +2530,7 @@ function cacheDom() {
     'licenseLimitText', 'licenseLimitBuy', 'btnLicenseLimitClose',
     'btnCheckUpdate', 'modalUpdate', 'updateTitle', 'updateText', 'updateNotes',
     'updateProgressWrap', 'updateBar', 'updateProgressText',
-    'btnUpdateNow', 'btnUpdateLater', 'btnUpdateClose',
+    'btnUpdateNow', 'btnUpdateManual', 'btnUpdateLater', 'btnUpdateClose',
   ].forEach((id) => { ui[id] = document.getElementById(id); });
   ui.rail = $('.rail');
 }

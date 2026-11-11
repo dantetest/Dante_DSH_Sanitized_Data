@@ -139,7 +139,7 @@ shasum -a 256 Sanitized_Data-1.5.2-x64.dmg
 | 卸载 | 退出程序 → 将 `.app` 拖入废纸篓；数据目录默认保留，需手动删除 | 已确认 |
 | 数据位置 | `~/Library/Application Support/Sanitized_Data`（可用 `YINZHAN_DATA_DIR` 覆盖） | 已确认 |
 | 真实 Mac 全链路 | 安装/离线处理/卸载的人工验收尚未在真实 Mac 上完成 | 待验证 |
-| 自动更新 | macOS 包**不支持**自动更新，请手动下载新 DMG 覆盖安装。原因（已核对代码）：`updater.py` 的 `check()` 只识别 `windows_portable` / `windows_installer`，`install()` 通过 PowerShell 脚本替换文件，均无 macOS 分支。v1.5.2 清单 version 与当前版本相同，不会弹出错误；后续版本发布 Windows 资产后，macOS 客户端点「检查更新」可能看到 Windows 包，属已知问题 | 已确认（代码）→ 建议 v1.5.3 按 `sys.platform` 分支修复 |
+| 自动更新 | macOS 包**不支持**自动更新，请手动下载新 DMG 覆盖安装。原因（已核对代码）：`updater.py` 的 `check()` 只识别 `windows_portable` / `windows_installer`，`install()` 通过 PowerShell 脚本替换文件，均无 macOS 分支。v1.5.2 清单 version 与当前版本相同，不会弹出错误；后续版本发布 Windows 资产后，macOS 客户端点「检查更新」可能看到 Windows 包，属已知问题 | 已确认（代码）→ **已在 main 实现平台隔离（Windows 只取 windows_*，macOS 只取 macos_arm64/x64，手动下载 DMG），待 v1.5.3 出包**；见 `docs/impl/update-check.md` §14 |
 | 双架构互斥 | 两个 DMG 为对应架构原生包，不通用 | 已确认 |
 
 ## 7. 回填记录（2026-11-11 本次构建）
