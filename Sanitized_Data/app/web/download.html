@@ -31,12 +31,13 @@
 
 <main class="wrap">
   <section class="dl-hero" style="border-bottom:0;padding-bottom:0">
-    <div class="eyebrow">DOWNLOAD · WINDOWS</div>
+    <div class="eyebrow">DOWNLOAD · WINDOWS / MACOS</div>
     <h1 style="font-size:clamp(26px,3.4vw,36px)">下载数据隐站</h1>
-    <p class="lead">Windows 10/11 x64 · 离线安装 · 无需 Python</p>
+    <p class="lead">Windows 10/11 x64 · macOS 11+（Apple Silicon / Intel）· 离线安装 · 无需 Python</p>
     <div class="chips">
       <span class="chip" id="dlVersion">v1.5.2</span>
       <span class="chip">Windows x64</span>
+      <span class="chip">macOS arm64 · x64</span>
     </div>
   </section>
 
@@ -60,15 +61,39 @@
       </div>
     </div>
 
+    <div class="eyebrow" style="margin-top:36px;margin-bottom:0">MACOS · DMG</div>
+    <div class="dl-grid" id="macGrid">
+      <div class="dl" id="macarmCard">
+        <div class="os">MACOS · ARM64 · 磁盘映像</div>
+        <div class="file" id="macarmName">Sanitized_Data-1.5.2-arm64.dmg</div>
+        <div class="size" id="macarmSize">以服务器返回为准</div>
+        <div class="act">
+          <a class="btn primary" id="macarmLink" href="#" hidden style="display:none">下载 arm64 DMG ↓</a>
+        </div>
+      </div>
+      <div class="dl" id="macx64Card">
+        <div class="os">MACOS · X64 · 磁盘映像</div>
+        <div class="file" id="macx64Name">Sanitized_Data-1.5.2-x64.dmg</div>
+        <div class="size" id="macx64Size">以服务器返回为准</div>
+        <div class="act">
+          <a class="btn primary" id="macx64Link" href="#" hidden style="display:none">下载 x64 DMG ↓</a>
+        </div>
+      </div>
+    </div>
+
     <table class="spec">
       <tr><th>SHA-256</th><td>
         <div><code id="installerSha">以服务器返回为准</code> · 安装包</div>
         <div><code id="portableSha">以服务器返回为准</code> · 绿色版</div>
       </td></tr>
+      <tr><th>SHA-256 · macOS</th><td>
+        <div><code id="macarmSha">以服务器返回为准</code> · arm64</div>
+        <div><code id="macx64Sha">以服务器返回为准</code> · x64</div>
+      </td></tr>
     </table>
 
     <p class="muted" id="dlError" hidden></p>
-    <p class="muted" style="margin-top:18px">macOS 暂未发布。私有化部署请与我们联系：<a href="mailto:contact@blctek.com">contact@blctek.com</a>。</p>
+    <p class="muted" style="margin-top:18px">macOS 版以 DMG 磁盘映像分发（v1.5.2 起支持 Apple Silicon 与 Intel）；其它平台与私有化部署请与我们联系：<a href="mailto:contact@blctek.com">contact@blctek.com</a>。</p>
   </section>
 </main>
 
@@ -104,13 +129,25 @@
     const link = $(prefix + 'Link');
     link.href = asset.url;
     link.hidden = false;
+    link.style.display = '';
     return true;
+  }
+  // 该架构暂无可下载资产：卡片保留占位，显示「暂不可用」，不影响其它卡片
+  function unavailable(prefix) {
+    set(prefix + 'Name', '暂不可用');
+    set(prefix + 'Size', '—');
+    set(prefix + 'Sha', '—');
+    const link = $(prefix + 'Link');
+    if (link) { link.hidden = true; link.style.display = 'none'; }
   }
   fetch('/updates/latest.json', { cache: 'no-store' })
     .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
     .then((data) => {
       set('dlVersion', 'v' + (data.version || '—'));
       const assets = data.assets || {};
+      // macOS 卡片：缺字段时降级为「暂不可用」，绝不抛出，Windows 可用性不受影响
+      if (!fill('macarm', assets.macos_arm64)) unavailable('macarm');
+      if (!fill('macx64', assets.macos_x64)) unavailable('macx64');
       const okInstaller = fill('installer', assets.windows_installer);
       const okPortable = fill('portable', assets.windows_portable);
       if (!okInstaller || !okPortable) throw new Error('配置缺少 Windows 安装包/绿色版');
@@ -120,6 +157,8 @@
       el.hidden = false;
       el.textContent = '下载配置暂不可用；请稍后刷新，或联系 contact@blctek.com。';
       set('dlVersion', 'v1.5.2');
+      unavailable('macarm');
+      unavailable('macx64');
     });
 })();
 </script>
