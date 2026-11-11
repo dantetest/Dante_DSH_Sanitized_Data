@@ -5,8 +5,8 @@
 > 本版与 Windows v1.5.2 同源码基线、功能对齐。安装包由 GitHub Actions 构建（https://github.com/dantetest/Dante_DSH_Sanitized_Data/actions/runs/42939394446），
 > 采用 **ad-hoc 签名、未做 Apple 公证**，首次启动被 Gatekeeper 拦截属预期行为，按 §4 处理即可。
 >
-> 占位符 `DA8D2540F167BA2CFAD0835604F02B52EEC0001618343CD282E406197CCB5C33`、`95FE7B617933B79C571E5E68E488929FDF10E45A7A2397C218F0E744BFBDA5FD`、`265438348`、`211811085`、`https://github.com/dantetest/Dante_DSH_Sanitized_Data/actions/runs/42939394446`
-> 由**发布执行人**用本次构建的真实值替换；本文件不预填、不估算任何数字。
+> 产物 SHA-256、字节数与构建 run 的 URL 已按 2026-11-11 的实际构建回填（见 §2）；
+> 若后续重新构建，请以新一次 Actions 日志中的 `shasum -a 256 *.dmg` / `ls -lh *.dmg` 为准并同步更新 §2。
 
 ## 1. 交付对象
 
@@ -33,6 +33,7 @@
 | Intel | `Sanitized_Data-1.5.2-x64.dmg` | 211811085 | 95FE7B617933B79C571E5E68E488929FDF10E45A7A2397C218F0E744BFBDA5FD |
 
 - 构建与冒烟日志：https://github.com/dantetest/Dante_DSH_Sanitized_Data/actions/runs/42939394446
+- 下载地址：GitHub Release `v1.5.2`（公开）；内部主仓 Gitea Release `v1.5.2` 同步挂载三个资产（两个 DMG + `SHA256SUMS-macos.txt`）
 - 每个架构对应 Actions artifact：`macos-arm64` / `macos-x64`；各含 DMG 与该架构的 `SHA256SUMS-macos-*.txt`。
 - 打 `v*` 标签时 workflow 还会把两个 DMG 与汇总的 `SHA256SUMS-macos.txt` 挂到 GitHub Release。
 - 大小/SHA-256 一律以 Actions 日志中 `shasum -a 256` 与 `ls -lh` 的真实输出为准。
@@ -111,7 +112,7 @@ shasum -a 256 Sanitized_Data-1.5.2-arm64.dmg
 shasum -a 256 Sanitized_Data-1.5.2-x64.dmg
 ```
 
-输出应与本文件 §2 的 `DA8D2540F167BA2CFAD0835604F02B52EEC0001618343CD282E406197CCB5C33` / `95FE7B617933B79C571E5E68E488929FDF10E45A7A2397C218F0E744BFBDA5FD` 完全一致（由发布执行人回填后比对）。
+输出应与本文件 §2 的 `DA8D2540F167BA2CFAD0835604F02B52EEC0001618343CD282E406197CCB5C33` / `95FE7B617933B79C571E5E68E488929FDF10E45A7A2397C218F0E744BFBDA5FD` 完全一致（本次构建已回填）。
 
 ### 5.2 启动后自检（与 CI 冒烟同口径）
 
@@ -141,17 +142,17 @@ shasum -a 256 Sanitized_Data-1.5.2-x64.dmg
 | 自动更新 | macOS 包**不支持**自动更新，请手动下载新 DMG 覆盖安装。原因（已核对代码）：`updater.py` 的 `check()` 只识别 `windows_portable` / `windows_installer`，`install()` 通过 PowerShell 脚本替换文件，均无 macOS 分支。v1.5.2 清单 version 与当前版本相同，不会弹出错误；后续版本发布 Windows 资产后，macOS 客户端点「检查更新」可能看到 Windows 包，属已知问题 | 已确认（代码）→ 建议 v1.5.3 按 `sys.platform` 分支修复 |
 | 双架构互斥 | 两个 DMG 为对应架构原生包，不通用 | 已确认 |
 
-## 7. 发布执行人待办（占位符回填）
+## 7. 回填记录（2026-11-11 本次构建）
 
-| 占位符 | 替换为 | 来源 |
+| 项 | 值 | 来源 |
 |---|---|---|
-| `https://github.com/dantetest/Dante_DSH_Sanitized_Data/actions/runs/42939394446` | 本次 GitHub Actions run 的 URL | Actions 页面 |
-| `DA8D2540F167BA2CFAD0835604F02B52EEC0001618343CD282E406197CCB5C33` | arm64 DMG 的 SHA-256 | 日志 `shasum -a 256 *.dmg` |
-| `95FE7B617933B79C571E5E68E488929FDF10E45A7A2397C218F0E744BFBDA5FD` | x64 DMG 的 SHA-256 | 日志 `shasum -a 256 *.dmg` |
-| `265438348` | arm64 DMG 字节数 | 日志 `ls -lh *.dmg` / 产物属性 |
-| `211811085` | x64 DMG 字节数 | 日志 `ls -lh *.dmg` / 产物属性 |
+| 构建 run | https://github.com/dantetest/Dante_DSH_Sanitized_Data/actions/runs/42939394446 | Actions 页面 |
+| arm64 DMG SHA-256 | `DA8D2540F167BA2CFAD0835604F02B52EEC0001618343CD282E406197CCB5C33` | Release 的 `SHA256SUMS-macos.txt` + 本地复算 |
+| x64 DMG SHA-256 | `95FE7B617933B79C571E5E68E488929FDF10E45A7A2397C218F0E744BFBDA5FD` | 同上 |
+| arm64 DMG 字节数 | `265438348` | DMG 文件属性 / Release 元数据 |
+| x64 DMG 字节数 | `211811085` | 同上 |
 
-回填后请全文检索 `[[` 确认无残留占位符，再对外发布。
+> 若后续重新构建：以新 run 日志中的 `shasum -a 256 *.dmg` / `ls -lh *.dmg` 为准更新本表与 §2，并全文检索 `[[` 确认无残留占位符。
 
 ## 8. 复核依据
 
