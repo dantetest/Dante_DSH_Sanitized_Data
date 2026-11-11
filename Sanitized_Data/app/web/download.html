@@ -35,7 +35,7 @@
     <h1 style="font-size:clamp(26px,3.4vw,36px)">下载数据隐站</h1>
     <p class="lead">Windows 10/11 x64 · macOS 11+（Apple Silicon / Intel）· 离线安装 · 无需 Python</p>
     <div class="chips">
-      <span class="chip" id="dlVersion">v1.5.2</span>
+      <span class="chip" id="dlVersion">v1.5.3</span>
       <span class="chip">Windows x64</span>
       <span class="chip">macOS arm64 · x64</span>
     </div>
@@ -45,7 +45,7 @@
     <div class="dl-grid">
       <div class="dl">
         <div class="os">WINDOWS · x64 · 安装包</div>
-        <div class="file" id="installerName">数据隐站_v1.5.2_x64_安装包.exe</div>
+        <div class="file" id="installerName">Sanitized_Data_Setup_1.5.3_x64.exe</div>
         <div class="size" id="installerSize">约 173 MB</div>
         <div class="act">
           <a class="btn primary" id="installerLink" href="#" hidden>下载安装包 ↓</a>
@@ -53,7 +53,7 @@
       </div>
       <div class="dl">
         <div class="os">WINDOWS · x64 · 绿色版</div>
-        <div class="file" id="portableName">数据隐站_v1.5.2_x64_绿色版.zip</div>
+        <div class="file" id="portableName">Sanitized_Data-1.5.3-win64-portable.zip</div>
         <div class="size" id="portableSize">约 172 MB</div>
         <div class="act">
           <a class="btn primary" id="portableLink" href="#" hidden>下载绿色版 ↓</a>
@@ -65,7 +65,7 @@
     <div class="dl-grid" id="macGrid">
       <div class="dl" id="macarmCard">
         <div class="os">MACOS · ARM64 · 磁盘映像</div>
-        <div class="file" id="macarmName">Sanitized_Data-1.5.2-arm64.dmg</div>
+        <div class="file" id="macarmName">Sanitized_Data-1.5.3-arm64.dmg</div>
         <div class="size" id="macarmSize">以服务器返回为准</div>
         <div class="act">
           <a class="btn primary" id="macarmLink" href="#" hidden style="display:none">下载 arm64 DMG ↓</a>
@@ -73,7 +73,7 @@
       </div>
       <div class="dl" id="macx64Card">
         <div class="os">MACOS · X64 · 磁盘映像</div>
-        <div class="file" id="macx64Name">Sanitized_Data-1.5.2-x64.dmg</div>
+        <div class="file" id="macx64Name">Sanitized_Data-1.5.3-x64.dmg</div>
         <div class="size" id="macx64Size">以服务器返回为准</div>
         <div class="act">
           <a class="btn primary" id="macx64Link" href="#" hidden style="display:none">下载 x64 DMG ↓</a>
@@ -156,7 +156,7 @@
       const el = $('dlError');
       el.hidden = false;
       el.textContent = '下载配置暂不可用；请稍后刷新，或联系 contact@blctek.com。';
-      set('dlVersion', 'v1.5.2');
+      set('dlVersion', 'v1.5.3');
       unavailable('macarm');
       unavailable('macx64');
     });
