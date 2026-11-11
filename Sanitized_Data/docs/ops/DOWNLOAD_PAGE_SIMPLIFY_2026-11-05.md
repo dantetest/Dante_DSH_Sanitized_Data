@@ -56,8 +56,8 @@ Sanitized_Data/out/desktop/latest.json
 `url` 是服务器相对路径，不是 Gitea 地址。部署到 `sd.blctek.com` 后实际访问：
 
 ```text
-https://sd.blctek.com:8443/updates/Sanitized_Data_Setup_1.5.2_x64.exe
-https://sd.blctek.com:8443/updates/Sanitized_Data-1.5.2-win64-portable.zip
+https://cka.blctek.com:8443/updates/Sanitized_Data_Setup_1.5.2_x64.exe
+https://cka.blctek.com:8443/updates/Sanitized_Data-1.5.2-win64-portable.zip
 ```
 
 ## 3. 离线包放服务器哪里
@@ -124,7 +124,7 @@ python3 deploy/publish_update.py --tag v1.5.2 \
   --installer /path/Sanitized_Data_Setup_1.5.2_x64.exe \
   --portable /path/Sanitized_Data-1.5.2-win64-portable.zip \
   --dest data/updates \
-  --url-prefix /updates
+  --url-prefix https://cka.blctek.com:8443/updates   # 必须绝对地址（客户端下载需要）
 ```
 
 > 注意：`latest.json` 同时被桌面版更新检查使用；这里的 version/资产信息必须与实际包一致。

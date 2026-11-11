@@ -105,8 +105,17 @@ def main() -> int:
     ap.add_argument("--portable", default="", help="本地绿色版路径（给定时不下载）")
     ap.add_argument("--macos-arm64", default="", help="本地 macOS arm64 DMG 路径")
     ap.add_argument("--macos-x64", default="", help="本地 macOS x64 DMG 路径")
+    ap.add_argument("--allow-relative-urls", action="store_true",
+                    help="允许 --url-prefix 写相对路径（仅下载页可点；桌面客户端下载会失败，不建议）")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    # 客户端更新器用 urllib 直接请求资产 url，必须是绝对 http(s) 地址；
+    # 历史文档里出现过 --url-prefix /updates（相对）导致客户端「能发现、下载失败」。
+    if not re.match(r"^https?://", args.url_prefix) and not args.allow_relative_urls:
+        die("--url-prefix 必须是绝对 http(s) 地址（例如 https://cka.blctek.com:8443/updates）；"
+            "桌面客户端下载与 macOS 手动下载链接都依赖绝对地址。"
+            "如只想让下载页同源可用，确认风险后加 --allow-relative-urls。")
 
     tag = args.tag.strip()
     if not re.fullmatch(r"v?\d+\.\d+\.\d+", tag):

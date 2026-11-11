@@ -16,7 +16,10 @@
 | 校验 | `SHA256SUMS-v1.5.3-release.txt`、`SHA256SUMS-macos.txt` | SHA-256 清单 |
 
 - 构建证据：[构建与产物验证记录](qa/v1.5.3-build-20261111.md)（SHA-256/大小/冒烟/架构复核在此回填）
-- 下载：GitHub Release `v1.5.3`（公开，含 macOS DMG 与 `SHA256SUMS-macos.txt`）；公司 Gitea Release `v1.5.3`（内部主仓，含 Windows/macOS 全部资产）
+- **对外发布/下载地址（生产部署）**：`https://cka.blctek.com:8443/download`；安装包与 `latest.json` 由
+  `https://cka.blctek.com:8443/updates/` 提供（这是客户端检查更新与下载页的共同数据源）。
+- 内部渠道（不对客户宣传）：Gitea Release `v1.5.3` 仅作为公司内网资产仓与服务器 `publish_update.py` 的取包源；
+  GitHub Release `v1.5.3` 仅作 macOS CI 构建产物镜像。客户统一走生产部署地址，不需要 Gitea/GitHub 账号。
 - 安装步骤与已知限制见下文 §4、§5。
 
 ## 2. 本版变更

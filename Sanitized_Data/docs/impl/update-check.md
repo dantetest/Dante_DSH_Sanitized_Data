@@ -286,6 +286,10 @@ PowerShell helper（macOS 上必然失败）。根因不是清单字段缺失（
 - `deploy/publish_update.py` 已支持 4 个资产键：可用 `--installer/--portable/--macos-arm64/--macos-x64` 指定本地文件，
   或从 Gitea Release 按文件名自动挑选；发布时先传安装包、后更新 `latest.json`。
 - 客户端只依赖一份 `latest.json`；**不要**为 Windows/macOS 拆成两个清单。
+- **资产 url 必须写生产部署的绝对地址**（默认 `https://cka.blctek.com:8443/updates/<文件>`）。
+  客户端下载用 urllib 直接请求 `asset.url`，相对路径 `/updates/...` 会「能发现更新但下载失败」；
+  macOS 手动下载链接也会因此指向本机 127.0.0.1。`publish_update.py` 现已拒绝非绝对 `--url-prefix`
+  （确需相对路径时须显式加 `--allow-relative-urls`，仅限下载页自测）。
 - v1.5.3 暂不做 macOS 应用内自动替换（DMG 需要用户拖拽）；若后续要自动化，可新增
   「下载 DMG → `open` 挂载 → 提示拖入」的半自动流程，但仍不应调用 Windows helper。
 

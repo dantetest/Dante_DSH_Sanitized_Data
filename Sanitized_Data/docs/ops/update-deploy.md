@@ -53,7 +53,8 @@ sudo systemctl restart sanitized-data
 
 # 只读 token 从文件读入，不打印
 sudo -u sanitized env GITEA_TOKEN="$(sudo cat /etc/sanitized-data-gitea-token)" \
-  python3 deploy/publish_update.py --tag v1.3.0
+  python3 deploy/publish_update.py --tag v1.3.0 \
+  --url-prefix https://cka.blctek.com:8443/updates
 
 # 校验公网（应 200 JSON，不带登录）
 curl -i https://cka.blctek.com:8443/updates/latest.json
@@ -62,9 +63,14 @@ curl -i https://cka.blctek.com:8443/updates/latest.json
 脚本会：
 
 1. 调 Gitea Release API 读取 `v1.3.0` 的资产；
-2. 下载 `Sanitized_Data_Setup_*.exe` 与 `*-win64-portable.zip` 到 `data/updates/`；
+2. 下载 `Sanitized_Data_Setup_*.exe`、`*-win64-portable.zip`，以及 macOS 的 `*-arm64.dmg` / `*-x64.dmg` 到 `data/updates/`；
 3. 校验文件大小、计算 SHA-256；
 4. 原子写入 `data/updates/latest.json`。
+
+> **url 必须是绝对地址**：`--url-prefix` 默认 `https://cka.blctek.com:8443/updates`。
+> 历史文档曾用 `--url-prefix /updates` 生成相对路径——下载页能点，但**桌面客户端下载会失败**
+> （urllib 无法请求相对 URL），macOS 手动下载链接也会指向本机 127.0.0.1。脚本现在会拒绝非绝对地址
+> （确需相对路径时加 `--allow-relative-urls`，仅限下载页自测）。
 
 ## 4. 资产已手动上传时
 
