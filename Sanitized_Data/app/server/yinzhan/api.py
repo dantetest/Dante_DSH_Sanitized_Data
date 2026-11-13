@@ -445,10 +445,34 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     # ── 工具 ──
+    PUBLIC_HOSTS = {"sd.blctek.com", "www.sd.blctek.com"}
+
+    def _public_host(self) -> bool:
+        host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
+        return host in self.PUBLIC_HOSTS
+
+    def _cache_for(self, ctype: str) -> str:
+        path = urllib.parse.urlparse(self.path).path
+        if path in ("/sitemap.xml", "/robots.txt", "/llms.txt"):
+            return "public, max-age=3600"
+        if path.startswith("/downloads/") or path.startswith("/updates/"):
+            return "public, max-age=86400"
+        if path.startswith("/api/") or path == "/api" or path in (
+                "/console", "/console/", "/app", "/app/", "/restore", "/restore/"):
+            return "no-store"
+        ext = Path(path).suffix.lower()
+        if ext in (".css", ".js", ".png", ".jpg", ".jpeg", ".webp", ".svg", ".ico", ".woff", ".woff2", ".ttf"):
+            return "public, max-age=2592000, immutable"
+        if ctype.startswith("text/html"):
+            return "public, max-age=300"
+        return "no-store"
+
     def _send(self, status: int, body: bytes, ctype: str,
               extra: dict | None = None, filename: str | None = None):
         self._req_status = int(status)
         self._req_bytes = len(body)
+        extra = dict(extra or {})
+        cache = extra.pop("Cache-Control", None) or self._cache_for(ctype)
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -456,12 +480,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         if filename:
             quoted = urllib.parse.quote(filename)
             self.send_header("Content-Disposition",
                              f"attachment; filename*=UTF-8''{quoted}")
-        for k, v in (extra or {}).items():
+        for k, v in extra.items():
             self.send_header(k, v)
         self.end_headers()
         if getattr(self, "_head_only", False):
@@ -615,6 +639,16 @@ class Handler(BaseHTTPRequestHandler):
         "security/": "security.html",
         "changelog": "changelog.html",
         "changelog/": "changelog.html",
+        "cases": "cases.html",
+        "cases/": "cases.html",
+        "docs": "docs.html",
+        "docs/": "docs.html",
+        "for/lawyers": "for_lawyers.html",
+        "for/lawyers/": "for_lawyers.html",
+        "for/medical": "for_medical.html",
+        "for/medical/": "for_medical.html",
+        "for/geo": "for_geo.html",
+        "for/geo/": "for_geo.html",
         "privacy": "privacy.html",
         "privacy/": "privacy.html",
         "eula": "eula.html",
@@ -671,6 +705,14 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self, method: str):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        # 公网 Host 兜底：本地 UI 和 API 不对公网开放；边缘反代仍需同样规则。
+        if self._public_host():
+            if path in ("/console", "/console/", "/app", "/app/", "/restore", "/restore/"):
+                self._send(302, b"", "text/html; charset=utf-8", extra={"Location": "/demo"})
+                return
+            if path == "/api" or path.startswith("/api/"):
+                self._json({"error": {"code": "not_found", "message": "not found"}}, 404)
+                return
         # CSRF 只约束 API；静态页/JS 不应因反代 Host 差异整站 403。
         if (path == "/api" or path.startswith("/api/")) and not self._same_origin():
             self._json({"error": {"code": "forbidden", "message": "跨站请求被拒绝"}}, 403)

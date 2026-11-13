@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>脱敏案例：合同、病历、正射影像的两个出口 · 数据隐站</title>
+<meta name="description" content="数据隐站演示案例：合同、病历、正射影像如何在换名给 AI 与涂黑给人之间分流；案例虚构，边界明确。">
+<link rel="stylesheet" href="/site.css">
+<link rel="stylesheet" href="/geo_pages.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
+<link rel="canonical" href="https://sd.blctek.com/cases">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="数据隐站">
+<meta property="og:title" content="脱敏案例：合同、病历、正射影像的两个出口 · 数据隐站">
+<meta property="og:description" content="数据隐站演示案例：合同、病历、正射影像如何在换名给 AI 与涂黑给人之间分流；案例虚构，边界明确。">
+<meta property="og:url" content="https://sd.blctek.com/cases">
+<meta property="og:image" content="https://sd.blctek.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="脱敏案例：合同、病历、正射影像的两个出口 · 数据隐站">
+<meta name="twitter:description" content="数据隐站演示案例：合同、病历、正射影像如何在换名给 AI 与涂黑给人之间分流；案例虚构，边界明确。">
+<meta name="twitter:image" content="https://sd.blctek.com/og.png">
+</head>
+<body>
+<header class="sitebar"><div class="inner">
+<a class="logo" href="/"><img class="brandmark" src="/logo.svg" width="38" height="38" alt="数据隐站"><span class="name">数据隐站<small>SANITIZED_DATA</small></span></a>
+<nav>
+<a href="/">首页</a><a href="/demo">演示</a><a href="/download">下载</a><a href="/pricing">价格</a><a href="/mcp">MCP</a><a href="/faq">FAQ</a><a href="/cases">案例</a><a href="/docs">文档</a><a href="/for/lawyers">律所</a><a href="/for/medical">医疗</a><a href="/for/geo">测绘</a><a href="/download" class="cta">下载桌面版</a>
+</nav></div></header>
+<main>
+<section class="wrap geo-hero"><div class="eyebrow">CASES · 演示案例</div><h1>三类文件，两个出口</h1><p>下面不是客户案例，是可以复现的演示：同一份文件，换名版给 AI，涂黑版给人。数据虚构，用来说明处理路径、能做什么、边界在哪。</p><div class="geo-note">案例均为虚构素材，不对应任何真实个人或机构；不承诺 100% 检出，重要文件仍需人工复核。</div></section>
+<div class="wrap geo-wrap">
+<h2>案例 01 · 律所合同审查</h2>
+<div class="geo-grid"><div class="geo-card"><div class="tag">输入</div><h3>委托代理合同</h3><p>委托人张三、身份证、电话、某律所、标的额 128,000 元、付款节点。</p></div><div class="geo-card"><div class="tag">换名版 · 给 AI</div><h3>甲方A / 乙方B</h3><p>金额、日期、条款结构保留；AI 完成付款、违约、管辖 3 个风险点审查。</p></div><div class="geo-card"><div class="tag">涂黑版 · 给人</div><h3>外发版</h3><p>姓名、证件、电话、金额被删除；付款节点保留。AI 无法判断主体与金额。</p></div></div>
+<p style="margin-top:12px">结果：AI 输出“甲方A 应在 2026-12-31 前向乙方B 支付 128,000 元”；回到本机后，用映射还原成张三/某律所。</p>
+<h2>案例 02 · 病历摘要</h2>
+<div class="geo-grid"><div class="geo-card"><div class="tag">输入</div><h3>门诊病历</h3><p>患者李四、病历号、主诉头晕 2 周、高血压 2 级、氨氯地平 5mg。</p></div><div class="geo-card"><div class="tag">换名版 · 给 AI</div><h3>患者A / 病历号A</h3><p>AI 生成 200 字摘要与用药提醒，不出现真实姓名。</p></div><div class="geo-card"><div class="tag">涂黑版 · 给人</div><h3>病案外发</h3><p>姓名/病历号删除；AI 无法关联患者，只能给通用建议。</p></div></div>
+<h2>案例 03 · 正射影像外发</h2>
+<div class="geo-grid"><div class="geo-card"><div class="tag">输入</div><h3>正射 TIF</h3><p>影像带坐标、地理标签和项目元数据，准备给外部单位。</p></div><div class="geo-card"><div class="tag">给人看</div><h3>交付版</h3><p>按需处理坐标/地理标签，供人或下游系统使用；这是交付出口，不是给 AI 读的入口。</p></div><div class="geo-card"><div class="tag">边界</div><h3>需人工确认</h3><p>坐标、比例、成果精度必须由测绘人员复核；工具不替代资质与成果审查。</p></div></div>
+<div class="geo-cta"><a class="btn primary" href="/download">下载桌面版</a><a class="btn" href="/demo">看两个出口演示</a><a class="btn" href="/docs">使用文档</a></div>
+<h2>这些案例说明什么</h2>
+<ul><li>换名版可以保留 AI 需要的语义，但真名不出本机；</li><li>涂黑版适合外发，但不可还原，AI 也读不懂；</li><li>两个出口按对象分开，不要混用。</li></ul>
+<div class="geo-related"><a href="/for/lawyers">律所场景</a><a href="/for/medical">医疗场景</a><a href="/for/geo">测绘场景</a><a href="/compare">换名 vs 涂黑</a></div>
+</div></main>
+<footer>
+<div class="wrap inner"><span>数据隐站 · Sanitized_Data v1.5.3</span><span>·</span><span>本机处理 · 不联网 · 不留存</span><span style="margin-left:auto"><a href="/faq">FAQ</a> · <a href="/compare">对比</a> · <a href="/download">下载</a></span></div>
+<div class="wrap" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--rule);font:400 11px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.06em">运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 联系：<a href="mailto:contact@blctek.com">contact@blctek.com</a></div>
+</footer>
+</body></html>

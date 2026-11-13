@@ -1,6 +1,6 @@
 # 数据隐站 Sanitized_Data
 
-> Windows 本地文件脱敏软件：合同、病历、报表、照片、正射影像先在本机脱敏，再交给 AI；换名版可还原，涂黑版不可还原；文件不上传、引擎零外呼，附本地 stdio MCP（16 个工具）。
+> Windows 本地文件脱敏软件：合同、病历、报表、照片、正射影像先在本机脱敏，再交给 AI；换名版可本地还原（AI 只读换名版，真名/映射不出本机），涂黑版不可还原；文件不上传、引擎零外呼，附本地 stdio MCP（16 个工具）。
 
 - 版本：v1.5.2（2026-11-06）
 - 官网：https://sd.blctek.com/
@@ -14,7 +14,12 @@
 - 本机 vs 云端对比：https://sd.blctek.com/compare
 - MCP 接入：https://sd.blctek.com/mcp
 - 价格与试用：https://sd.blctek.com/pricing
-- 在线演示：https://sd.blctek.com/demo （一份文件两个出口：换名版给 AI，可读、可还原；涂黑版给人，不可还原）
+- 在线演示：https://sd.blctek.com/demo （一份文件两个出口：换名版给 AI，可读、可本地还原；涂黑版给人，不可还原）
+- 案例：https://sd.blctek.com/cases
+- 使用文档：https://sd.blctek.com/docs
+- 律所场景：https://sd.blctek.com/for/lawyers
+- 医疗场景：https://sd.blctek.com/for/medical
+- 测绘场景：https://sd.blctek.com/for/geo
 - 下载：https://sd.blctek.com/download
 - 授权：https://sd.blctek.com/license
 - 支持矩阵：https://sd.blctek.com/support-matrix

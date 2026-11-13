@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>病历/医疗报告脱敏：先换名再给 AI 摘要 · 数据隐站</title>
+<meta name="description" content="病历和医疗报告 AI 摘要前的本机脱敏：患者身份换名，主诉/诊断/用药保留，结果回本机还原。">
+<link rel="stylesheet" href="/site.css">
+<link rel="stylesheet" href="/geo_pages.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "病历可以直接上传给 AI 吗？", "acceptedAnswer": {"@type": "Answer", "text": "不建议直接上传。可先在本机换名，AI 只读患者A/病历号A，再回本机还原。"}}, {"@type": "Question", "name": "能用于诊断吗？", "acceptedAnswer": {"@type": "Answer", "text": "不能。工具只做脱敏和文本处理；诊断、处方和临床决策必须由医生完成。"}}, {"@type": "Question", "name": "扫描件能处理吗？", "acceptedAnswer": {"@type": "Answer", "text": "支持本机离线 OCR；识别结果需要人工复核，尤其是手写和低质量扫描件。"}}]}</script>
+<link rel="canonical" href="https://sd.blctek.com/for/medical">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="数据隐站">
+<meta property="og:title" content="病历/医疗报告脱敏：先换名再给 AI 摘要 · 数据隐站">
+<meta property="og:description" content="病历和医疗报告 AI 摘要前的本机脱敏：患者身份换名，主诉/诊断/用药保留，结果回本机还原。">
+<meta property="og:url" content="https://sd.blctek.com/for/medical">
+<meta property="og:image" content="https://sd.blctek.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="病历/医疗报告脱敏：先换名再给 AI 摘要 · 数据隐站">
+<meta name="twitter:description" content="病历和医疗报告 AI 摘要前的本机脱敏：患者身份换名，主诉/诊断/用药保留，结果回本机还原。">
+<meta name="twitter:image" content="https://sd.blctek.com/og.png">
+</head>
+<body>
+<header class="sitebar"><div class="inner">
+<a class="logo" href="/"><img class="brandmark" src="/logo.svg" width="38" height="38" alt="数据隐站"><span class="name">数据隐站<small>SANITIZED_DATA</small></span></a>
+<nav>
+<a href="/">首页</a><a href="/demo">演示</a><a href="/download">下载</a><a href="/pricing">价格</a><a href="/mcp">MCP</a><a href="/faq">FAQ</a><a href="/cases">案例</a><a href="/docs">文档</a><a href="/for/lawyers">律所</a><a href="/for/medical">医疗</a><a href="/for/geo">测绘</a><a href="/download" class="cta">下载桌面版</a>
+</nav></div></header>
+<main>
+<section class="wrap geo-hero"><div class="eyebrow">FOR MEDICAL · 医疗场景</div><h1>病历和报告，先换名，再让 AI 做摘要</h1><p>病历、检查报告、用药记录需要 AI 帮忙摘要和提示冲突，但患者姓名、病历号、就诊信息不应该直接进入在线模型。</p><div class="geo-note">本工具不是医疗器械，不提供诊断建议，不承诺合规；临床判断必须由医生完成。</div></section>
+<div class="wrap geo-wrap">
+<h2>适合的处理路径</h2>
+<div class="geo-timeline"><div class="geo-step"><b>01 本机导入</b><p>PDF/图片/Word 病历在本机打开，离线 OCR 识别。</p></div><div class="geo-step"><b>02 换名</b><p>患者姓名、病历号、联系方式替换成患者A/病历号A；主诉、诊断、用药保留。</p></div><div class="geo-step"><b>03 AI 摘要</b><p>AI 生成主诉、诊断、用药摘要和冲突提醒，不出现真实身份。</p></div><div class="geo-step"><b>04 本地回填</b><p>结果回到本机后再还原患者身份，用于病历记录或复诊。</p></div></div>
+<h2>边界</h2>
+<ul><li>不能替代医生判断、诊断或处方审核；</li><li>不承诺 100% 识别所有患者信息；</li><li>涂黑版适合外发，但 AI 无法生成患者级摘要；</li><li>映射库和还原报告按医疗数据管理，不要回传云端。</li></ul>
+<div class="geo-cta"><a class="btn primary" href="/download">下载桌面版</a><a class="btn" href="/demo">看病历演示</a><a class="btn" href="/docs">使用文档</a></div>
+<div class="geo-faq"><h2>医疗常见问题</h2><details><summary>病历可以直接上传给 AI 吗？</summary><p>不建议直接上传。可先在本机换名，AI 只读患者A/病历号A，再回本机还原。</p></details><details><summary>能用于诊断吗？</summary><p>不能。工具只做脱敏和文本处理；诊断、处方和临床决策必须由医生完成。</p></details><details><summary>扫描件能处理吗？</summary><p>支持本机离线 OCR；识别结果需要人工复核，尤其是手写和低质量扫描件。</p></details></div>
+<div class="geo-related"><a href="/for/lawyers">律所场景</a><a href="/for/geo">测绘场景</a><a href="/cases">演示案例</a></div>
+</div></main>
+<footer>
+<div class="wrap inner"><span>数据隐站 · Sanitized_Data v1.5.3</span><span>·</span><span>本机处理 · 不联网 · 不留存</span><span style="margin-left:auto"><a href="/faq">FAQ</a> · <a href="/compare">对比</a> · <a href="/download">下载</a></span></div>
+<div class="wrap" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--rule);font:400 11px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.06em">运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 联系：<a href="mailto:contact@blctek.com">contact@blctek.com</a></div>
+</footer>
+</body></html>

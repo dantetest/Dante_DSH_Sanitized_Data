@@ -55,4 +55,29 @@
     <lastmod>2026-11-13</lastmod>
     <priority>0.7</priority>
   </url>
+  <url>
+    <loc>https://sd.blctek.com/cases</loc>
+    <lastmod>2026-11-13</lastmod>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://sd.blctek.com/docs</loc>
+    <lastmod>2026-11-13</lastmod>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://sd.blctek.com/for/lawyers</loc>
+    <lastmod>2026-11-13</lastmod>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://sd.blctek.com/for/medical</loc>
+    <lastmod>2026-11-13</lastmod>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://sd.blctek.com/for/geo</loc>
+    <lastmod>2026-11-13</lastmod>
+    <priority>0.7</priority>
+  </url>
 </urlset>

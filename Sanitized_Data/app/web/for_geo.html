@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>正射影像/航拍脱敏：外发前处理坐标与地理标签 · 数据隐站</title>
+<meta name="description" content="正射 TIF、航拍图外发前的本机处理：检查 EXIF/GPS、坐标和项目元数据，输出可交付副本并人工复核。">
+<link rel="stylesheet" href="/site.css">
+<link rel="stylesheet" href="/geo_pages.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "能去掉正射影像的坐标吗？", "acceptedAnswer": {"@type": "Answer", "text": "可以对副本处理地理标签/坐标信息；处理后必须由测绘人员复核，确认满足交付要求。"}}, {"@type": "Question", "name": "处理完还能用于测绘成果吗？", "acceptedAnswer": {"@type": "Answer", "text": "取决于项目要求。去地理参考会改变成果用途，必须由项目负责人确认。"}}, {"@type": "Question", "name": "能处理无人机照片 EXIF 吗？", "acceptedAnswer": {"@type": "Answer", "text": "支持在本机检查并剥离/中性化照片 EXIF/GPS；批量处理前先抽样复核。"}}]}</script>
+<link rel="canonical" href="https://sd.blctek.com/for/geo">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="数据隐站">
+<meta property="og:title" content="正射影像/航拍脱敏：外发前处理坐标与地理标签 · 数据隐站">
+<meta property="og:description" content="正射 TIF、航拍图外发前的本机处理：检查 EXIF/GPS、坐标和项目元数据，输出可交付副本并人工复核。">
+<meta property="og:url" content="https://sd.blctek.com/for/geo">
+<meta property="og:image" content="https://sd.blctek.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="正射影像/航拍脱敏：外发前处理坐标与地理标签 · 数据隐站">
+<meta name="twitter:description" content="正射 TIF、航拍图外发前的本机处理：检查 EXIF/GPS、坐标和项目元数据，输出可交付副本并人工复核。">
+<meta name="twitter:image" content="https://sd.blctek.com/og.png">
+</head>
+<body>
+<header class="sitebar"><div class="inner">
+<a class="logo" href="/"><img class="brandmark" src="/logo.svg" width="38" height="38" alt="数据隐站"><span class="name">数据隐站<small>SANITIZED_DATA</small></span></a>
+<nav>
+<a href="/">首页</a><a href="/demo">演示</a><a href="/download">下载</a><a href="/pricing">价格</a><a href="/mcp">MCP</a><a href="/faq">FAQ</a><a href="/cases">案例</a><a href="/docs">文档</a><a href="/for/lawyers">律所</a><a href="/for/medical">医疗</a><a href="/for/geo">测绘</a><a href="/download" class="cta">下载桌面版</a>
+</nav></div></header>
+<main>
+<section class="wrap geo-hero"><div class="eyebrow">FOR GEO · 测绘/正射场景</div><h1>正射影像外发前，处理坐标和地理标签</h1><p>正射 TIF、航拍图、项目元数据经常带坐标、地理标签和作业信息。给人看或交付下游前，需要把不该外发的部分处理掉。</p><div class="geo-note">坐标、比例、成果精度必须由测绘人员复核；工具不替代测绘资质、成果审查和保密审查。</div></section>
+<div class="wrap geo-wrap">
+<h2>外发前先确认</h2>
+<dl class="geo-kv"><dt>影像本体</dt><dd>是否含 GPS/EXIF、相机信息、作业时间、设备标识。</dd><dt>地理参考</dt><dd>是否带坐标、投影、SRS、控制点信息；是否需要去地理参考。</dd><dt>项目元数据</dt><dd>项目名、甲方、作业单位、人员、批注是否应保留。</dd><dt>交付对象</dt><dd>给人看/归档用涂黑或去标签版本；不是给 AI 读。</dd></dl>
+<h2>建议流程</h2>
+<div class="geo-timeline"><div class="geo-step"><b>01 本机检查</b><p>先在本地确认 EXIF/GPS、坐标和元数据，不要直接上传网盘或在线工具。</p></div><div class="geo-step"><b>02 处理副本</b><p>对副本剥离/中性化敏感标签，保留必要的成果内容。</p></div><div class="geo-step"><b>03 人工复核</b><p>用 GIS/测绘软件复核坐标、范围、精度和成果完整性。</p></div><div class="geo-step"><b>04 交付</b><p>按对象选择交付版；原始件和映射按项目保密要求保管。</p></div></div>
+<h2>边界</h2>
+<ul><li>不承诺替代测绘成果审查、保密审查或资质要求；</li><li>处理后的坐标/标签必须由专业人员复核；</li><li>正射影像主要用于人看/交付，不是给 AI 读的入口；需要 AI 时先转文字/表格。</li></ul>
+<div class="geo-cta"><a class="btn primary" href="/download">下载桌面版</a><a class="btn" href="/docs">使用文档</a><a class="btn" href="/cases">看演示案例</a></div>
+<div class="geo-faq"><h2>测绘常见问题</h2><details><summary>能去掉正射影像的坐标吗？</summary><p>可以对副本处理地理标签/坐标信息；处理后必须由测绘人员复核，确认满足交付要求。</p></details><details><summary>处理完还能用于测绘成果吗？</summary><p>取决于项目要求。去地理参考会改变成果用途，必须由项目负责人确认。</p></details><details><summary>能处理无人机照片 EXIF 吗？</summary><p>支持在本机检查并剥离/中性化照片 EXIF/GPS；批量处理前先抽样复核。</p></details></div>
+<div class="geo-related"><a href="/for/lawyers">律所场景</a><a href="/for/medical">医疗场景</a><a href="/compare">两个出口对比</a></div>
+</div></main>
+<footer>
+<div class="wrap inner"><span>数据隐站 · Sanitized_Data v1.5.3</span><span>·</span><span>本机处理 · 不联网 · 不留存</span><span style="margin-left:auto"><a href="/faq">FAQ</a> · <a href="/compare">对比</a> · <a href="/download">下载</a></span></div>
+<div class="wrap" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--rule);font:400 11px/1.8 var(--mono);color:var(--ink-3);letter-spacing:.06em">运营主体：四川步络骞科技有限公司 · ICP 备案号：<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">蜀ICP备19033433号</a> · 联系：<a href="mailto:contact@blctek.com">contact@blctek.com</a></div>
+</footer>
+</body></html>
