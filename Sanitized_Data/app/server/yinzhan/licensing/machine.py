@@ -107,6 +107,100 @@ def _components_for_platform(system: str | None = None) -> tuple[str, str, str]:
     return a, b, "linux-machine-id+product-uuid"
 
 
+
+
+# ── v2：稳定硬件指纹（不依赖 OS 安装态 / 卷序列号） ─────────────────
+
+_PLACEHOLDERS = {
+    "", "none", "unknown", "n/a", "na", "not applicable", "default string",
+    "to be filled by o.e.m.", "to be filled by oem", "system serial number",
+    "00000000-0000-0000-0000-000000000000",
+    "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    "03000200-0400-0500-0006-000700080009",
+}
+
+
+def _clean_component(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    low = text.lower()
+    if low in _PLACEHOLDERS:
+        return ""
+    if set(low) <= {"0", "-"}:
+        return ""
+    return text
+
+
+def _powershell(script: str) -> str:
+    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                timeout=8.0)
+
+
+def _windows_stable_components() -> tuple[str, str]:
+    uuid = ""
+    board = ""
+    cpu = ""
+    try:
+        out = _powershell(
+            "$p=Get-CimInstance Win32_ComputerSystemProduct;"
+            "$b=Get-CimInstance Win32_BaseBoard;"
+            "$c=Get-CimInstance Win32_Processor | Select-Object -First 1;"
+            "'{0}`n{1}`n{2}' -f $p.UUID,$b.SerialNumber,$c.ProcessorId")
+        parts = [x.strip() for x in out.splitlines()]
+        if len(parts) >= 3:
+            uuid, board, cpu = parts[0], parts[1], parts[2]
+    except Exception:
+        pass
+    if not uuid:
+        try:
+            out = _run(["wmic", "csproduct", "get", "uuid"], timeout=5.0)
+            lines = [x.strip() for x in out.splitlines() if x.strip()]
+            if len(lines) >= 2:
+                uuid = lines[1]
+        except Exception:
+            pass
+    uuid = _clean_component(uuid)
+    board = _clean_component(board)
+    cpu = _clean_component(cpu)
+    parts = [x for x in (uuid, board, cpu) if x]
+    return "|".join(parts), "windows-smbios+baseboard+cpu"
+
+
+def _mac_stable_components() -> tuple[str, str]:
+    out = _run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"])
+    platform_uuid = ""
+    serial = ""
+    m = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', out)
+    if m:
+        platform_uuid = m.group(1)
+    m = re.search(r'"IOPlatformSerialNumber"\s*=\s*"([^"]+)"', out)
+    if m:
+        serial = m.group(1)
+    parts = [x for x in (_clean_component(platform_uuid), _clean_component(serial)) if x]
+    return "|".join(parts), "macos-platform-uuid+hardware-serial"
+
+
+def _linux_stable_components() -> tuple[str, str]:
+    product_uuid = _read_text("/sys/class/dmi/id/product_uuid")
+    product_serial = _read_text("/sys/class/dmi/id/product_serial")
+    parts = [x for x in (_clean_component(product_uuid), _clean_component(product_serial)) if x]
+    return "|".join(parts), "linux-dmi-product-uuid+serial"
+
+
+def _stable_components_for_platform(system: str | None = None) -> tuple[str, str]:
+    system = (system or platform.system()).lower()
+    if system == "windows":
+        a, source = _windows_stable_components()
+    elif system == "darwin":
+        a, source = _mac_stable_components()
+    else:
+        a, source = _linux_stable_components()
+    if not a:
+        # 硬件信息不可得：退回旧指纹，至少保证可用；source 标记便于诊断。
+        la, lb, legacy_source = _components_for_platform(system)
+        return f"{la}|{lb}", f"fallback-{legacy_source}"
+    return a, source
+
+
 def _crockford_base32(data: bytes, length: int = 16) -> str:
     value = int.from_bytes(data, "big")
     bits = len(data) * 8
@@ -124,16 +218,33 @@ def _display(code: str) -> str:
 
 
 def machine_info(system: str | None = None) -> dict:
-    """返回 ``{code, display, source}``；code 为无连字符 16 字符。"""
+    """返回 {code, display, source, legacy_code, legacy_display, codes}。
+
+    code        = v2 稳定硬件指纹（新签发使用）
+    legacy_code = v1 旧指纹（仅用于兼容旧 license）
+    codes       = 当前可接受的机器码列表
+    """
     try:
-        a, b, source = _components_for_platform(system)
+        stable, source = _stable_components_for_platform(system)
     except Exception:
-        a = b = f"{platform.node()}|{uuid.getnode():012X}"
+        stable = f"{platform.node()}|{uuid.getnode():012X}"
         source = "fallback-hostname+mac"
-    raw = "machine-v1|" + str(a) + "|" + str(b)
-    digest = hashlib.sha256(raw.encode("utf-8")).digest()
-    code = _crockford_base32(digest[:10], 16)
-    return {"code": code, "display": _display(code), "source": source}
+    try:
+        la, lb, legacy_source = _components_for_platform(system)
+    except Exception:
+        la = lb = f"{platform.node()}|{uuid.getnode():012X}"
+        legacy_source = "fallback-hostname+mac"
+
+    def _code(raw: str) -> str:
+        digest = hashlib.sha256(raw.encode("utf-8")).digest()
+        return _crockford_base32(digest[:10], 16)
+
+    code = _code("machine-v2|" + str(stable))
+    legacy_code = _code("machine-v1|" + str(la) + "|" + str(lb))
+    codes = [code] + ([legacy_code] if legacy_code != code else [])
+    return {"code": code, "display": _display(code), "source": source,
+            "legacy_code": legacy_code, "legacy_display": _display(legacy_code),
+            "legacy_source": legacy_source, "codes": codes}
 
 
 def machine_code(system: str | None = None) -> str:

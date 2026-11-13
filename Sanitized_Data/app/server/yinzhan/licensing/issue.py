@@ -134,3 +134,59 @@ def write_license(container: dict, out_path: Path | str) -> Path:
     path.write_text(json.dumps(container, ensure_ascii=False, indent=2) + "\n",
                     encoding="utf-8")
     return path
+
+def reissue_payload(old_payload: dict,
+                    new_machine_codes: Iterable[str],
+                    *,
+                    now: datetime | None = None,
+                    max_devices: int | None = None,
+                    note: str = "") -> dict:
+    """基于旧 license 生成转移/重绑后的 payload（不签名）。
+
+    - 保留 license_id/order_id/sku/term/seats/features/到期时间；
+    - 只替换机器码；
+    - 增加 reissued_from / transfer_count / transfer_history 审计字段。
+    """
+    if not isinstance(old_payload, dict):
+        raise ValueError("旧 license payload 无效")
+    for field in ("license_id", "order_id", "sku", "term", "seats",
+                  "max_devices", "machine_codes", "expires_at", "features"):
+        if field not in old_payload:
+            raise ValueError(f"旧 license 缺少字段：{field}")
+    codes = [normalize_machine_code(c) for c in new_machine_codes]
+    if not codes:
+        raise ValueError("至少需要一个新机器码")
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    now = now.astimezone(timezone.utc)
+    max_dev = int(max_devices or old_payload.get("max_devices") or 1)
+    if len(codes) > max_dev:
+        raise ValueError(f"机器码数量 {len(codes)} 超过 max_devices={max_dev}")
+    expires_at = old_payload.get("expires_at")
+    if old_payload.get("term") == "annual":
+        if not expires_at:
+            raise ValueError("年度授权缺少到期时间")
+        exp = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp.astimezone(timezone.utc) <= now:
+            raise ValueError("旧授权已过期，不能重签，请续费")
+    history = list(old_payload.get("transfer_history") or [])
+    history.append({
+        "at": now.isoformat(),
+        "from": list(old_payload.get("machine_codes") or []),
+        "to": codes,
+    })
+    payload = dict(old_payload)
+    payload.update({
+        "machine_codes": codes,
+        "max_devices": max_dev,
+        "issued_at": now.isoformat(),
+        "not_before": now.isoformat(),
+        "reissued_from": old_payload.get("license_id"),
+        "transfer_count": int(old_payload.get("transfer_count") or 0) + 1,
+        "transfer_history": history,
+        "notes": (note or old_payload.get("notes") or ""),
+    })
+    return payload

@@ -421,6 +421,18 @@ def update_install(ctx):
     return updater.UPDATE.install()
 
 
+@route("POST", r"/api/license/transfer-request")
+def license_transfer_request(ctx):
+    body = ctx.json()
+    if not isinstance(body, dict):
+        raise ApiError("请求体必须是 JSON 对象")
+    new_code = str(body.get("new_machine_code") or "").strip()
+    if not new_code:
+        raise ApiError("缺少 new_machine_code")
+    old = body.get("license") or body.get("content") or None
+    return _license_call(lambda: LICENSE.transfer_request(new_code, old))
+
+
 @route("GET", r"/api/license/file")
 def license_file(ctx):
     content = LICENSE.license_content()

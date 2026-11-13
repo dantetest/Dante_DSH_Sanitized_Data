@@ -37,21 +37,45 @@ class Clock:
 
 
 class TestMachineCode(unittest.TestCase):
+    def _patch(self, legacy=("LEGACY-A", "LEGACY-B", "test"),
+               stable=("HW-UUID", "test-stable")):
+        return (
+            mock.patch.object(machine, "_components_for_platform", return_value=legacy),
+            mock.patch.object(machine, "_stable_components_for_platform", return_value=stable),
+        )
+
     def test_format_and_stability(self):
-        with mock.patch.object(machine, "_components_for_platform",
-                               return_value=("AAA", "BBB", "test")):
+        p1, p2 = self._patch()
+        with p1, p2:
             one = machine.machine_info()
             two = machine.machine_info()
         self.assertEqual(one["code"], two["code"])
         self.assertRegex(one["display"], r"^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$")
         self.assertEqual(one["display"].replace("-", ""), one["code"])
+        self.assertIn(one["code"], one["codes"])
+        self.assertIn(one["legacy_code"], one["codes"])
 
-    def test_different_components_differ(self):
-        with mock.patch.object(machine, "_components_for_platform",
-                               return_value=("AAA", "BBB", "test")):
+    def test_os_reinstall_keeps_stable_code(self):
+        # 模拟重装系统：MachineGuid/卷序列号变化，但硬件 UUID 不变
+        p1, p2 = self._patch(legacy=("OS-INSTALL-1", "VOLUME-1", "legacy-a"))
+        with p1, p2:
+            before = machine.machine_info()
+        p1, p2 = self._patch(legacy=("OS-INSTALL-2", "VOLUME-2", "legacy-b"))
+        with p1, p2:
+            after = machine.machine_info()
+        self.assertEqual(before["code"], after["code"])
+        self.assertNotEqual(before["legacy_code"], after["legacy_code"])
+        self.assertIn(before["code"], after["codes"])
+        self.assertIn(after["legacy_code"], after["codes"])
+
+    def test_different_hardware_differs(self):
+        p1, p2 = self._patch(legacy=("AAA", "BBB", "test"),
+                             stable=("HW-A", "test-stable"))
+        with p1, p2:
             a = machine.machine_code()
-        with mock.patch.object(machine, "_components_for_platform",
-                               return_value=("AAA", "CCC", "test")):
+        p1, p2 = self._patch(legacy=("AAA", "CCC", "test"),
+                             stable=("HW-B", "test-stable"))
+        with p1, p2:
             b = machine.machine_code()
         self.assertNotEqual(a, b)
 

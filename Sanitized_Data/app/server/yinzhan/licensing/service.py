@@ -123,6 +123,20 @@ class LicenseService:
     def machine_code(self) -> str:
         return self.machine_info()["code"]
 
+    def machine_codes(self) -> list[str]:
+        """当前可接受的机器码：v2 稳定码 + v1 旧码（迁移兼容）。"""
+        info = self.machine_info()
+        out = []
+        for value in [info.get("code"), info.get("legacy_code")] + list(info.get("codes") or []):
+            code = _norm_code(value)
+            if code and code not in out:
+                out.append(code)
+        return out
+
+    def verify_license_content(self, content: str | bytes | dict) -> dict:
+        """只验签/结构，不校验机器码；供转移/重签工具使用。"""
+        return self._verify_container(content)
+
     # ── 状态文件 ──
     def _new_state(self) -> dict:
         return {
@@ -303,8 +317,8 @@ class LicenseService:
         if not_before and effective_now < not_before:
             return {"status": "not_yet_valid", "payload": payload,
                     "error": {"code": "license_not_yet_valid", "message": "授权尚未生效，请校正系统时间"}}
-        code = self.machine_code()
-        if not any(_norm_code(c) == code for c in payload.get("machine_codes") or []):
+        current_codes = set(self.machine_codes())
+        if not any(_norm_code(c) in current_codes for c in payload.get("machine_codes") or []):
             return {"status": "machine_mismatch", "payload": payload,
                     "error": {"code": "license_machine_mismatch",
                               "message": "授权文件不适用于本机，请使用本机识别码重新签发"}}
@@ -413,6 +427,16 @@ class LicenseService:
             self._save_state(state)
             return result
 
+    def transfer_request(self, new_machine_code: str,
+                         old_license: str | bytes | dict | None = None) -> dict:
+        """生成离线授权转移请求；不签新 license。"""
+        if old_license is None:
+            if not self.license_path.is_file():
+                raise LicenseError("license_required", "本机还没有授权文件", 404)
+            old_license = self.license_path.read_text(encoding="utf-8")
+        from .transfer import create_transfer_request
+        return create_transfer_request(old_license, new_machine_code)
+
     def import_license(self, content: str | bytes | dict) -> dict:
         with self._lock:
             try:
@@ -455,8 +479,8 @@ class LicenseService:
         if not_before and effective_now < not_before:
             return {"status": "not_yet_valid",
                     "error": {"code": "license_not_yet_valid", "message": "授权尚未生效，请校正系统时间"}}
-        code = self.machine_code()
-        if not any(_norm_code(c) == code for c in payload.get("machine_codes") or []):
+        current_codes = set(self.machine_codes())
+        if not any(_norm_code(c) in current_codes for c in payload.get("machine_codes") or []):
             return {"status": "machine_mismatch",
                     "error": {"code": "license_machine_mismatch",
                               "message": "授权文件不适用于本机，请使用本机识别码重新签发"}}

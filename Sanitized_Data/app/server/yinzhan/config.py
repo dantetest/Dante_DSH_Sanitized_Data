@@ -10,7 +10,7 @@ from . import paths
 
 APP_NAME = "数据隐站"
 APP_NAME_EN = paths.APP_NAME_EN
-VERSION = "1.5.4"
+VERSION = "1.5.5"
 # W3 购买入口：静态页只跳公网，不 fetch。未配置时页面显示“入口待接入”，不伪造链接。
 PURCHASE_URL = (os.environ.get("YINZHAN_PURCHASE_URL") or "").strip()
 # L3 扫码升级：商业服务基址（例如 http://127.0.0.1:8787 或 https://buy.example.com）。
