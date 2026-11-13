@@ -603,6 +603,8 @@ class Handler(BaseHTTPRequestHandler):
         # GEO / 公开页面
         "demo": "demo.html",
         "demo/": "demo.html",
+        "demo/workspace": "demo_workspace.html",
+        "demo/workspace/": "demo_workspace.html",
         "faq": "faq.html",
         "faq/": "faq.html",
         "compare": "compare.html",

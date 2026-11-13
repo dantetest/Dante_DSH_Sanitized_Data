@@ -3,140 +3,243 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>在线演示 · 数据隐站只读工作台</title>
-<meta name="description" content="数据隐站工作台只读演示：预置虚构合同、病历、对账单，看原件与换名版/涂黑版的对照。无上传、无导出、无网络。">
+<title>AI 工作流演示｜一份文件，两个出口｜数据隐站</title>
+<meta name="description" content="数据隐站 AI 工作流演示：同一份合同，换名版给 AI，AI 能审条款、算金额；真名只在本机、结果回来后本地还原，AI 全程看不到真名。涂黑版给人，不可还原。原件不上传，演示输出为预置，不调用在线模型。">
 <meta name="robots" content="index, follow">
-<link rel="stylesheet" href="v5.css">
+<link rel="stylesheet" href="demo_ai.css">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "数据隐站",
+      "applicationCategory": "SecurityApplication",
+      "operatingSystem": "Windows 10, Windows 11",
+      "url": "https://sd.blctek.com/",
+      "description": "Windows 本机文件脱敏软件。同一份文件两个出口：换名版给 AI，可读、可本地还原；涂黑版给人，不可还原。AI 只读换名版，真名和映射不出本机。",
+      "offers": {"@type": "Offer", "price": "99", "priceCurrency": "CNY", "description": "个人版首年"}
+    },
+    {
+      "@type": "HowTo",
+      "name": "数据隐站 AI 工作流：一份文件，两个出口",
+      "description": "把敏感文件分成给 AI 的换名版和给人的涂黑版，AI 在换名版上完成工作，本机还原真名。",
+      "step": [
+        {"@type": "HowToStep", "name": "原件只在本机", "text": "原件包含真实姓名、证件、电话和账户，只在本机打开，不上传。"},
+        {"@type": "HowToStep", "name": "生成两个出口", "text": "换名版把身份替换成本机可还原假名，保留金额、日期、条款结构；AI 只读假名。涂黑版做破坏性涂黑，不可还原。"},
+        {"@type": "HowToStep", "name": "AI 在换名版上工作", "text": "AI 读取甲方A、乙方B等假名和保留的业务信息，完成合同审查、病历摘要或财务对账。"},
+        {"@type": "HowToStep", "name": "本机还原真名", "text": "分析完成后，在本机把甲方A还原成张三、乙方B还原成某律所；映射不上传。"}
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {"@type": "Question", "name": "数据隐站的两个出口是什么？", "acceptedAnswer": {"@type": "Answer", "text": "换名版给 AI：身份替换成本机可还原假名，保留金额、日期和条款结构，AI 能读懂并完成工作；真名不会被 AI 看到。涂黑版给人：破坏性涂黑，不可还原，可以外发。"}},
+        {"@type": "Question", "name": "换名版和涂黑版有什么区别？", "acceptedAnswer": {"@type": "Answer", "text": "换名版保留结构和语义，AI 能审合同、写摘要、做对账；AI 结果回到本机后，才用本机映射还原真名，不会把真名回传 AI。涂黑版删除原文，AI 无法判断主体和金额，但可以安全地给人看。"}},
+        {"@type": "Question", "name": "AI 在换名版上能做什么？涂黑版为什么不行？", "acceptedAnswer": {"@type": "Answer", "text": "AI 在换名版上能识别主体关系、金额、日期和条款，完成合同风险审查、病历摘要、财务对账。涂黑版把主体和金额变成黑块，AI 只能给通用建议。"}},
+        {"@type": "Question", "name": "文件会上传吗？", "acceptedAnswer": {"@type": "Answer", "text": "不会。原件、换名版和映射都只在本机处理；AI 只读换名版，真名只在结果回到本机后本地还原。本页是静态演示，输出为预置文本，不调用在线模型。"}}
+      ]
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "首页", "item": "https://sd.blctek.com/"},
+        {"@type": "ListItem", "position": 2, "name": "演示", "item": "https://sd.blctek.com/demo"}
+      ]
+    }
+  ]
+}
+</script>
+<link rel="canonical" href="https://sd.blctek.com/demo">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="数据隐站">
+<meta property="og:title" content="AI 工作流演示｜一份文件，两个出口｜数据隐站">
+<meta property="og:description" content="数据隐站 AI 工作流演示：同一份合同，换名版给 AI，AI 能审条款、算金额；真名只在本机、结果回来后本地还原，AI 全程看不到真名。涂黑版给人，不可还原。原件不上传，演示输出为预置，不调用在线模型。">
+<meta property="og:url" content="https://sd.blctek.com/demo">
+<meta property="og:image" content="https://sd.blctek.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI 工作流演示｜一份文件，两个出口｜数据隐站">
+<meta name="twitter:description" content="数据隐站 AI 工作流演示：同一份合同，换名版给 AI，AI 能审条款、算金额；真名只在本机、结果回来后本地还原，AI 全程看不到真名。涂黑版给人，不可还原。原件不上传，演示输出为预置，不调用在线模型。">
+<meta name="twitter:image" content="https://sd.blctek.com/og.png">
 </head>
-<body class="v5">
-<a class="skip-link" href="#demo">跳到演示</a>
-
-<div class="demo-strip">
-  <div class="strip-inner">
-    <span class="strip-badge">DEMO · 只读演示</span>
-    <span class="strip-note">演示数据均为虚构 · 不上传 · 不导出</span>
-    <div class="strip-samples" role="group" aria-label="选择演示样例">
-      <button type="button" class="sbtn on" data-sample="contract" aria-pressed="true">01 合同</button>
-      <button type="button" class="sbtn" data-sample="medical" aria-pressed="false">02 病历</button>
-      <button type="button" class="sbtn" data-sample="bank" aria-pressed="false">03 对账单</button>
-    </div>
-    <button class="sbtn replay" type="button" id="replayBtn">↻ 重播扫描</button>
-    <div class="strip-actions">
-      <a class="sbtn home-back" href="/">← 返回官网首页</a>
+<body>
+<div class="strip">
+  <div class="inner">
+    <span class="badge">DEMO · 两个出口</span>
+    <span class="hint">演示数据均为虚构 · 不上传 · 不导出</span>
+    <div class="actions">
+      <button type="button" class="sbtn" id="replayBtn">重播扫描</button>
+      <a class="sbtn" href="/demo/workspace">看只读工作台</a>
+      <a class="sbtn home" href="/">← 回官网</a>
       <a class="sbtn dl" href="/download">下载桌面版</a>
     </div>
   </div>
 </div>
 
-<div class="app demo-shell" id="demoShell" data-mode="ai">
-  <header class="topbar">
-    <img class="site-logo" src="/logo.svg" width="38" height="38" alt="数据隐站">
-    <div class="brand"><b>数据隐站</b><small>DATA SANCTUARY</small></div>
-    <div class="docno">No. DEMO-2026-11-06</div>
-    <div class="spacer"></div>
-    <div class="netbadge"><span class="dot"></span>只读演示 · 不上传</div>
-  </header>
+<header class="sitebar">
+  <div class="inner">
+    <a class="logo" href="/" aria-label="数据隐站首页">
+      <img src="/logo.svg" alt="数据隐站">
+      <span class="name">数据隐站<small>SANITIZED_DATA</small></span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="/">首页</a>
+      <a href="/demo" class="on">演示</a>
+      <a href="/download">下载</a>
+      <a href="/pricing">价格</a>
+      <a href="/mcp">MCP</a>
+      <a href="/faq">FAQ</a>
+    </nav>
+  </div>
+</header>
 
-  <nav class="steps" aria-label="演示流程">
-    <div class="step done"><span class="n">1</span>投放</div>
-    <div class="step done"><span class="n">2</span>识别</div>
-    <div class="step active"><span class="n">3</span>对照</div>
-    <div class="step locked"><span class="n">4</span>交付</div>
-  </nav>
-
-  <div class="workbench">
-    <div class="scan-progress" aria-hidden="true"><i id="scanProgress"></i></div>
-
-    <div class="console-head">
-      <div class="doc-name" id="fileName">委托代理合同_演示.pdf</div>
-      <span class="doc-filemeta" id="fileMeta">12 页 · 1.8 MB · 演示文件</span>
-      <div class="counts"><span>共 <b>14</b> 处</span><span>已处理 <b>14</b></span><span class="pend">待确认 <b>0</b></span></div>
-      <div class="pager">1 / 12</div>
-      <div class="spacer"></div>
-      <div class="strict"><span>严格度</span><b>标准</b></div>
-      <span class="output-label" id="outputLabel">换名版 · 给 AI 读</span>
-      <div class="readonly-tag">只读演示</div>
+<main class="wrap">
+  <section class="hero" aria-labelledby="pageTitle">
+    <div>
+      <div class="eyebrow">AI WORKFLOW · 换名版 + 涂黑版</div>
+      <h1 id="pageTitle">一份文件，两个出口：<br><span class="red">AI 能干活，人能外发</span></h1>
+      <p class="sub">同一份合同：换名版给 AI，AI 能审条款、算金额；真名和映射留在这台电脑，结果回来后本地还原。涂黑版给人，AI 读不懂、人也看不到原文。</p>
+      <div class="badges">
+        <span class="chip">本机处理</span>
+        <span class="chip">文件不上传</span>
+        <span class="chip">换名可本地还原</span>
+        <span class="chip">涂黑不可还原</span>
+      </div>
     </div>
+    <aside class="seal-box" aria-label="两个出口">
+      <div class="stamp">两个出口</div>
+      <div class="tiny">ONE FILE / TWO OUTPUTS</div>
+      <h2>给 AI 的版本<br>和给人的版本</h2>
+      <div class="row"><span>换名版 · 给 AI</span><b>可读 / 可本地还原</b></div>
+      <div class="row"><span>涂黑版 · 给人</span><b>不可读 / 不可还原</b></div>
+      <div class="row"><span>原件</span><b>只在本机</b></div>
+    </aside>
+  </section>
 
-    <div id="demo" class="console-body" aria-label="只读演示工作台">
-      <section class="pane pane-original" aria-label="原件">
-        <div class="pane-head">
-          <span class="tag">原 件</span>
-          <span class="pane-hint">只在本机显示 · 红框为识别位置</span>
-          <span class="spacer"></span>
-          <span class="demo-mark">虚构数据</span>
-        </div>
-        <div class="stage"><div class="paper-body" id="originalBody"></div></div>
-      </section>
+  <div class="steps" aria-label="工作流步骤">
+    <div class="step on"><b>1</b>原件</div><span class="step-arrow">→</span>
+    <div class="step on"><b>2</b>两个出口</div><span class="step-arrow">→</span>
+    <div class="step on"><b>3</b>AI 工作</div><span class="step-arrow">→</span>
+    <div class="step"><b>4</b>本地还原</div>
+  </div>
 
-      <div class="divider" aria-hidden="true"></div>
+  <div class="tabs" role="tablist" aria-label="选择演示场景">
+    <button class="tab on" type="button" role="tab" aria-selected="true" data-scene="contract">01 合同审查<small>CONTRACT</small></button>
+    <button class="tab" type="button" role="tab" aria-selected="false" data-scene="medical">02 病历摘要<small>MEDICAL</small></button>
+    <button class="tab" type="button" role="tab" aria-selected="false" data-scene="finance">03 财务对账<small>FINANCE</small></button>
+  </div>
 
-      <section class="pane pane-output" aria-label="可外发副本">
-        <div class="pane-head">
-          <span class="tag red">可外发版</span>
-          <div class="modes" role="group" aria-label="出口形态">
-            <button type="button" data-mode="ai" class="on" aria-pressed="true">换名</button>
-            <button type="button" data-mode="human" aria-pressed="false">涂黑</button>
-          </div>
-          <span class="spacer"></span>
-          <span class="pane-hint" id="outputTag">换名版 · 给 AI</span>
-        </div>
-        <div class="stage">
-          <div class="paper-body" id="outputBody"></div>
-          <div class="stamp" id="outputStamp">可 还 原</div>
-        </div>
-      </section>
+  <div class="tree-wrap">
+    <div class="tree">
+      <div class="root-node">
+        <div class="root-label"><span class="root-kicker">ROOT · 原件</span><span class="root-note">只在本机 · AI 看不到</span></div>
+        <div id="rootDoc"></div>
+      </div>
 
-      <aside class="rail" aria-label="隐去清单">
-        <div class="rail-head"><span>隐去清单</span><b id="entityCount">8 类 / 14 处</b></div>
-        <div class="rail-list" id="entityList"></div>
-        <button class="rail-toggle" type="button" id="toggleEntities" aria-expanded="true">收起清单</button>
-        <div class="rail-note">演示只展示识别结果，不展示真实值；真实产品会在本机生成可复核清单。</div>
-      </aside>
+      <div class="branches">
+        <section class="branch branch-ai" aria-label="给 AI 看的分支">
+          <div class="branch-head"><span class="branch-kicker">分支 A · 给 AI 看</span><b>换名版</b><span class="branch-status ok">可本地还原</span></div>
+          <div id="renamedDoc"></div>
+          <div class="node-link"><span class="node-dot"></span>Agent 节点</div>
+          <section class="chat-card success" id="success" aria-label="Agent 对话：换名版">
+            <div class="chat-head">
+              <div class="agent-id"><span class="agent-avatar">隐</span><div><b>数据隐站 Agent</b><small>换名版 · 只读演示</small></div></div>
+              <span class="chat-status ok">能工作</span>
+            </div>
+            <div class="thread" id="successThread" aria-live="polite"></div>
+            <div class="composer"><span class="composer-plus">+</span><span class="composer-text">只读演示 · 不会上传或发送</span><span class="send" aria-hidden="true">↑</span></div>
+          </section>
+        </section>
 
-      <div class="scan-overlay" id="scanOverlay" aria-hidden="true">
-        <div class="scan-grid"></div>
-        <div class="scan-line"></div>
-        <div class="scan-hud"><span>SCANNING</span><b id="scanPct">0%</b></div>
+        <section class="branch branch-human" aria-label="给人看的分支">
+          <div class="branch-head"><span class="branch-kicker">分支 B · 给人看</span><b>涂黑版</b><span class="branch-status bad">不可还原</span></div>
+          <div id="blackDoc"></div>
+          <div class="node-link"><span class="node-dot bad"></span>Agent 节点</div>
+          <section class="chat-card fail" id="fail" aria-label="Agent 对话：涂黑版">
+            <div class="chat-head">
+              <div class="agent-id"><span class="agent-avatar bad">隐</span><div><b>数据隐站 Agent</b><small>涂黑版 · 只读演示</small></div></div>
+              <span class="chat-status bad">读不懂</span>
+            </div>
+            <div class="thread" id="failThread" aria-live="polite"></div>
+            <div class="composer"><span class="composer-plus">+</span><span class="composer-text">只读演示 · 不会上传或发送</span><span class="send" aria-hidden="true">↑</span></div>
+          </section>
+        </section>
       </div>
     </div>
 
-    <div class="console-foot">
-      <button class="btn" type="button" disabled>全部接受</button>
-      <button class="btn ghost" type="button" disabled>逐条确认 0</button>
-      <button class="btn ghost" type="button" disabled>⌗ 框选补漏</button>
-      <div class="spacer"></div>
-      <button class="btn ghost" type="button" id="readModeBtn">只读说明</button>
-      <button class="btn primary locked" type="button" id="exportBtn" aria-disabled="true">交付（演示锁定）→</button>
+    <div class="scan" id="scan" aria-hidden="true">
+      <div class="scan-grid"></div>
+      <div class="scan-line"></div>
+      <div class="scan-pct" id="scanPct">SCANNING 00%</div>
     </div>
   </div>
 
-  <footer class="statusbar">
-    <span class="netdot"></span>
-    <span>本机处理 · 不联网 · 不留存</span>
-    <span class="spacer"></span>
-    <span class="foot-meta">演示数据均为虚构 · 数据隐站 v1.5.3</span>
-  </footer>
-</div>
-
-<div class="modal" id="exportModal" hidden>
-  <div class="modal-backdrop" data-close="1"></div>
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-    <button class="modal-close" type="button" data-close="1" aria-label="关闭">×</button>
-    <div class="eyebrow">READ-ONLY DEMO</div>
-    <h3 id="modalTitle">演示页不提供交付</h3>
-    <p>这是只读演示，不会生成、下载或保存文件。真实产品在您自己的电脑上完成导出，文件不上传。</p>
-    <div class="btns">
-      <a class="btn primary" href="/download">下载桌面版试用</a>
-      <button class="btn" type="button" data-close="1">继续看演示</button>
+  <div class="mapping">
+    <div>
+      <div class="label">本机映射 / LOCAL ONLY</div>
+      <div class="pairs" id="mappingPairs"></div>
+      <p class="local-note">AI 只读换名版；真名和映射不出本机。AI 结果先回来，才在本机做本地还原，不会把真名回传给 AI。</p>
     </div>
-    <p class="modal-foot">演示数据均为虚构；不要在这里输入真实信息（本页也没有输入框）。</p>
+    <button type="button" class="restore-btn" id="restoreBtn" role="switch" aria-checked="false">
+      <span class="label">本地还原真名</span><span class="switch" aria-hidden="true"></span>
+    </button>
   </div>
-</div>
 
-<script src="demo.js"></script>
+  <div class="lower">
+    <section class="summary" aria-labelledby="forAi">
+      <div class="eyebrow">FOR LLM / AGENT</div>
+      <h2 id="forAi">给 AI / Agent 的摘要</h2>
+      <p>这一页不是图片演示，下面的文字就是功能说明。</p>
+      <dl>
+        <dt>是什么</dt><dd>数据隐站：Windows 本机文件脱敏软件。</dd>
+        <dt>两个出口</dt><dd>换名版给 AI，可读、可本地还原；涂黑版给人，不可还原。</dd>
+        <dt>AI 能做什么</dt><dd>在换名版上完成合同审查、病历摘要、财务对账；不读原件。</dd>
+        <dt>不能做什么</dt><dd>涂黑版让 AI 无法判断主体/金额；不承诺 100% 检出。</dd>
+        <dt>文件在哪</dt><dd>始终在本机；不上传；映射只存本机。</dd>
+        <dt>还原边界</dt><dd>AI 只读甲方A/乙方B；真名只在结果回到本机后还原，不回传 AI。</dd>
+        <dt>演示说明</dt><dd>本页输出为预置演示，不调用在线模型。</dd>
+      </dl>
+    </section>
+
+    <section class="faq" aria-labelledby="demoFaq">
+      <h2 id="demoFaq">演示 FAQ</h2>
+      <details>
+        <summary>数据隐站的两个出口是什么？</summary>
+        <p>换名版给 AI：身份替换成本机可还原假名，保留金额、日期和条款结构，AI 能读懂并完成工作；真名不会被 AI 看到。涂黑版给人：破坏性涂黑，不可还原，可以外发。</p>
+      </details>
+      <details>
+        <summary>换名版和涂黑版有什么区别？</summary>
+        <p>换名版保留结构和语义，AI 能审合同、写摘要、做对账；AI 结果回到本机后，才用本机映射还原真名，不会把真名回传 AI。涂黑版删除原文，AI 无法判断主体和金额，但可以安全地给人看。</p>
+      </details>
+      <details>
+        <summary>AI 在换名版上能做什么？涂黑版为什么不行？</summary>
+        <p>AI 在换名版上能识别主体关系、金额、日期和条款，完成合同风险审查、病历摘要、财务对账。涂黑版把主体和金额变成黑块，AI 只能给通用建议。</p>
+      </details>
+      <details>
+        <summary>文件会上传吗？</summary>
+        <p>不会。原件、换名版和映射都只在本机处理；AI 只读换名版，真名只在结果回到本机后本地还原。本页是静态演示，输出为预置文本，不调用在线模型。</p>
+      </details>
+    </section>
+  </div>
+
+  <div class="cta">
+    <a class="btn primary" href="/download">下载桌面版</a>
+    <button class="btn" type="button" id="watchWorkspace">看只读工作台演示</button>
+    <a class="btn" href="/mcp">看 MCP 接入</a>
+  </div>
+</main>
+
+<footer>
+  <div class="inner">
+    <span>数据隐站 · SANITIZED_DATA</span>
+    <span>本机处理 · 文件不上传 · 映射只存本机</span>
+    <span class="right">演示数据均为虚构 · v1.5.2</span>
+  </div>
+</footer>
+
+<script src="demo_ai.js"></script>
 </body>
 </html>

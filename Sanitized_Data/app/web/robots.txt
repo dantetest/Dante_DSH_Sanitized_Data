@@ -43,4 +43,4 @@ Allow: /
 User-agent: meta-externalagent
 Allow: /
 
-Sitemap: https://sd.blctek.com:8443/sitemap.xml
+Sitemap: https://sd.blctek.com/sitemap.xml

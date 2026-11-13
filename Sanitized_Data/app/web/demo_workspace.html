@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>只读工作台演示 · 数据隐站</title>
+<meta name="description" content="数据隐站工作台只读演示：预置虚构合同、病历、对账单，看原件与换名版/涂黑版的对照。无上传、无导出、无网络。">
+<meta name="robots" content="noindex, follow">
+<link rel="stylesheet" href="/v5.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="canonical" href="https://sd.blctek.com/demo/workspace">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="数据隐站">
+<meta property="og:title" content="只读工作台演示 · 数据隐站">
+<meta property="og:description" content="数据隐站工作台只读演示：预置虚构合同、病历、对账单，看原件与换名版/涂黑版的对照。无上传、无导出、无网络。">
+<meta property="og:url" content="https://sd.blctek.com/demo/workspace">
+<meta property="og:image" content="https://sd.blctek.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="只读工作台演示 · 数据隐站">
+<meta name="twitter:description" content="数据隐站工作台只读演示：预置虚构合同、病历、对账单，看原件与换名版/涂黑版的对照。无上传、无导出、无网络。">
+<meta name="twitter:image" content="https://sd.blctek.com/og.png">
+</head>
+<body class="v5">
+<a class="skip-link" href="#demo">跳到演示</a>
+
+<div class="demo-strip">
+  <div class="strip-inner">
+    <span class="strip-badge">DEMO · 只读演示</span>
+    <span class="strip-note">演示数据均为虚构 · 不上传 · 不导出</span>
+    <div class="strip-samples" role="group" aria-label="选择演示样例">
+      <button type="button" class="sbtn on" data-sample="contract" aria-pressed="true">01 合同</button>
+      <button type="button" class="sbtn" data-sample="medical" aria-pressed="false">02 病历</button>
+      <button type="button" class="sbtn" data-sample="bank" aria-pressed="false">03 对账单</button>
+    </div>
+    <button class="sbtn replay" type="button" id="replayBtn">↻ 重播扫描</button>
+    <div class="strip-actions">
+      <a class="sbtn" href="/demo">← 看 AI 工作流</a>
+      <a class="sbtn home-back" href="/">返回官网</a>
+      <a class="sbtn dl" href="/download">下载桌面版</a>
+    </div>
+  </div>
+</div>
+
+<div class="app demo-shell" id="demoShell" data-mode="ai">
+  <header class="topbar">
+    <img class="site-logo" src="/logo.svg" width="38" height="38" alt="数据隐站">
+    <div class="brand"><b>数据隐站</b><small>DATA SANCTUARY</small></div>
+    <div class="docno">No. DEMO-2026-11-06</div>
+    <div class="spacer"></div>
+    <div class="netbadge"><span class="dot"></span>只读演示 · 不上传</div>
+  </header>
+
+  <nav class="steps" aria-label="演示流程">
+    <div class="step done"><span class="n">1</span>投放</div>
+    <div class="step done"><span class="n">2</span>识别</div>
+    <div class="step active"><span class="n">3</span>对照</div>
+    <div class="step locked"><span class="n">4</span>交付</div>
+  </nav>
+
+  <div class="workbench">
+    <div class="scan-progress" aria-hidden="true"><i id="scanProgress"></i></div>
+
+    <div class="console-head">
+      <div class="doc-name" id="fileName">委托代理合同_演示.pdf</div>
+      <span class="doc-filemeta" id="fileMeta">12 页 · 1.8 MB · 演示文件</span>
+      <div class="counts"><span>共 <b>14</b> 处</span><span>已处理 <b>14</b></span><span class="pend">待确认 <b>0</b></span></div>
+      <div class="pager">1 / 12</div>
+      <div class="spacer"></div>
+      <div class="strict"><span>严格度</span><b>标准</b></div>
+      <span class="output-label" id="outputLabel">换名版 · 给 AI 读</span>
+      <div class="readonly-tag">只读演示</div>
+    </div>
+
+    <div id="demo" class="console-body" aria-label="只读演示工作台">
+      <section class="pane pane-original" aria-label="原件">
+        <div class="pane-head">
+          <span class="tag">原 件</span>
+          <span class="pane-hint">只在本机显示 · 红框为识别位置</span>
+          <span class="spacer"></span>
+          <span class="demo-mark">虚构数据</span>
+        </div>
+        <div class="stage"><div class="paper-body" id="originalBody"></div></div>
+      </section>
+
+      <div class="divider" aria-hidden="true"></div>
+
+      <section class="pane pane-output" aria-label="可外发副本">
+        <div class="pane-head">
+          <span class="tag red">可外发版</span>
+          <div class="modes" role="group" aria-label="出口形态">
+            <button type="button" data-mode="ai" class="on" aria-pressed="true">换名</button>
+            <button type="button" data-mode="human" aria-pressed="false">涂黑</button>
+          </div>
+          <span class="spacer"></span>
+          <span class="pane-hint" id="outputTag">换名版 · 给 AI</span>
+        </div>
+        <div class="stage">
+          <div class="paper-body" id="outputBody"></div>
+          <div class="stamp" id="outputStamp">可 还 原</div>
+        </div>
+      </section>
+
+      <aside class="rail" aria-label="隐去清单">
+        <div class="rail-head"><span>隐去清单</span><b id="entityCount">8 类 / 14 处</b></div>
+        <div class="rail-list" id="entityList"></div>
+        <button class="rail-toggle" type="button" id="toggleEntities" aria-expanded="true">收起清单</button>
+        <div class="rail-note">演示只展示识别结果，不展示真实值；真实产品会在本机生成可复核清单。</div>
+      </aside>
+
+      <div class="scan-overlay" id="scanOverlay" aria-hidden="true">
+        <div class="scan-grid"></div>
+        <div class="scan-line"></div>
+        <div class="scan-hud"><span>SCANNING</span><b id="scanPct">0%</b></div>
+      </div>
+    </div>
+
+    <div class="console-foot">
+      <button class="btn" type="button" disabled>全部接受</button>
+      <button class="btn ghost" type="button" disabled>逐条确认 0</button>
+      <button class="btn ghost" type="button" disabled>⌗ 框选补漏</button>
+      <div class="spacer"></div>
+      <button class="btn ghost" type="button" id="readModeBtn">只读说明</button>
+      <button class="btn primary locked" type="button" id="exportBtn" aria-disabled="true">交付（演示锁定）→</button>
+    </div>
+  </div>
+
+  <footer class="statusbar">
+    <span class="netdot"></span>
+    <span>本机处理 · 不联网 · 不留存</span>
+    <span class="spacer"></span>
+    <span class="foot-meta">演示数据均为虚构 · 数据隐站 v1.5.3</span>
+  </footer>
+</div>
+
+<div class="modal" id="exportModal" hidden>
+  <div class="modal-backdrop" data-close="1"></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <button class="modal-close" type="button" data-close="1" aria-label="关闭">×</button>
+    <div class="eyebrow">READ-ONLY DEMO</div>
+    <h3 id="modalTitle">演示页不提供交付</h3>
+    <p>这是只读演示，不会生成、下载或保存文件。真实产品在您自己的电脑上完成导出，文件不上传。</p>
+    <div class="btns">
+      <a class="btn primary" href="/download">下载桌面版试用</a>
+      <button class="btn" type="button" data-close="1">继续看演示</button>
+    </div>
+    <p class="modal-foot">演示数据均为虚构；不要在这里输入真实信息（本页也没有输入框）。</p>
+  </div>
+</div>
+
+<script src="/demo.js"></script>
+</body>
+</html>
