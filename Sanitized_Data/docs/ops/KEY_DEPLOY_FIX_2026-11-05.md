@@ -124,7 +124,7 @@ python commercial/scripts/check_deploy.py
 再验证 catalog：
 
 ```bash
-curl -s https://buysd.blctek.com:8443/api/catalog | python -m json.tool | head -40
+curl -s https://buysd.blctek.com/api/catalog | python -m json.tool | head -40
 ```
 
 应看到 `personal.price_cents = 9900`、`renewal_price_cents = 12900`、`personal_perpetual.price_cents = 39900`。

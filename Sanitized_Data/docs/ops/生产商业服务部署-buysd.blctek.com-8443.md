@@ -1,6 +1,6 @@
-# 生产商业服务部署说明（buysd.blctek.com:8443）
+# 生产商业服务部署说明（buysd.blctek.com）
 
-> 目标：把 `commercial/` 商业服务部署到公网 `https://buysd.blctek.com:8443`，供本机客户端购买/查单使用。
+> 目标：把 `commercial/` 商业服务部署到公网 `https://buysd.blctek.com`，供本机客户端购买/查单使用。
 > 注意：商业服务只处理订单/授权，不接收用户文件；文件处理仍在本机。
 
 ## 1. DNS 与证书
@@ -16,7 +16,7 @@
 ```bash
 cd /opt/sanitized-data
 export PYTHONPATH="$PWD/commercial"
-export COMMERCIAL_BASE_URL="https://buysd.blctek.com:8443"
+export COMMERCIAL_BASE_URL="https://buysd.blctek.com"
 export LICENSE_KEY_PASSWORD="<从密钥生成时设置的密码>"
 export LICENSE_KEY_PASSWORD_ENV="LICENSE_KEY_PASSWORD"
 python -m uvicorn server.app:create_app --factory --host 127.0.0.1 --port 8787
@@ -52,7 +52,7 @@ server {
 ## 4. 商业服务环境变量
 
 ```env
-COMMERCIAL_BASE_URL=https://buysd.blctek.com:8443
+COMMERCIAL_BASE_URL=https://buysd.blctek.com
 ALIPAY_APP_ID=2021007114621412
 ALIPAY_APP_PRIVATE_KEY_PATH=commercial/var/keys/alipay_app_private.pem
 ALIPAY_PUBLIC_KEY_PATH=commercial/var/keys/alipay_public.pem
@@ -79,16 +79,16 @@ LICENSE_KEY_PASSWORD_ENV=LICENSE_KEY_PASSWORD
 安装目录/数据目录放置 `commercial.json`：
 
 ```json
-{"commercial_url": "https://buysd.blctek.com:8443"}
+{"commercial_url": "https://buysd.blctek.com"}
 ```
 
-或设置 `YINZHAN_COMMERCIAL_URL=https://buysd.blctek.com:8443`。
+或设置 `YINZHAN_COMMERCIAL_URL=https://buysd.blctek.com`。
 
 ## 6. 验收
 
 ```bash
-curl -I https://buysd.blctek.com:8443/healthz       # 200
-curl -s https://buysd.blctek.com:8443/api/catalog | head
+curl -I https://buysd.blctek.com/healthz       # 200
+curl -s https://buysd.blctek.com/api/catalog | head
 ```
 
 然后在测试客户端跑一次真实 0.01 元：

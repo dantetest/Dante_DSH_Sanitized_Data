@@ -1,7 +1,7 @@
 # 数据隐站 · 生产 License 密钥部署手册（prod-2026b）
 
 > 适用：把**生产授权签名密钥**从本机交接给服务器部署同事，并配置商业服务签发真实 License。
-> 目标服务器：`buysd.blctek.com:8443` 背后的商业服务（只监听 `127.0.0.1:8787`）。
+> 目标服务器：`buysd.blctek.com` 背后的商业服务（只监听 `127.0.0.1:8787`）。
 > 安全等级：**生产密钥，仅限授权运维人员操作；口令与私钥分开保管、分开传递。**
 >
 > **2026-11-04 已完成 key rotation：**
@@ -120,7 +120,7 @@ sudo chown <服务用户>:<服务用户组> /etc/sanitized-data/env
 `commercial/.env`（服务器本地，不提交 Git）至少包含：
 
 ```env
-COMMERCIAL_BASE_URL=https://buysd.blctek.com:8443
+COMMERCIAL_BASE_URL=https://buysd.blctek.com
 PAYMENT_PROVIDER=alipay
 PAYMENT_MOCK_ENABLED=false
 
@@ -152,7 +152,7 @@ Group=<服务用户组>
 WorkingDirectory=/opt/sanitized-data
 EnvironmentFile=/etc/sanitized-data/env
 Environment=PYTHONPATH=/opt/sanitized-data/commercial
-Environment=COMMERCIAL_BASE_URL=https://buysd.blctek.com:8443
+Environment=COMMERCIAL_BASE_URL=https://buysd.blctek.com
 ExecStart=/opt/sanitized-data/.venv/bin/python -m uvicorn \
   server.app:create_app --factory --host 127.0.0.1 --port 8787
 Restart=always
@@ -181,7 +181,7 @@ sudo systemctl status sanitized-commercial --no-pager
 ### 6.1 服务健康
 
 ```bash
-curl -I https://buysd.blctek.com:8443/healthz
+curl -I https://buysd.blctek.com/healthz
 ```
 
 应返回 200，证书有效。
@@ -301,7 +301,7 @@ key_info.txt
 1. 加密私钥 license_signing_ed25519.pem（安全通道）
 2. 原口令（密码管理器/一次性链接，单独通道）
 3. 本手册
-4. 商业服务部署说明（buysd.blctek.com:8443）
+4. 商业服务部署说明（buysd.blctek.com）
 5. 测试客户端/机器码，用于 0.01 元验收
 ```
 
