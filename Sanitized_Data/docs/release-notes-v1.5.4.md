@@ -24,20 +24,23 @@
 
 ## macOS
 
-Windows 无法交叉构建 macOS 包；本次提供：
+GitHub Actions 双架构构建已完成：
+
+- Sanitized_Data-1.5.4-arm64.dmg
+  267,769,551 bytes
+  SHA256: 01D0F55112BC9C1F0F660A031D8D2B7B0C7C12AEC29B2FD31BEBE22040541B62
+
+- Sanitized_Data-1.5.4-x64.dmg
+  211,707,035 bytes
+  SHA256: FCA0129255725341B1B6A326CDA987824100DD52A614E31E1770928003423996
+
+另有给已安装 1.5.3 的 Mac 用户的热修复包：
 
 - Sanitized_Data-1.5.4-macos-hotfix.zip
   1,430 bytes
   SHA256: AC4DD683FF0A167E86666D612E4442578BF6B1F7618BBF57EA953396B844F8B9
 
-用途：给已安装 1.5.3 的 macOS 用户替换 commercial.json，并重新 ad-hoc 签名。  
-不是新的 DMG 安装包。
-
-全新 macOS 1.5.4 DMG 必须在 macOS 构建机上运行：
-
-    bash desktop/build_mac.sh
-
-构建机需要 Xcode Command Line Tools；Windows 不能交叉构建。
+macOS 更新仍是手动：检查更新后下载 DMG，拖入「应用程序」覆盖；不会静默自动安装。
 
 ## 验证
 
